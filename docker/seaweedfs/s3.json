@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "metamorph-dev",
+      "credentials": [{"accessKey": "metamorph", "secretKey": "metamorph-dev-secret"}],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

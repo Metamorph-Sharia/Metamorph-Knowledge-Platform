@@ -1,0 +1,17 @@
+[project]
+name = "metamorph-contract"
+version = "2.0.0"
+description = "Contract v2: JSON Schemas and Python types for the document every Metamorph source connector emits"
+readme = "CONTRACT_V2.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.23",
+    "rfc3339-validator>=0.1.4",  # makes the schema's "date-time" format binding
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/metamorph_contract"]

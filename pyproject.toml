@@ -1,0 +1,41 @@
+[project]
+name = "metamorph-knowledge-platform"
+version = "0.1.0"
+description = "Data/Source Management layer: contract, loader, resolver and registry for Metamorph's legal knowledge base"
+requires-python = ">=3.11"
+dependencies = [
+    "metamorph-contract",
+    "psycopg[binary]>=3.2",
+]
+
+[project.scripts]
+metamorph = "metamorph_platform.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/metamorph_platform"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+metamorph-contract = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "tests"]
+addopts = "--import-mode=importlib"
+pythonpath = ["packages/metamorph-contract/tests"]
+markers = ["database: needs a PostgreSQL server (METAMORPH_TEST_DATABASE_URL); skipped otherwise"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "PLE"]
