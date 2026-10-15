@@ -76,6 +76,7 @@ def test_the_reader_reports_bad_lines_and_missing_blobs_instead_of_failing(tmp_p
     assert first.problems == [f"blob {document.files[0].sha256[:12]}… is missing"]
     assert second.document is None
     assert second.problems[0].startswith("not JSON")
+    assert second.raw == "{not json"
 
 
 def test_a_manifest_that_breaks_its_schema_is_refused(tmp_path, document) -> None:

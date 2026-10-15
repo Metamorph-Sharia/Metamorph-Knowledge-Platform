@@ -4,6 +4,11 @@
 name: metamorph
 
 x-database-url: &database-url postgresql://${POSTGRES_USER:-metamorph}:${POSTGRES_PASSWORD:-metamorph-dev}@postgres:5432/metamorph
+# Connector images: built from the workspace root (the directory holding every repository), never run as services;
+# Airflow starts them per task. Build them with: docker compose --profile connectors build
+x-connector: &connector
+  profiles: ["connectors"]
+  command: ["true"]
 
 services:
   postgres:
@@ -12,6 +17,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-metamorph}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-metamorph-dev}
       POSTGRES_DB: metamorph
+      BI_DB_PASSWORD: ${BI_DB_PASSWORD:-bi-dev}  # docker/postgres/init/02-bi.sh: BI's own database
     ports: ["${POSTGRES_PORT:-5433}:5432"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -48,14 +54,29 @@ services:
   airflow:
     image: apache/airflow:2.10.5-python3.11
     command: standalone                     # scheduler + webserver; admin password in standalone_admin_password.txt
+    # Every task is a container (dags/metamorph_pipeline/containers.py), started through the host's Docker.
+    # Group 0 may use the socket. Local only: on a server, put a socket proxy in front of it.
+    user: "50000:0"
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-metamorph}:${POSTGRES_PASSWORD:-metamorph-dev}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      # What the DAGs hand to their containers (dags/metamorph_pipeline/jobs.py, containers.py).
+      METAMORPH_WORKSPACE: ${METAMORPH_WORKSPACE:-}     # host path of the directory holding the connector repositories
+      METAMORPH_OJK_CREDENTIALS: ${METAMORPH_OJK_CREDENTIALS:-${HOME}/.config/ojk-connector/credentials}
+      METAMORPH_DATABASE_URL: *database-url
+      METAMORPH_S3_ENDPOINT_URL: http://objectstore:8333
+      METAMORPH_S3_BUCKET: ${METAMORPH_S3_BUCKET:-metamorph-blobs}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-metamorph}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-metamorph-dev-secret}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      DATABASE_URL: postgresql+psycopg://bi:${BI_DB_PASSWORD:-bi-dev}@postgres:5432/bi   # BI connector's own store
+      METAMORPH_ALERT_WEBHOOK_URL: ${METAMORPH_ALERT_WEBHOOK_URL:-}
     ports: ["${AIRFLOW_PORT:-8080}:8080"]
     volumes:
       - ./dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
@@ -65,6 +86,51 @@ services:
       retries: 20
       start_period: 60s
 
+  web:                                      # the curation app (Phase 7): http://localhost:8000
+    image: metamorph-platform:dev
+    command: ["web", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      METAMORPH_DATABASE_URL: *database-url
+      METAMORPH_S3_ENDPOINT_URL: http://objectstore:8333
+      METAMORPH_S3_BUCKET: ${METAMORPH_S3_BUCKET:-metamorph-blobs}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-metamorph}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-metamorph-dev-secret}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      METAMORPH_CURATORS: ${METAMORPH_CURATORS:-}    # unset: the app refuses to start and says why
+      METAMORPH_WEB_SECRET: ${METAMORPH_WEB_SECRET:-}
+    ports: ["${WEB_PORT:-8000}:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      objectstore: {condition: service_healthy}
+    restart: on-failure:3
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 15s
+      retries: 5
+
+  ojk-connector:
+    <<: *connector
+    build: {context: .., dockerfile: OJK-Source-Connector/Dockerfile}
+    image: metamorph/ojk-connector:dev
+  bpk-connector:
+    <<: *connector
+    build: {context: .., dockerfile: BPK-Source-Connector/Dockerfile}
+    image: metamorph/bpk-connector:dev
+  dsn-mui-connector:
+    <<: *connector
+    build: {context: .., dockerfile: DSN-MUI-Source-Connector/Dockerfile}
+    image: metamorph/dsn-mui-connector:dev
+  bi-connector:
+    <<: *connector
+    build: {context: .., dockerfile: BI-Source-Connector/Dockerfile}
+    image: metamorph/bi-connector:dev
+
+networks:
+  default:
+    name: metamorph                         # task containers join it by this name
+
 volumes:
   postgres-data:
   objectstore-data:
+  bundles:
+    name: metamorph-bundles                 # connectors write bundles here; `metamorph load` reads them

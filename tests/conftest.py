@@ -2,7 +2,8 @@
 
 Set METAMORPH_TEST_DATABASE_URL to a server you may create databases on, e.g. the compose stack:
     METAMORPH_TEST_DATABASE_URL=postgresql://metamorph:metamorph-dev@localhost:5433/postgres uv run pytest
-Without it, tests marked `database` are skipped.
+Without it, tests marked `database` are skipped. Tests marked `s3` need METAMORPH_TEST_S3_ENDPOINT_URL
+(e.g. http://localhost:8333) and the AWS_* credentials from .env.example.
 """
 
 from __future__ import annotations
@@ -17,15 +18,21 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 SERVER_URL = os.environ.get("METAMORPH_TEST_DATABASE_URL")
+S3_ENDPOINT_URL = os.environ.get("METAMORPH_TEST_S3_ENDPOINT_URL")  # plus the AWS_* credentials (see .env.example)
+NEEDS = {  # marker: (the variable that enables it, its value)
+    "database": ("METAMORPH_TEST_DATABASE_URL", SERVER_URL),
+    "s3": ("METAMORPH_TEST_S3_ENDPOINT_URL", S3_ENDPOINT_URL),
+}
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    if SERVER_URL:
-        return
-    skip = pytest.mark.skip(reason="METAMORPH_TEST_DATABASE_URL is not set")
-    for item in items:
-        if "database" in item.keywords:
-            item.add_marker(skip)
+    for marker, (variable, value) in NEEDS.items():
+        if value:
+            continue
+        skip = pytest.mark.skip(reason=f"{variable} is not set")
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip)
 
 
 @pytest.fixture

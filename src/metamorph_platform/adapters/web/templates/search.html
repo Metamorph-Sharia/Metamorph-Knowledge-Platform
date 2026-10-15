@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge with context %}
+{% set section = "documents" %}
+{% block title %}Documents{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Documents</h1>
+  <p class="lede">Find a document by its ID, citation, title or any alias.</p>
+</div>
+
+<form method="get" action="/documents" role="search" class="inline-form">
+  <div class="row">
+    <div class="field">
+      <label for="q">Search</label>
+      <input type="search" id="q" name="q" value="{{ query }}" autocomplete="off" spellcheck="false"
+             placeholder="10/POJK.05/2019, dsnmui:fatwa:117, Murabahah…">
+    </div>
+    <button class="button">Search</button>
+  </div>
+</form>
+
+{% if query %}
+<section aria-labelledby="results-heading">
+  <h2 id="results-heading">{{ results | length | count }} {{ "result" if results | length == 1 else "results" }} for “{{ query }}”</h2>
+  {% if results %}
+  {% if results | length >= limit %}<p class="section-note">Showing the first {{ limit }}. Add words to narrow it down.</p>{% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">ID</th><th scope="col">Citation</th><th scope="col">Title</th><th scope="col">Status</th></tr></thead>
+      <tbody>
+        {% for document in results %}
+        <tr>
+          <td><a class="mono" href="/documents/{{ document.id | urlencode }}" translate="no">{{ document.id }}</a></td>
+          <td>{{ document.citation }}</td>
+          <td><div class="clip" title="{{ document.title }}">{{ document.title }}</div></td>
+          <td>{{ status_badge(document.status) }}{% if document.suppressed %} <span class="badge badge--suppressed">Suppressed</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No document matches “{{ query }}”. Try the number on its own, e.g. 10/POJK.05/2019, or a word from the title.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

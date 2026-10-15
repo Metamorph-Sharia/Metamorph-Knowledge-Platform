@@ -5,28 +5,112 @@
   "description": "One source's view of one regulatory document: identity, status, files, texts, provisions and citations. Files and texts are blobs in the same bundle, referenced by sha256. One JSON object per line of documents.jsonl.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract_version", "source", "document", "files"],
+  "required": [
+    "contract_version",
+    "source",
+    "document",
+    "files"
+  ],
+  "allOf": [
+    {
+      "$ref": "#/$defs/carriesContent"
+    }
+  ],
   "properties": {
-    "contract_version": { "const": "2.0" },
-    "source": { "$ref": "#/$defs/source" },
-    "document": { "$ref": "#/$defs/documentInfo" },
-    "files": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/file" } },
-    "texts": { "type": "array", "items": { "$ref": "#/$defs/text" } },
-    "provisions": { "type": "array", "items": { "$ref": "#/$defs/provision" } },
-    "citations": { "type": "array", "items": { "$ref": "#/$defs/citation" } },
+    "contract_version": {
+      "const": "2.0"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "document": {
+      "$ref": "#/$defs/documentInfo"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "texts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/text"
+      }
+    },
+    "provisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/provision"
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/citation"
+      }
+    },
     "source_fields": {
       "type": "object",
       "description": "The source's own fields, unchanged. Free-form."
     }
   },
   "$defs": {
-    "nonEmpty": { "type": "string", "minLength": 1, "pattern": "\\S" },
-    "optionalString": { "type": ["string", "null"] },
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "isoDate": { "type": ["string", "null"], "format": "date" },
+    "carriesContent": {
+      "description": "must carry content: at least one file or one text",
+      "anyOf": [
+        {
+          "required": [
+            "files"
+          ],
+          "properties": {
+            "files": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "texts"
+          ],
+          "properties": {
+            "texts": {
+              "minItems": 1
+            }
+          }
+        }
+      ]
+    },
+    "nonEmpty": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "at least one non-space character"
+    },
+    "optionalString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "isoDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
     "issuer": {
       "description": "Adding an issuer is a contract change: the platform resolves citations per issuer.",
-      "enum": ["ojk", "bi", "dsnmui", "id"]
+      "enum": [
+        "ojk",
+        "bi",
+        "dsnmui",
+        "id"
+      ]
     },
     "canonicalId": {
       "description": "{issuer}:{family}[:{year}]:{number}, lowercase. e.g. ojk:pojk:2014:5, dsnmui:fatwa:117, id:uu:2011:21",
@@ -38,132 +122,397 @@
       "type": "string",
       "pattern": "^unresolved:[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$"
     },
-    "confidence": { "enum": ["high", "medium", "low", "conflict", "none"] },
+    "confidence": {
+      "enum": [
+        "high",
+        "medium",
+        "low",
+        "conflict",
+        "none"
+      ]
+    },
     "rights": {
       "description": "Restricted content is never bundled, so it is not a valid value here.",
-      "enum": ["public", "licensed"]
+      "enum": [
+        "public",
+        "licensed"
+      ]
     },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["connector", "connector_version", "source_id", "url", "fetched_at"],
+      "required": [
+        "connector",
+        "connector_version",
+        "source_id",
+        "url",
+        "fetched_at"
+      ],
       "properties": {
-        "connector": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
-        "connector_version": { "$ref": "#/$defs/nonEmpty" },
-        "source_id": { "$ref": "#/$defs/nonEmpty", "description": "Stable at the source (team interface v1.0, rule 1)." },
-        "url": { "$ref": "#/$defs/nonEmpty" },
-        "fetched_at": { "type": "string", "format": "date-time", "description": "RFC 3339: always with a time zone." }
+        "connector": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "connector_version": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "source_id": {
+          "$ref": "#/$defs/nonEmpty",
+          "description": "Stable at the source (team interface v1.0, rule 1)."
+        },
+        "url": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339: always with a time zone."
+        }
       }
     },
     "documentInfo": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "id", "id_confidence", "id_evidence", "issuer", "family", "number", "year",
-        "citation", "title", "language", "kind", "status"
+        "id",
+        "id_confidence",
+        "id_evidence",
+        "issuer",
+        "family",
+        "number",
+        "year",
+        "citation",
+        "title",
+        "language",
+        "kind",
+        "status"
       ],
       "properties": {
-        "id": { "anyOf": [{ "$ref": "#/$defs/canonicalId" }, { "$ref": "#/$defs/unresolvedId" }] },
-        "id_confidence": { "$ref": "#/$defs/confidence" },
-        "id_evidence": { "type": "string" },
-        "issuer": { "$ref": "#/$defs/issuer" },
-        "family": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
-        "number": { "$ref": "#/$defs/nonEmpty" },
-        "year": { "type": ["integer", "null"], "minimum": 1800, "maximum": 2100 },
-        "citation": { "$ref": "#/$defs/nonEmpty", "description": "How people cite it, e.g. 'POJK 5/POJK.05/2014'." },
-        "title": { "$ref": "#/$defs/nonEmpty" },
-        "language": { "type": "string", "pattern": "^[a-z]{2}$", "description": "ISO 639-1 of the authoritative text." },
-        "kind": {
-          "enum": ["law", "regulation", "implementing_rule", "fatwa", "guideline", "circular", "explanatory"]
+        "id": {
+          "description": "must be a canonical ID ({issuer}:{family}[:{year}]:{number}) or unresolved:{connector}:{key}",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/canonicalId"
+            },
+            {
+              "$ref": "#/$defs/unresolvedId"
+            }
+          ]
         },
-        "status": { "$ref": "#/$defs/statusClaim" },
-        "dates": { "$ref": "#/$defs/dates" },
-        "aliases": { "type": "array", "items": { "$ref": "#/$defs/nonEmpty" } }
+        "id_confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "id_evidence": {
+          "type": "string"
+        },
+        "issuer": {
+          "$ref": "#/$defs/issuer"
+        },
+        "family": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "number": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "year": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1800,
+          "maximum": 2100
+        },
+        "citation": {
+          "$ref": "#/$defs/nonEmpty",
+          "description": "How people cite it, e.g. 'POJK 5/POJK.05/2014'."
+        },
+        "title": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2}$",
+          "description": "ISO 639-1 of the authoritative text."
+        },
+        "kind": {
+          "enum": [
+            "law",
+            "regulation",
+            "implementing_rule",
+            "fatwa",
+            "guideline",
+            "circular",
+            "explanatory"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/statusClaim"
+        },
+        "dates": {
+          "$ref": "#/$defs/dates"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmpty"
+          }
+        }
       }
     },
     "statusClaim": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["value", "source"],
+      "required": [
+        "value",
+        "source"
+      ],
       "properties": {
-        "value": { "enum": ["in_force", "amended", "partly_revoked", "revoked", "not_yet_in_force", "unknown"] },
-        "source": { "$ref": "#/$defs/nonEmpty", "description": "Who says so, e.g. 'jdih_ojk', 'bpk', 'regalert'." },
-        "as_of": { "$ref": "#/$defs/isoDate" }
+        "value": {
+          "enum": [
+            "in_force",
+            "amended",
+            "partly_revoked",
+            "revoked",
+            "not_yet_in_force",
+            "unknown"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/nonEmpty",
+          "description": "Who says so, e.g. 'jdih_ojk', 'bpk', 'regalert'."
+        },
+        "as_of": {
+          "$ref": "#/$defs/isoDate"
+        }
       }
     },
     "dates": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enacted": { "$ref": "#/$defs/isoDate" },
-        "promulgated": { "$ref": "#/$defs/isoDate" },
-        "effective": { "$ref": "#/$defs/isoDate" }
+        "enacted": {
+          "$ref": "#/$defs/isoDate"
+        },
+        "promulgated": {
+          "$ref": "#/$defs/isoDate"
+        },
+        "effective": {
+          "$ref": "#/$defs/isoDate"
+        }
       }
     },
     "file": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sha256", "role", "media_type", "source_url", "rights"],
+      "required": [
+        "sha256",
+        "role",
+        "media_type",
+        "source_url",
+        "rights"
+      ],
       "properties": {
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "role": { "enum": ["main", "annex", "abstract", "faq", "guide", "page_html", "api_payload", "other"] },
-        "media_type": { "$ref": "#/$defs/nonEmpty" },
-        "source_url": { "$ref": "#/$defs/optionalString" },
-        "rights": { "$ref": "#/$defs/rights" },
-        "title": { "$ref": "#/$defs/optionalString" },
-        "pages": { "type": ["integer", "null"], "minimum": 1 }
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "role": {
+          "enum": [
+            "main",
+            "annex",
+            "abstract",
+            "faq",
+            "guide",
+            "page_html",
+            "api_payload",
+            "other"
+          ]
+        },
+        "media_type": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "source_url": {
+          "$ref": "#/$defs/optionalString"
+        },
+        "rights": {
+          "$ref": "#/$defs/rights"
+        },
+        "title": {
+          "$ref": "#/$defs/optionalString"
+        },
+        "pages": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
       }
     },
     "text": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sha256", "language", "origin", "method", "rights", "paged"],
+      "required": [
+        "sha256",
+        "language",
+        "origin",
+        "method",
+        "rights",
+        "paged"
+      ],
       "description": "A UTF-8 text blob; when paged, pages start with '<!-- page N -->' lines.",
       "properties": {
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "language": { "type": "string", "pattern": "^[a-z]{2}$" },
-        "origin": { "enum": ["self_extracted", "source_text", "source_translation"] },
-        "method": { "enum": ["text_layer", "ocr", "source"] },
-        "rights": { "$ref": "#/$defs/rights" },
-        "paged": { "type": "boolean" },
-        "of_file": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2}$"
+        },
+        "origin": {
+          "enum": [
+            "self_extracted",
+            "source_text",
+            "source_translation"
+          ]
+        },
+        "method": {
+          "enum": [
+            "text_layer",
+            "ocr",
+            "source"
+          ]
+        },
+        "rights": {
+          "$ref": "#/$defs/rights"
+        },
+        "paged": {
+          "type": "boolean"
+        },
+        "of_file": {
+          "description": "must be a sha256 or null",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       }
     },
     "provision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["address", "kind", "label", "text", "char_start", "char_end"],
+      "required": [
+        "address",
+        "kind",
+        "label",
+        "text",
+        "char_start",
+        "char_end"
+      ],
       "properties": {
-        "address": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*$" },
-        "kind": { "$ref": "#/$defs/nonEmpty" },
-        "label": { "$ref": "#/$defs/nonEmpty" },
-        "text": { "$ref": "#/$defs/sha256" },
-        "char_start": { "type": "integer", "minimum": 0 },
-        "char_end": { "type": "integer", "minimum": 0 },
-        "parent": { "$ref": "#/$defs/optionalString" },
-        "heading": { "$ref": "#/$defs/optionalString" },
-        "page_start": { "type": ["integer", "null"], "minimum": 1 },
-        "page_end": { "type": ["integer", "null"], "minimum": 1 }
+        "address": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*$"
+        },
+        "kind": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "label": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "text": {
+          "$ref": "#/$defs/sha256"
+        },
+        "char_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "char_end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parent": {
+          "$ref": "#/$defs/optionalString"
+        },
+        "heading": {
+          "$ref": "#/$defs/optionalString"
+        },
+        "page_start": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "page_end": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
       }
     },
     "citation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["relation", "target_text", "evidence", "found_in", "confidence"],
+      "required": [
+        "relation",
+        "target_text",
+        "evidence",
+        "found_in",
+        "confidence"
+      ],
       "properties": {
         "relation": {
           "enum": [
-            "amends", "revokes", "partly_revokes", "supersedes", "implements",
-            "legal_basis", "adopts_fatwa", "changes_fatwa", "refers_to"
+            "amends",
+            "revokes",
+            "partly_revokes",
+            "supersedes",
+            "implements",
+            "legal_basis",
+            "adopts_fatwa",
+            "changes_fatwa",
+            "refers_to"
           ]
         },
-        "target_text": { "$ref": "#/$defs/nonEmpty" },
-        "evidence": { "type": "string" },
-        "found_in": { "enum": ["text", "source_metadata"] },
-        "confidence": { "$ref": "#/$defs/confidence" },
-        "target_id": { "anyOf": [{ "$ref": "#/$defs/canonicalId" }, { "type": "null" }] },
-        "from_address": { "$ref": "#/$defs/optionalString" },
-        "to_address": { "$ref": "#/$defs/optionalString" }
+        "target_text": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "found_in": {
+          "enum": [
+            "text",
+            "source_metadata"
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "target_id": {
+          "description": "must be a canonical ID ({issuer}:{family}[:{year}]:{number}) or null",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/canonicalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "from_address": {
+          "$ref": "#/$defs/optionalString"
+        },
+        "to_address": {
+          "$ref": "#/$defs/optionalString"
+        }
       }
     }
   }

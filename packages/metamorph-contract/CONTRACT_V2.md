@@ -54,7 +54,7 @@ NormalizedDocument
                                 source (who says so), as_of
                        dates    enacted, promulgated, effective (ISO dates)
   files[]            FileRef: sha256, role (main|annex|abstract|faq|guide|page_html|api_payload|other),
-                       media_type, source_url, rights, title, pages            (at least one)
+                       media_type, source_url, rights, title, pages
   texts[]            TextRef: sha256, language, origin (self_extracted|source_text|source_translation),
                        method (text_layer|ocr|source), rights, paged, of_file
   provisions[]       optional: address ("pasal-115/ayat-1"), kind, label, text (sha), char_start, char_end,
@@ -64,6 +64,8 @@ NormalizedDocument
                        found_in (text|source_metadata), confidence, target_id, from_address, to_address
   source_fields      the source's own fields, unchanged
 ```
+
+A document must carry content: at least one file or one text. A text supplied by a source, before the official file has been fetched, is enough.
 
 The JSON Schema defines every field, vocabulary, pattern and format (`date`, `date-time` with time zone). `document.py` mirrors it as Python types. `validate.py` adds the rules that compare one value with another:
 - an unresolved ID needs confidence `none` or `conflict`, and a canonical one must not have them;
@@ -99,7 +101,7 @@ A bundle without a manifest, or whose manifest breaks its schema (wrong contract
 
 - [ ] `export --format v2 --out DIR` writes one bundle per run, containing every document held.
 - [ ] IDs come from `canonical_id()` or `unresolved_id()`; aliases list the other citation forms.
-- [ ] The official files are in `files`; texts are paged with `join_pages` where pages are known.
+- [ ] The official files are in `files` once you hold them; texts are paged with `join_pages` where pages are known.
 - [ ] No `restricted` file or text is bundled.
 - [ ] Citations found in source metadata are exported, with `target_id` where it can be parsed.
 - [ ] A test exports fixtures and asserts that every `Bundle(dir).entries()` entry `is_valid`.

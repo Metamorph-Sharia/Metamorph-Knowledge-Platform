@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#fbfcfb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161b18" media="(prefers-color-scheme: dark)">
+  <title>{% block title %}{% endblock %} | Metamorph Curation</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to Content</a>
+  <header class="masthead">
+    <div class="container masthead__inner">
+      <a class="brand" href="/" translate="no">Metamorph Curation</a>
+      {% if curator %}
+      <nav aria-label="Main">
+        <ul>
+          <li><a href="/" {% if section == "overview" %}aria-current="page"{% endif %}>Overview</a></li>
+          <li><a href="/review" {% if section == "review" %}aria-current="page"{% endif %}>Review</a></li>
+          <li><a href="/documents" {% if section == "documents" %}aria-current="page"{% endif %}>Documents</a></li>
+          <li><a href="/documents/new" {% if section == "add" %}aria-current="page"{% endif %}>Add Document</a></li>
+        </ul>
+      </nav>
+      <p class="who">Signed in as <strong>{{ curator.display_name }}</strong></p>
+      {% endif %}
+    </div>
+  </header>
+  <main id="main" class="container" tabindex="-1">
+    <div aria-live="polite">
+      {% if done and DONE.get(done) %}<p class="notice notice--done" role="status">{{ DONE[done] }}</p>{% endif %}
+    </div>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

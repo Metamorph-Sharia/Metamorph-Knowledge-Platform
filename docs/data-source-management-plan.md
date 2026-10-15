@@ -139,6 +139,7 @@ Texts travel as blobs (pointers, not payloads). Restricted texts (RegAlert Engli
   - Keep the concrete `Store` out of the mapping (BPK review gap 4).
 - Platform: `load_bundle`, `publish`, the Postgres repositories, `blobs/s3.py`.
 - Exit: all OJK documents (973 today, from `data/corpus/`) in `published`; reloading the same bundle changes nothing; one document with `id_confidence = none` sits in the review queue.
+- **Done 2026-10-15:** 973 loaded and published in ~10 s; a fresh export reloads as 973 unchanged with nothing republished; 1 unresolved document in the review queue; all 1,436 citations name a target (906 point to national laws that BPK will load in Phase 4).
 
 **Phase 4 — BPK, DSN-MUI, BI exports.**
 - **BPK:**
@@ -158,6 +159,14 @@ Texts travel as blobs (pointers, not payloads). Restricted texts (RegAlert Engli
   - IDs `bi:{type}:{year}:{n}`.
   - BI's database stays private to BI.
 - Exit: every connector's bundle validates in its own CI (a contract test using `metamorph_contract.validate`), and all four are loaded and published.
+- **Done 2026-10-15:** all four bundles load and publish: 2,524 documents and 3,976 texts (164 of them Arabic). A fresh export of each reloads as all unchanged, and the database rebuilds from the four bundles in about 30 s. 661 of OJK's 906 citations to national laws now name a document BPK supplied. Each repo tests that its exported entries pass the contract.
+  - **BPK:** as planned. `source_id` is `bpk:{record_id}`, the interface connector's key. Citations come from the outgoing labels only; the incoming ones (`Diubah dengan` …) set the status. 130 documents, 453 citations, all with a target.
+  - **DSN-MUI:** fatwas only, 164 of them. 2 have broken links at the source, so they have no content. The store holds no pedoman or ta'limat (`sync` stores fatwas only), so `changes_fatwa` and `implements` wait until those products are stored. Paths are now relative to `data/dsn/`, and old absolute paths are converted when the store opens.
+  - **BI:**
+    - **Input:** the export reads BI's processed JSON (one file per regulation, written from BI's database by every ingest), not the database. That keeps the database private and needs no running BI Postgres.
+    - **IDs:** taken from the title, because BI's `regulation_number` and `regulation_year` fields are unreliable.
+    - **Overwritten files:** 38 PDFs were overwritten on disk by BI's old file naming, and some had their pages extracted from the replacement. They are left out and listed in `lost_files` for a re-fetch. The naming is now content-addressed.
+    - **Provisions:** `legal_provisions` travel as a summary in `source_fields`, not as contract provisions. Their text is cut at 1,000 characters and starts a few characters late, so their offsets can't be trusted. The Phase 5 parser produces provisions for every source.
 
 **Phase 5 — Resolver, structure parser, validity.**
 - `domain/structure/` grammars, seeded from BI's regexes (`BI-Source-Connector/src/pipeline/extractor.py:155-177`) and the anatomy findings (`OJK-Source-Connector/docs/research/ojk-publishing-and-storage/02-document-anatomy.md`).
@@ -171,6 +180,15 @@ Texts travel as blobs (pointers, not payloads). Restricted texts (RegAlert Engli
   - ≥ 95% of POJK and PBI texts pass the structure checks.
   - Mengingat citations to held documents resolve at ≥ 90%.
   - The fatwa links from sharia regulations (e.g. POJK 10/POJK.05/2019) appear as `adopts_fatwa`.
+- **Done 2026-10-15:** `metamorph build` (parse → resolve → validity → publish) takes about 50 s over the whole corpus, and a second run changes nothing.
+  - **Structure:** 2,554 texts give 280,555 provisions. 96.5% of POJK and 96.3% of PBI texts pass every check. The 212 texts that don't are queued as `structure_suspect`: captured web pages, BI summaries, text lost at page breaks, and OCR'd national laws.
+  - **Citations:** all 2,185 Mengingat citations to held documents are linked. Against RegAlert's independent lineage, the text finds 99.7% of the legal basis of documents that have a Mengingat. SEOJKs have none: what RegAlert calls their legal basis is the POJK they `implements`.
+  - **Fatwa links:** 255 `adopts_fatwa` links run from 10 documents to 87 fatwas. POJK 10/POJK.05/2019, the plan's example, cites fatwas only generically ("fatwa DSN-MUI"), never by number, so it has none.
+  - **Links and validity:** 6,265 citations linked; 3,745 wait for documents not held yet, and 4 name nothing (`unresolved_citation`). 2,493 status events and 1,127 article end dates follow from them.
+  - **Added beyond the plan:**
+    - Dates stated in the text (`domain/dates.py`). OJK and BI send none, and validity needs them.
+    - An `unknown` status takes the status links imply: 499 BI regulations gained one.
+    - `docs/published-schema.md`.
 
 **Phase 6 — Airflow (Stage A).**
 - One Dockerfile per connector repo:
@@ -187,12 +205,46 @@ Texts travel as blobs (pointers, not payloads). Restricted texts (RegAlert Engli
 - Schedules: OJK, BPK and BI daily; DSN-MUI weekly, plus a monthly full pass.
 - Failures alert via Airflow callbacks and `ingest.health_snapshot`.
 - Exit: 7 consecutive days of unattended runs; a new document reaches `published` within 24 hours.
+- **Done 2026-10-15, with the 7-day exit still open:** the DAGs ship paused, so the clock starts when they are unpaused.
+  - **Built:**
+    - A Dockerfile per connector repo, built from the workspace root with a per-Dockerfile ignore file.
+    - Every task runs as a container on the `metamorph` network (`dags/metamorph_pipeline/containers.py`).
+    - The jobs are plain data, tested without Airflow (`jobs.py`, `tests/test_dag_jobs.py`).
+    - `registry_build` runs on the `metamorph://registry` Dataset, plus a daily `health` DAG.
+    - `metamorph health` writes to `ingest.health_snapshot` (migration 0007).
+    - Failure alerts go to the task log and an optional webhook.
+  - **Verified with `airflow dags test`:**
+    - **DSN-MUI:** 26 s; a live crawl, nothing new.
+    - **BPK:** 7 min.
+    - **BI:** 3 min; its first run filled BI's own database with the 25 newest regulations.
+    - **registry_build:** health ok.
+    - **OJK:** RegAlert answered HTTP 403 (access refused; sign-in still works). The run failed and alerted, and still exported and loaded its snapshot, as designed.
+  - **Fixes the runs exposed:**
+    - OJK kept checking about 900 documents after the first 403. It now stops at the first refusal and raises one critical `access_forbidden` alert.
+    - BPK re-saved judicial-review files that BPK resends without an ETag, so 16 documents looked changed every day. Identical bytes now keep their first fetch time.
+  - **Changed from the plan:**
+    - Each connector's `data/` is bind-mounted from its repository instead of a named volume, so scheduled and manual runs share one store and the existing data stays where it is.
+    - DSN-MUI pedoman and ta'limat DAGs wait until `sync` stores those products.
+    - BI's database is `bi` in the platform's PostgreSQL, with its own role.
 
 **Phase 7 — Curation web app.**
 - FastAPI + Jinja2; HTTP basic auth with team accounts from environment variables (local phase), so every action records its author.
 - Pages: a health dashboard, review queues (unresolved IDs, quarantine, conflicts, unresolved citations, structure suspects), and a document view (effective values versus each source, files via presigned object-store URLs, provision tree, links in and out).
 - Actions: verify, correct a field, assign a canonical ID, suppress, link a citation by hand, resolve a conflict, and add a manual document. A manual document is an upload plus a form that builds a `connector=manual` bundle and goes through `load_bundle`, so there is one write path.
 - Exit: every queue is actionable; overrides survive reloads; a source change under an override raises a conflict; everything is in `audit_log`.
+- **Done 2026-10-15:** every exit criterion is covered by a test against PostgreSQL. The pages work against the real registry: the Overview loads in about 0.13 s, a document page in about 0.04 s.
+  - **Built:**
+    - `domain/curation.py`: correction parsing, conflicts and ID rules. `domain/manual.py`: manual documents, with every bad field reported.
+    - `application/curate.py`, `add_manual_document.py` and `views.py` (the read models).
+    - Adapters: `adapters/postgres/curation.py` and `views.py`, and `adapters/web` (FastAPI + Jinja2, server-rendered, little JavaScript).
+    - Migration 0008: `ON UPDATE CASCADE` on the document foreign keys, `curation.id_assignment`, `audit_log.reason`, and one open conflict per correction.
+    - `metamorph web` and `metamorph curator hash-password`, and a compose `web` service.
+  - **The loader now applies curation:** a curator's assigned ID applies on every later load, and a source change under a correction raises a conflict.
+  - **Changed from the plan:**
+    - Files and texts are streamed through the app, behind sign-in, instead of presigned object-store URLs. The object store stays private.
+    - A manual document may not reuse an ID a connector holds. It would overwrite the connector's values; attaching files to existing documents is a later feature.
+    - Assigning an ID that already exists is refused: a duplicate is suppressed instead.
+  - **Interface quality:** built to Vercel's Web Interface Guidelines, and reviewed against them. Checked in screenshots in light, dark and mobile. The taste skill's landing-page rules don't apply to an admin tool; its contrast, states, one-accent, one-radius and no-em-dash rules do.
 
 Phases 6 and 7 can run in parallel after Phase 5. (Stage B — interface v2 `normalize()` with Airflow driving discover/fetch/normalize — follows this plan and isn't part of it.)
 

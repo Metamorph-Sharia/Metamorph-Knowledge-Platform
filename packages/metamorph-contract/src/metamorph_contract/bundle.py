@@ -50,6 +50,7 @@ class BundleEntry:
     line: int
     document: NormalizedDocument | None
     problems: list[str] = field(default_factory=list)
+    raw: str = ""  # the line as written, so a rejected one can be quarantined exactly as received
 
     @property
     def is_valid(self) -> bool:
@@ -150,13 +151,14 @@ class Bundle:
         try:
             document = from_json(line)
         except ContractViolation as violation:
-            return BundleEntry(line=number, document=None, problems=violation.problems)
+            return BundleEntry(line=number, document=None, problems=violation.problems, raw=line.rstrip("\n"))
         missing = [
             f"blob {sha[:12]}… is missing"
             for sha in sorted(_referenced_blobs(document))
             if not self.blob_path(sha).is_file()
         ]
-        return BundleEntry(line=number, document=document, problems=problems(document) + missing)
+        found = problems(document) + missing
+        return BundleEntry(line=number, document=document, problems=found, raw=line.rstrip("\n"))
 
 
 def _read_manifest(directory: Path) -> Manifest:

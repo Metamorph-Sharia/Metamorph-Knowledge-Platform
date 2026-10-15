@@ -57,9 +57,14 @@ def test_a_citation_target_must_be_canonical_when_given(document) -> None:
     citation = replace(document.citations[0], target_id="UU 21/2011")
 
     assert problems(replace(document, citations=(citation,))) == [
-        "citations[0].target_id: 'UU 21/2011' is not valid under any of the given schemas"
+        "citations[0].target_id: 'UU 21/2011' must be a canonical ID ({issuer}:{family}[:{year}]:{number}) or null"
     ]
 
 
-def test_at_least_one_file_is_required(document) -> None:
-    assert "files: [] should be non-empty" in problems(replace(document, files=()))
+def test_a_document_must_carry_a_file_or_a_text(document) -> None:
+    text_only = replace(document, files=(), texts=(replace(document.texts[0], of_file=None),))
+
+    assert problems(text_only) == []
+    assert problems(replace(text_only, texts=(), provisions=())) == [
+        "(document): must carry content: at least one file or one text"
+    ]

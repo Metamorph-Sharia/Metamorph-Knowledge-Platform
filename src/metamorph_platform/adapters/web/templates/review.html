@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "_macros.html" import decide_form, document_link with context %}
+{% set section = "review" %}
+{% set queue_name, todo, why = REVIEW_QUEUES[queue.kind] %}
+{% block title %}Review: {{ queue_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Review</h1>
+  <p class="lede">Items the platform can’t settle on its own. Each decision is recorded with your note.</p>
+</div>
+
+<nav class="tabs" aria-label="Review queues">
+  {% for kind, (label, _, _) in REVIEW_QUEUES.items() %}
+  <a href="/review?kind={{ kind }}" {% if kind == queue.kind %}aria-current="page"{% endif %}>{{ label }}<span class="count">{{ counts.get(kind, 0) | count }}</span></a>
+  {% endfor %}
+</nav>
+
+<p class="section-note">{{ why }} {{ todo }}</p>
+
+{% if error %}<p class="notice notice--error" role="alert">{{ error | sentence }}. Check the item and try again.</p>{% endif %}
+
+{% if queue.rows %}
+{% set back = "/review?kind=" ~ queue.kind ~ "&page=" ~ queue.page %}
+<ul class="items">
+  {% for item in queue.rows %}
+  <li class="item">
+    <div class="item__what">
+      {% if item.document_id %}{{ document_link(item.document_id, item.document_title) }}{% else %}<span class="meta">No single document</span>{% endif %}
+      <p class="item__summary">{{ item.summary }}</p>
+      <p class="meta">Waiting since {{ item.created_at | day }}
+        {% if item.document_id %}
+          {% if item.kind == "unresolved_id" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#manage">Assign an ID</a>
+          {% elif item.kind == "conflict" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#conflicts">Decide the conflict</a>
+          {% elif item.kind == "unresolved_citation" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#citations">Link the citation</a>
+          {% elif item.kind == "structure_suspect" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#content">Read the text</a>
+          {% endif %}
+        {% endif %}
+      </p>
+    </div>
+    {{ decide_form(item, back) }}
+  </li>
+  {% endfor %}
+</ul>
+{% if queue.pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if queue.page > 1 %}<a class="button button--quiet" href="/review?kind={{ queue.kind }}&page={{ queue.page - 1 }}">Previous</a>{% endif %}
+  <span class="meta">Page {{ queue.page }} of {{ queue.pages }}, {{ queue.total | count }} items</span>
+  {% if queue.page < queue.pages %}<a class="button button--quiet" href="/review?kind={{ queue.kind }}&page={{ queue.page + 1 }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="empty">Nothing waits here. New items appear when a load or a registry build finds them.</p>
+{% endif %}
+{% endblock %}

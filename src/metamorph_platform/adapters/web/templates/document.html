@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field, decide_form, document_link, status_badge with context %}
+{% set section = "documents" %}
+{% set doc = view.summary %}
+{% set errors = errors or {} %}
+{% set here = "/documents/" ~ (doc.id | urlencode) %}
+{% block title %}{{ doc.citation }}{% endblock %}
+{% block content %}
+<div class="doc-head">
+  <h1>{{ doc.citation }}</h1>
+  <p class="lede">{{ doc.title }}</p>
+  <div class="doc-meta">
+    <span class="mono wrap-anywhere" translate="no">{{ doc.id }}</span>
+    <span>ID confidence: {{ view.id_confidence }}</span>
+    <span>{{ doc.kind | words | capitalize }}</span>
+    {{ status_badge(doc.status) }}
+    {% if doc.suppressed %}<span class="badge badge--suppressed">Suppressed</span>{% endif %}
+  </div>
+</div>
+
+{% if view.suppression %}
+<p class="notice notice--held">Suppressed by {{ view.suppression.author }} on {{ view.suppression.created_at | day }}: “{{ view.suppression.reason }}”. The assistant can’t cite it.</p>
+{% endif %}
+
+<nav aria-label="On this page">
+  <ul class="jump">
+    <li><a href="#fields">Fields</a></li>
+    <li><a href="#sources">Sources ({{ view.sources | length }})</a></li>
+    <li><a href="#content">Files &amp; Texts</a></li>
+    <li><a href="#citations">Open Citations ({{ view.open_citations | length }})</a></li>
+    <li><a href="#conflicts">Conflicts ({{ view.conflicts | length }})</a></li>
+    <li><a href="#review">Review ({{ view.open_reviews | length }})</a></li>
+    <li><a href="#links">Links</a></li>
+    <li><a href="#status">Status History</a></li>
+    <li><a href="#structure">Structure</a></li>
+    <li><a href="#manage">Manage</a></li>
+  </ul>
+</nav>
+
+<section id="fields" aria-labelledby="fields-heading">
+  <h2 id="fields-heading">Fields</h2>
+  <p class="section-note">“Published” is what the assistant sees: the sources' value, or a curator’s correction.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Field</th><th scope="col">Published</th>
+          {% for source in view.sources %}<th scope="col" translate="no">{{ source.connector }}</th>{% endfor %}
+          <th scope="col">Correction</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in view.fields %}
+        <tr>
+          <th scope="row">{{ FIELD_LABELS[row.field] }}</th>
+          <td class="wrap-anywhere">{{ row.effective | shown }}</td>
+          {% for connector, value in row.by_source %}<td class="wrap-anywhere">{{ value | shown }}</td>{% endfor %}
+          <td>
+            {% if row.correction %}
+            <div class="inline-form">
+              <span class="meta">By {{ row.correction.author }}, {{ row.correction.created_at | day }}: {{ row.correction.reason }}</span>
+              <form method="post" action="{{ here }}/corrections/withdraw" class="row">
+                {{ csrf_field() }}
+                <input type="hidden" name="field" value="{{ row.field }}">
+                <label class="visually-hidden" for="withdraw-{{ row.field }}">Reason for withdrawing</label>
+                <input type="text" id="withdraw-{{ row.field }}" name="reason" autocomplete="off" required placeholder="Why withdraw it…">
+                <button class="button button--quiet" data-busy="Withdrawing…">Withdraw</button>
+              </form>
+              {% if errors.get("withdraw-" ~ row.field) %}<p class="error" role="alert">{{ errors["withdraw-" ~ row.field] | sentence }}.</p>{% endif %}
+            </div>
+            {% else %}<span class="meta">None</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <form class="stack panel" method="post" action="{{ here }}/corrections" data-warn-unsaved style="margin-top:16px">
+    {{ csrf_field() }}
+    <h3>Correct a Field</h3>
+    <div class="fields fields--2">
+      <div class="field">
+        <label for="correct-field">Field</label>
+        <select id="correct-field" name="field">
+          {% for name, label in FIELD_LABELS.items() %}<option value="{{ name }}">{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="correct-value">Correct Value</label>
+        <input type="text" id="correct-value" name="value" autocomplete="off" required
+               {% if errors.get("correction") %}aria-invalid="true" aria-describedby="correction-error"{% endif %}
+               placeholder="Dates as 2019-02-27; status as in_force, amended, revoked…">
+      </div>
+    </div>
+    <div class="field">
+      <label for="correct-reason">Reason</label>
+      <input type="text" id="correct-reason" name="reason" autocomplete="off" required placeholder="Where you checked it, e.g. the Lembaran Negara…">
+      <p class="help">The next reviewer reads this in the audit log.</p>
+    </div>
+    {% if errors.get("correction") %}<p class="error" id="correction-error" role="alert">{{ errors["correction"] | sentence }}.</p>{% endif %}
+    <div class="actions"><button class="button" data-busy="Saving…">Save Correction</button></div>
+  </form>
+</section>
+
+<section id="sources" aria-labelledby="sources-heading">
+  <h2 id="sources-heading">Sources</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Connector</th><th scope="col">Source ID</th><th scope="col">Fetched</th><th scope="col">Listed</th><th scope="col">Page</th></tr></thead>
+      <tbody>
+        {% for source in view.sources %}
+        <tr>
+          <td class="mono" translate="no">{{ source.connector }}</td>
+          <td class="mono wrap-anywhere" translate="no">{{ source.source_id }}</td>
+          <td>{{ source.fetched_at | moment }}</td>
+          <td>{% if source.missing_since %}<span class="badge badge--warning">Gone since {{ source.missing_since | day }}</span>{% else %}Yes{% endif %}</td>
+          <td><a href="{{ source.url }}" rel="noopener noreferrer" target="_blank">Open<span class="visually-hidden"> the source’s page (new tab)</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="content" aria-labelledby="content-heading">
+  <h2 id="content-heading">Files &amp; Texts</h2>
+  {% if view.files or view.texts %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Kind</th><th scope="col">Detail</th><th scope="col">Structure</th><th scope="col">Open</th></tr></thead>
+      <tbody>
+        {% for file in view.files %}
+        <tr>
+          <td>File: {{ file.label | words }}</td>
+          <td>{{ file.media_type }}{% if file.detail %}, {{ file.detail }}{% endif %}</td>
+          <td class="meta">Not parsed</td>
+          <td><a href="{{ here }}/content/{{ file.sha256 }}" target="_blank" rel="noopener">Open File<span class="visually-hidden"> (new tab)</span></a></td>
+        </tr>
+        {% endfor %}
+        {% for text in view.texts %}
+        <tr>
+          <td>Text: <span translate="no">{{ text.label }}</span></td>
+          <td>{{ text.detail }}</td>
+          <td>{% if text.problems %}<span class="badge badge--warning">{{ text.problems | length }} {{ "problem" if text.problems | length == 1 else "problems" }}</span>
+              <div class="meta">{{ text.problems[:3] | join("; ") }}{% if text.problems | length > 3 %}; and more{% endif %}</div>
+              {% else %}<span class="badge badge--ok">Passes</span>{% endif %}</td>
+          <td><a href="{{ here }}/content/{{ text.sha256 }}" target="_blank" rel="noopener">Open Text<span class="visually-hidden"> (new tab)</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty">No file or text is held for this document.</p>{% endif %}
+</section>
+
+<section id="citations" aria-labelledby="citations-heading">
+  <h2 id="citations-heading">Open Citations</h2>
+  <p class="section-note">Citations not linked to a document yet. Most wait for their target to be loaded; link one by hand when the registry holds it under a name the platform can’t match.</p>
+  {% if view.open_citations %}
+  <ul class="items">
+    {% for citation in view.open_citations %}
+    <li class="item">
+      <div class="item__what">
+        <p><strong>{{ citation.relation | words | capitalize }}</strong>{% if citation.from_address %} <span class="meta">from {{ citation.from_address }}</span>{% endif %}</p>
+        <p class="item__summary">“{{ citation.target_text }}”</p>
+        <p class="meta">{% if citation.target_id %}Names <span class="mono" translate="no">{{ citation.target_id }}</span>, which isn’t held yet{% else %}Names no document{% endif %}</p>
+      </div>
+      <form class="inline-form" method="post" action="{{ here }}/citations/{{ citation.id }}/link">
+        {{ csrf_field() }}
+        <div class="field">
+          <label for="target-{{ citation.id }}">Document ID</label>
+          <input type="text" id="target-{{ citation.id }}" name="target_id" autocomplete="off" spellcheck="false" required
+                 placeholder="id:uu:2011:21…" value="{{ citation.target_id or '' }}"
+                 {% if errors.get("citation-" ~ citation.id) %}aria-invalid="true" aria-describedby="citation-{{ citation.id }}-error"{% endif %}>
+        </div>
+        <div class="field">
+          <label for="link-reason-{{ citation.id }}">Reason</label>
+          <input type="text" id="link-reason-{{ citation.id }}" name="reason" autocomplete="off" required placeholder="How you know it’s this one…">
+        </div>
+        {% if errors.get("citation-" ~ citation.id) %}<p class="error" id="citation-{{ citation.id }}-error" role="alert">{{ errors["citation-" ~ citation.id] | sentence }}.</p>{% endif %}
+        <div class="actions"><button class="button" data-busy="Linking…">Link Citation</button></div>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">Every citation of this document is linked.</p>{% endif %}
+</section>
+
+<section id="conflicts" aria-labelledby="conflicts-heading">
+  <h2 id="conflicts-heading">Conflicts</h2>
+  {% if view.conflicts %}
+  <ul class="items">
+    {% for conflict in view.conflicts %}
+    <li class="item">
+      <div class="item__what">
+        <p><strong>{{ FIELD_LABELS[conflict.field] }}</strong></p>
+        <p>Your correction: “{{ conflict.correction | shown }}”</p>
+        <p>The source now says: “{{ conflict.source_value | shown }}”</p>
+        <p class="meta">Detected {{ conflict.detected_at | day }}</p>
+      </div>
+      <form class="inline-form" method="post" action="{{ here }}/conflicts/{{ conflict.id }}">
+        {{ csrf_field() }}
+        <div class="field">
+          <label for="conflict-note-{{ conflict.id }}">Note</label>
+          <input type="text" id="conflict-note-{{ conflict.id }}" name="note" autocomplete="off" required placeholder="Which value is right, and why…">
+        </div>
+        {% if errors.get("conflict-" ~ conflict.id) %}<p class="error" role="alert">{{ errors["conflict-" ~ conflict.id] | sentence }}.</p>{% endif %}
+        <div class="actions">
+          <button class="button" name="decision" value="keep" data-busy="Saving…">Keep Correction</button>
+          <button class="button button--quiet" name="decision" value="accept" data-busy="Saving…">Accept Source Value</button>
+        </div>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">No source disagrees with a correction of this document.</p>{% endif %}
+</section>
+
+<section id="review" aria-labelledby="review-heading">
+  <h2 id="review-heading">Open Review Items</h2>
+  {% if view.open_reviews %}
+  <ul class="items">
+    {% for item in view.open_reviews %}
+    <li class="item">
+      <div class="item__what">
+        <p><strong>{{ REVIEW_QUEUES[item.kind][0] }}</strong></p>
+        <p class="item__summary">{{ item.summary }}</p>
+        <p class="meta">Waiting since {{ item.created_at | day }}</p>
+      </div>
+      {{ decide_form(item, here ~ "#review") }}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">Nothing about this document waits for review.</p>{% endif %}
+</section>
+
+<section id="links" aria-labelledby="links-heading">
+  <h2 id="links-heading">Links</h2>
+  {% for title, rows, other in [("This Document Cites", view.links_out, "Cites"), ("Cited By", view.links_in, "Cited by")] %}
+  <h3 style="margin:16px 0 8px">{{ title }} ({{ rows | length }})</h3>
+  {% if rows %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Relation</th><th scope="col">Document</th><th scope="col">Where</th><th scope="col">How</th></tr></thead>
+      <tbody>
+        {% for link in rows %}
+        <tr>
+          <td>{{ link.type | words }}</td>
+          <td>{% if link.document_title %}{{ document_link(link.document_id, link.document_title) }}{% else %}<span class="mono" translate="no">{{ link.document_id }}</span>{% endif %}</td>
+          <td class="mono">{{ [link.from_address, link.to_address] | select | join(" → ") or "Whole document" }}</td>
+          <td>{{ link.method | words }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty">None.</p>{% endif %}
+  {% endfor %}
+</section>
+
+<section id="status" aria-labelledby="status-heading">
+  <h2 id="status-heading">Status History</h2>
+  {% if view.status_history %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">From</th><th scope="col">Status</th><th scope="col">Applies To</th><th scope="col">Says So</th></tr></thead>
+      <tbody>
+        {% for event in view.status_history %}
+        <tr>
+          <td>{{ event.effective_from | day or "Undated" }}</td>
+          <td>{{ status_badge(event.status) }}</td>
+          <td class="mono">{{ event.address or "Whole document" }}</td>
+          <td>{{ "Another document's link" if event.source == "links" else event.source }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty">No status history yet.</p>{% endif %}
+</section>
+
+<section id="structure" aria-labelledby="structure-heading">
+  <h2 id="structure-heading">Structure</h2>
+  {% if view.provisions %}
+  <p class="section-note">{{ view.provisions_total | count }} provisions in the main text{% if view.provisions_total > view.provisions | length %}; the first {{ view.provisions | length | count }} are shown{% endif %}.</p>
+  <ol class="tree panel" aria-label="Provisions">
+    {% for provision in view.provisions %}
+    <li style="--depth: {{ provision.depth }}">
+      <span class="label">{{ provision.label }}</span>
+      {% if provision.heading %}<span class="heading">{{ provision.heading }}</span>{% endif %}
+      {% if provision.page_start %}<span class="meta">p.&nbsp;{{ provision.page_start }}</span>{% endif %}
+      {% if provision.valid_to %}<span class="badge badge--warning">Changed {{ provision.valid_to | day }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}<p class="empty">The parser found no provisions in this document’s text.</p>{% endif %}
+</section>
+
+<section id="manage" aria-labelledby="manage-heading">
+  <h2 id="manage-heading">Manage</h2>
+  <div class="fields fields--2">
+    <form class="stack panel" method="post" action="{{ here }}/assign-id" data-warn-unsaved>
+      {{ csrf_field() }}
+      <h3>Assign an ID</h3>
+      <p class="help">Renames the document everywhere. Later loads of its source records keep the new ID.</p>
+      <div class="field">
+        <label for="new-id">New ID</label>
+        <input type="text" id="new-id" name="new_id" autocomplete="off" spellcheck="false" required placeholder="ojk:pojk:2019:10…"
+               {% if errors.get("assign") %}aria-invalid="true" aria-describedby="assign-error"{% endif %}>
+      </div>
+      <div class="field">
+        <label for="assign-reason">Reason</label>
+        <input type="text" id="assign-reason" name="reason" autocomplete="off" required placeholder="What identifies it, e.g. the text’s header…">
+      </div>
+      {% if errors.get("assign") %}<p class="error" id="assign-error" role="alert">{{ errors["assign"] | sentence }}.</p>{% endif %}
+      <div class="actions"><button class="button" data-busy="Assigning…">Assign ID</button></div>
+    </form>
+
+    {% if view.suppression %}
+    <form class="stack panel" method="post" action="{{ here }}/restore">
+      {{ csrf_field() }}
+      <h3>Restore</h3>
+      <p class="help">Publishes the document again, so the assistant can cite it.</p>
+      <div class="field">
+        <label for="restore-reason">Reason</label>
+        <input type="text" id="restore-reason" name="reason" autocomplete="off" required placeholder="Why it should be cited again…">
+      </div>
+      {% if errors.get("restore") %}<p class="error" role="alert">{{ errors["restore"] | sentence }}.</p>{% endif %}
+      <div class="actions"><button class="button" data-busy="Restoring…">Restore Document</button></div>
+    </form>
+    {% else %}
+    <form class="stack panel" method="post" action="{{ here }}/suppress">
+      {{ csrf_field() }}
+      <h3>Suppress</h3>
+      <p class="help">Removes the document from what the assistant can cite. The registry keeps it, and you can restore it.</p>
+      <div class="field">
+        <label for="suppress-reason">Reason</label>
+        <input type="text" id="suppress-reason" name="reason" autocomplete="off" required placeholder="e.g. duplicate of ojk:pojk:2019:10…">
+      </div>
+      <label class="check"><input type="checkbox" name="confirm" value="yes" required> Yes, stop the assistant citing this document.</label>
+      {% if errors.get("suppress") %}<p class="error" role="alert">{{ errors["suppress"] | sentence }}.</p>{% endif %}
+      <div class="actions"><button class="button button--danger" data-busy="Suppressing…">Suppress Document</button></div>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
