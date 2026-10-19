@@ -13,6 +13,7 @@ from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks, 
 from metamorph_platform.adapters.postgres.health import PostgresHealth
 from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, PostgresRegistry, PostgresReviewQueue
 from metamorph_platform.adapters.postgres.publishing import PostgresPublication
+from metamorph_platform.adapters.postgres.reviews import PostgresOpenReviews
 from metamorph_platform.adapters.postgres.views import PostgresCurationViews
 from metamorph_platform.adapters.web.accounts import Accounts
 from metamorph_platform.adapters.web.app import ServicesFactory, WebServices, create_app
@@ -24,6 +25,7 @@ from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.publish import Publish
 from metamorph_platform.application.resolve_citations import ResolveCitations
+from metamorph_platform.application.settle_reviews import SettleReviews
 from metamorph_platform.config import Settings
 
 
@@ -57,6 +59,10 @@ def parse_texts(connection: psycopg.Connection, settings: Settings) -> ParseText
 
 def resolve_citations(connection: psycopg.Connection) -> ResolveCitations:
     return ResolveCitations(PostgresCitationLinks(connection), PostgresReviewQueue(connection))
+
+
+def settle_reviews(connection: psycopg.Connection) -> SettleReviews:
+    return SettleReviews(PostgresOpenReviews(connection))
 
 
 def compute_validity(connection: psycopg.Connection) -> ComputeValidity:

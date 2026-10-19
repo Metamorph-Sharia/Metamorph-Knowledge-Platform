@@ -12,9 +12,8 @@ from metamorph_platform.application.ports import BlobReader, ParsedText, ParsedT
 from metamorph_platform.domain.citations import text_citations
 from metamorph_platform.domain.dates import text_dates
 from metamorph_platform.domain.loading import ReviewKind
+from metamorph_platform.domain.reviews import MAX_PROBLEMS_SHOWN
 from metamorph_platform.domain.structure import PARSER_VERSION, grammar_for, parse
-
-MAX_PROBLEMS_SHOWN = 20
 
 
 @dataclass

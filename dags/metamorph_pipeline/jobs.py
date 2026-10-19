@@ -88,7 +88,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             collect="ojk-connector run",
             export="ojk-connector export --format v2 --out {out} --run-id {run_id}",
             mounts=(data("OJK-Source-Connector"), Mount(ojk_credentials, OJK_CREDENTIALS), bundles),
-            description="OJK via RegAlert: discover, read, check standing, export",
+            description="OJK via JDIH OJK (OJK's legal database): discover, read entries and official files, export",
             tags=("ojk",),
         ),
         ConnectorJob(

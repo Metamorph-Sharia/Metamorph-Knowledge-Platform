@@ -19,15 +19,18 @@ from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, Statu
 PARSED_CITATION_CONFIDENCE = "medium"  # found by pattern in the text: reliable, not checked by a person
 CHANGING_LINKS = ("revokes", "supersedes", "partly_revokes", "amends")
 
-_TEXTS_TO_PARSE = """
+# The text whose structure is parsed: the Indonesian text of the document's main file, or one with no file.
+MAIN_TEXT = """t.language = 'id'
+  AND (t.of_file IS NULL OR EXISTS (
+        SELECT 1 FROM registry.document_file f
+        WHERE f.document_id = t.document_id AND f.sha256 = t.of_file AND f.role = 'main'))"""
+
+_TEXTS_TO_PARSE = f"""
 SELECT t.id, t.document_id, d.issuer, d.family, t.sha256, b.storage_key
 FROM registry.text_version t
 JOIN registry.document d ON d.id = t.document_id
 JOIN registry.blob b ON b.sha256 = t.sha256
-WHERE t.is_current AND t.language = 'id'
-  AND (t.of_file IS NULL OR EXISTS (
-        SELECT 1 FROM registry.document_file f
-        WHERE f.document_id = t.document_id AND f.sha256 = t.of_file AND f.role = 'main'))
+WHERE t.is_current AND {MAIN_TEXT}
   AND (%(everything)s OR t.parsed_with IS DISTINCT FROM %(version)s)
 ORDER BY t.id
 """

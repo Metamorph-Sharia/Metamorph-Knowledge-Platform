@@ -18,6 +18,7 @@ from metamorph_platform.domain.dates import TextDates
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
+from metamorph_platform.domain.reviews import TextStanding
 from metamorph_platform.domain.structure import Structure
 from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, StatusChange
 
@@ -90,6 +91,30 @@ class Overrides(Protocol):
 class ReviewQueue(Protocol):
     def ensure_open(self, kind: ReviewKind, subject: Mapping[str, Any]) -> None:
         """Open a review item unless one is already open for the same subject."""
+
+
+@dataclass(frozen=True)
+class OpenReview:
+    id: int
+    kind: ReviewKind
+    subject: Mapping[str, Any]
+
+
+class OpenReviews(Protocol):
+    """The queue's open items, what the registry now holds about each, and settling one that needs no person."""
+
+    def open_items(self) -> list[OpenReview]: ...
+
+    def text_standing(self, document_id: str, text_sha256: str) -> TextStanding | None:
+        """None when the registry no longer has that text version."""
+
+    def still_unlinked(self, document_id: str, target_text: str) -> bool:
+        """Whether the document still has a citation with that text and no link."""
+
+    def document_exists(self, document_id: str) -> bool: ...
+
+    def settle(self, item_id: int, reason: str) -> None:
+        """Resolve the item as the platform, with the reason, audited like a curator's decision."""
 
 
 class PublicationSource(Protocol):

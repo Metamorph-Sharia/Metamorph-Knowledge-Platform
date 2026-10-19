@@ -28,7 +28,7 @@ pytestmark = pytest.mark.database
 TARGET_TEXT = """\
 PERATURAN OTORITAS JASA KEUANGAN
 NOMOR 35/POJK.05/2018
-Pasal 30
+Pasal 110
 Dihapus nanti.
 Pasal 115
 (1) Perusahaan wajib melapor.
@@ -44,7 +44,7 @@ Beberapa ketentuan dalam Peraturan Otoritas Jasa Keuangan Nomor 35/POJK.05/2018 
 1. Ketentuan Pasal 115 diubah sehingga berbunyi sebagai berikut:
 Pasal 115
 (1) Perusahaan wajib melapor setiap bulan.
-2. Pasal 30 dihapus.
+2. Pasal 110 dihapus.
 Pasal II
 Peraturan Otoritas Jasa Keuangan ini mulai berlaku pada tanggal diundangkan.
 Ditetapkan di Jakarta
@@ -121,8 +121,8 @@ def test_an_amendment_links_dates_and_expires_the_articles_it_changes(db, blobs,
     links = "SELECT type, from_address, to_document, to_address FROM published.link ORDER BY to_address NULLS FIRST"
     assert rows(db, links) == [
         ("amends", "pasal-i", "ojk:pojk:2018:35", None),
+        ("partly_revokes", "pasal-i", "ojk:pojk:2018:35", "pasal-110"),
         ("amends", "pasal-i", "ojk:pojk:2018:35", "pasal-115"),
-        ("partly_revokes", "pasal-i", "ojk:pojk:2018:35", "pasal-30"),
     ]  # fmt: skip
     assert rows(db, "SELECT effective_on, enacted_on FROM published.document WHERE id = 'ojk:pojk:2022:7'") == [
         (date(2022, 2, 27), date(2022, 2, 25))
@@ -130,7 +130,7 @@ def test_an_amendment_links_dates_and_expires_the_articles_it_changes(db, blobs,
     assert rows(
         db, "SELECT address, valid_to FROM published.provision WHERE document_id = 'ojk:pojk:2018:35' ORDER BY ordinal"
     ) == [
-        ("pasal-30", date(2022, 2, 27)),
+        ("pasal-110", date(2022, 2, 27)),
         ("pasal-115", date(2022, 2, 27)),
         ("pasal-115/ayat-1", date(2022, 2, 27)),
         ("pasal-115/ayat-2", date(2022, 2, 27)),
@@ -140,7 +140,7 @@ def test_an_amendment_links_dates_and_expires_the_articles_it_changes(db, blobs,
     ]
     assert rows(
         db, "SELECT address, status FROM published.status_event WHERE source = 'links' ORDER BY address NULLS FIRST"
-    ) == [(None, "amended"), ("pasal-115", "amended"), ("pasal-30", "revoked")]
+    ) == [(None, "amended"), ("pasal-110", "revoked"), ("pasal-115", "amended")]
 
 
 def test_building_again_changes_nothing(db, blobs, tmp_path) -> None:

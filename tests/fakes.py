@@ -13,6 +13,7 @@ from metamorph_platform.application.ports import (
     Curator,
     NewLink,
     OpenCitation,
+    OpenReview,
     ParsedText,
     StoredBlob,
     TextToParse,
@@ -21,6 +22,7 @@ from metamorph_platform.domain.curation import ActiveOverride
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
+from metamorph_platform.domain.reviews import TextStanding
 from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, StatusChange
 
 
@@ -244,3 +246,29 @@ class MemoryCurationActions:
 
     def record(self, curator, action, target, after, reason):
         self.calls.append((curator, action, dict(target), after, reason))
+
+
+class MemoryOpenReviews:
+    """Open review items, and the registry facts that decide them."""
+
+    def __init__(self, items: list[OpenReview]) -> None:
+        self.items = items
+        self.standings: dict[tuple[str, str], TextStanding] = {}
+        self.unlinked: set[tuple[str, str]] = set()
+        self.documents: set[str] = set()
+        self.settled: dict[int, str] = {}
+
+    def open_items(self) -> list[OpenReview]:
+        return [item for item in self.items if item.id not in self.settled]
+
+    def text_standing(self, document_id: str, text_sha256: str) -> TextStanding | None:
+        return self.standings.get((document_id, text_sha256))
+
+    def still_unlinked(self, document_id: str, target_text: str) -> bool:
+        return (document_id, target_text) in self.unlinked
+
+    def document_exists(self, document_id: str) -> bool:
+        return document_id in self.documents
+
+    def settle(self, item_id: int, reason: str) -> None:
+        self.settled[item_id] = reason

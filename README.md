@@ -44,13 +44,14 @@ uv run --env-file .env metamorph publish [--all]        # refresh `published` (e
 ## Build the registry
 
 ```bash
-uv run --env-file .env metamorph build        # parse → resolve → validity → publish; run it after loading
+uv run --env-file .env metamorph build        # parse → resolve → settle reviews → validity → publish; run it after loading
 ```
 
 | Step | Command | What it does |
 |---|---|---|
 | Parse | `metamorph parse [--all]` | Each new or changed main text becomes a provision tree (`domain/structure/`) with citations found in the text (`domain/citations.py`) and the dates it states (`domain/dates.py`). A text whose structure fails the quality checks is queued as `structure_suspect` |
 | Resolve | `metamorph resolve` | Citations become links when their target is held. A target not held yet waits and links once its connector loads it |
+| Settle reviews | `metamorph settle` | Review items whose cause has gone are resolved by the platform (`metamorph-platform`), each with its reason and an audit row: a replaced or re-parsed clean text, a file that is no longer the main text, a citation now linked or no longer made, a placeholder document since identified. The rest are counted as needing a person. Conflicts and quarantined lines always wait for a person |
 | Validity | `metamorph validity` | Amending and revoking links become status events and article end dates (`valid_to`) |
 | Publish | `metamorph publish` | Refreshes `published` for every document any step changed |
 
