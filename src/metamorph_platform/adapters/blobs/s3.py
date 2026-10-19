@@ -8,11 +8,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from metamorph_platform.application.ports import StoredBlob
 
 _NOT_FOUND = {"404", "NoSuchKey", "NotFound"}
+LINK_LIFETIME_SECONDS = 15 * 60  # long enough to open a file or upload 100 MB
 
 
 def storage_key(sha256: str) -> str:
@@ -39,6 +41,16 @@ class S3BlobStore:
     def read(self, key: str) -> bytes:
         return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
 
+    def allow_uploads_from(self, origins: list[str]) -> None:
+        """Browsers on these origins (the curation web app) may PUT files into the bucket through presigned links."""
+        rule = {
+            "AllowedOrigins": origins,
+            "AllowedMethods": ["PUT"],
+            "AllowedHeaders": ["content-type"],
+            "MaxAgeSeconds": 3600,
+        }
+        self.client.put_bucket_cors(Bucket=self.bucket, CORSConfiguration={"CORSRules": [rule]})
+
     def ensure_bucket(self) -> bool:
         """Create the bucket if it doesn't exist; True when it was created."""
         try:
@@ -57,4 +69,41 @@ class S3BlobStore:
         except ClientError as error:
             if error.response["Error"]["Code"] in _NOT_FOUND:
                 return False
+            raise
+
+
+class S3FileLinks:
+    """Short-lived links straight to the bucket, so files never pass through the API or the web app.
+
+    `public_endpoint_url`: the address browsers reach the store at, when it isn't the one this process uses
+    (locally the API reaches SeaweedFS as objectstore:8333, a browser as localhost:8333). Unset on AWS S3.
+    """
+
+    def __init__(self, bucket: str, endpoint_url: str | None = None, *, public_endpoint_url: str | None = None) -> None:
+        self.bucket = bucket
+        self.client = boto3.client("s3", endpoint_url=endpoint_url)
+        # SigV4 explicitly: S3-compatible stores (SeaweedFS) refuse other presigned signatures
+        self.signer = boto3.client(
+            "s3", endpoint_url=public_endpoint_url or endpoint_url, config=Config(signature_version="s3v4")
+        )
+
+    def download_url(self, storage_key: str, *, name: str, media_type: str) -> str:
+        parameters = {
+            "Bucket": self.bucket,
+            "Key": storage_key,
+            "ResponseContentType": media_type,
+            "ResponseContentDisposition": f'inline; filename="{name}"',
+        }
+        return self.signer.generate_presigned_url("get_object", Params=parameters, ExpiresIn=LINK_LIFETIME_SECONDS)
+
+    def upload_url(self, key: str, *, media_type: str) -> str:
+        parameters = {"Bucket": self.bucket, "Key": key, "ContentType": media_type}
+        return self.signer.generate_presigned_url("put_object", Params=parameters, ExpiresIn=LINK_LIFETIME_SECONDS)
+
+    def uploaded(self, key: str) -> bytes | None:
+        try:
+            return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        except ClientError as error:
+            if error.response["Error"]["Code"] in _NOT_FOUND:
+                return None
             raise

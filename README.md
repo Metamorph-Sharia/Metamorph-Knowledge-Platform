@@ -16,6 +16,7 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | [docs/published-schema.md](docs/published-schema.md) | **The read contract** for the Knowledge and Retrieval layer: tables, IDs, provision addresses, links, validity |
 | [docs/curation-workflow-design.md](docs/curation-workflow-design.md) | The publish gate, held documents, approving as is, and text correction |
 | [docs/curation-workflow-implementation-plan.md](docs/curation-workflow-implementation-plan.md) | How that design is built: two releases, step by step, test lists first |
+| [docs/curation-web-separation-design.md](docs/curation-web-separation-design.md) | The curation web app in its own repository (Next.js + TypeScript) over the curation JSON API; migration plan (Phases 1 to 3 built) |
 
 ## The database
 
@@ -38,7 +39,8 @@ docker compose down              # keep data; add -v to wipe it
 
 ```bash
 cp .env.example .env                                    # dev settings for the compose stack
-uv run --env-file .env metamorph storage init           # once: create the blob bucket
+uv run --env-file .env metamorph storage init           # once: create the blob bucket (add --upload-origin URL
+                                                        # for each curation web app origin that uploads files)
 uv run --env-file .env metamorph load PATH/TO/BUNDLE --publish
 uv run --env-file .env metamorph publish [--all]        # refresh `published` (e.g. after curation)
 ```
@@ -92,31 +94,24 @@ docker compose exec postgres sh /docker-entrypoint-initdb.d/02-bi.sh   # only on
 - **Code changes:** images contain their code. After changing a connector, rebuild with `docker compose --profile connectors build <name>-connector`.
 - **Starting:** the DAGs ship paused. To try one without scheduling it, run `docker compose exec airflow airflow dags test ingest_dsn_fatwa`. To run unattended, unpause the DAGs in the UI, or with `airflow dags unpause <dag_id>`.
 
-## Curate (the web app)
+## Curate
 
-The Metamorph team's console at http://localhost:8000 (`docker compose up -d web`, or `uv run --env-file .env metamorph web` on the host).
+The Metamorph team's console is **[Metamorph-Curation-Web](../Metamorph-Curation-Web)** (Next.js and TypeScript), in its own repository. The compose `web` service builds it from there and serves it at http://localhost:8000 (`docker compose up -d web`). It calls the platform only through the **curation JSON API**.
 
-- **Overview:** held documents, review queue counts, ingestion health, the registry by issuer, and the latest loads.
-- **Held:** the documents the publish gate holds back, with why, filterable by check (unidentified, no main text, not parsed yet, structure). Those whose last good version is still published come first.
-- **Review:** one queue each for conflicts, unlinked citations and quarantined lines. The queue and page are in the URL. Every item is resolved or dismissed with a note.
-- **Document:** for each field, the published value beside every source's value. Also its sources, files and texts, open citations, links in and out, status history, provision tree and review items.
-- **Actions:**
-  - correct or withdraw a field;
-  - assign a canonical ID (the document is renamed everywhere, and later loads keep the ID);
-  - suppress or restore a document;
-  - link a citation by hand;
-  - keep a correction, or accept the source's new value;
-  - approve a text's structure problems as they are (a genuine gap), or withdraw the approval. It holds for exactly that text and those problems: a new text or a parser that reads it differently lapses it;
-  - correct a main text's wording (**Edit Text**): a damaged heading, an article typed in from the official PDF. The correction is an overlay: the source's text stays, the corrected wording is stored beside it, parsed and checked within the request, and published if the document passes. A paged text must keep its page markers. Withdrawing it brings the source's text back. When the source later sends a new text, the correction no longer applies, and the document page says so, with the old changes to compare;
-  - add a manual document. It loads as a one-document `manual` bundle, the same path as every connector.
+**The curation JSON API** is `metamorph api` (`adapters/api/`; `docker compose up -d api`, at http://localhost:8001/api/v1):
+- **Reads:** the overview, the held list, the review queues, search, a document's full view, a text to edit, a correction's changes, and file links.
+- **Actions:** correcting and withdrawing fields; approving a text's problems as they are; correcting a text's wording and withdrawing it; suppressing and restoring; assigning an ID; linking citations; deciding conflicts and review items; adding a document. Each action calls exactly one curation use case, then parses, publishes and re-checks the publish gate before it answers.
+- **Sign-in:** `POST /api/v1/auth/session` returns a short-lived session token (ADR-4).
+- **Files:** they move through short-lived S3 links. The bucket must let the web app's origin upload: `metamorph storage init --upload-origin URL`.
+- **The contract** is [docs/api/openapi.json](docs/api/openapi.json). A test keeps it in step with the code; regenerate it with `uv run python -m metamorph_platform.adapters.api.openapi`. Design and history: [docs/curation-web-separation-design.md](docs/curation-web-separation-design.md).
 
-Every action needs a reason. It is written to `curation.audit_log` in the same transaction as the change; then what changed is parsed and published at once.
+Every action needs a reason. It is written to `curation.audit_log` in the same transaction as the change.
 
 **Behaviour:**
 - **Corrections are overlays:** a reload never undoes one. A source that later changes a corrected field raises a conflict.
-- **File access:** files and texts are served through the app, behind sign-in, so the object store stays private.
+- **File access:** a file opens through a short-lived link the API signs. The object store stays private otherwise.
 
-**Accounts:** team accounts come from `METAMORPH_CURATORS`, a JSON list of `{username, name, password_hash}` (see `.env.example`). Make a hash with `uv run metamorph curator hash-password`, and set `METAMORPH_WEB_SECRET` to `openssl rand -hex 32`. Without them, the app refuses to start and says why.
+**Accounts:** team accounts come from `METAMORPH_CURATORS`, a JSON list of `{username, name, password_hash}` (see `.env.example`). Make a hash with `uv run metamorph curator hash-password`. Set `METAMORPH_WEB_SECRET`, which signs the session tokens, to `openssl rand -hex 32`. Without them, `metamorph api` refuses to start and says why.
 
 ## Develop
 

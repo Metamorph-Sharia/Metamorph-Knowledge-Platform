@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from metamorph_platform.adapters.web.accounts import Accounts, AccountsError, hash_password
+from metamorph_platform.adapters.api.accounts import Accounts, AccountsError, hash_password
 
 
 @pytest.fixture(scope="module")

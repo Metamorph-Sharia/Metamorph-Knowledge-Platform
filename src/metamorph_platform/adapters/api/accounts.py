@@ -1,4 +1,4 @@
-"""The team's accounts for the curation app (local phase): from METAMORPH_CURATORS, hashed with PBKDF2.
+"""The team's curation accounts (the curation API signs them in): from METAMORPH_CURATORS, hashed with PBKDF2.
 
     METAMORPH_CURATORS='[{"username": "ani", "name": "Ani Rahma", "password_hash": "pbkdf2_sha256$…"}]'
 

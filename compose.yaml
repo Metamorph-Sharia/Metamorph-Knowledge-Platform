@@ -86,25 +86,40 @@ services:
       retries: 20
       start_period: 60s
 
-  web:                                      # the curation app (Phase 7): http://localhost:8000
+  web:                                      # the curation app (Metamorph-Curation-Web): http://localhost:8000
+    build: {context: ../Metamorph-Curation-Web}   # its own repository, beside this one
+    image: metamorph/curation-web:dev
+    environment:
+      METAMORPH_API_URL: http://api:8001        # the API on the compose network; browsers never call it
+    ports: ["${WEB_PORT:-8000}:3000"]
+    depends_on:
+      api: {condition: service_healthy}
+    restart: on-failure:3
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/sign-in').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))\""]
+      interval: 15s
+      retries: 5
+
+  api:                                      # the curation JSON API, which the curation app calls: http://localhost:8001/api/v1
     image: metamorph-platform:dev
-    command: ["web", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["api", "--host", "0.0.0.0", "--port", "8001"]
     environment:
       METAMORPH_DATABASE_URL: *database-url
       METAMORPH_S3_ENDPOINT_URL: http://objectstore:8333
+      METAMORPH_S3_PUBLIC_ENDPOINT_URL: http://localhost:${S3_PORT:-8333}   # file links are opened by browsers
       METAMORPH_S3_BUCKET: ${METAMORPH_S3_BUCKET:-metamorph-blobs}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-metamorph}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-metamorph-dev-secret}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-      METAMORPH_CURATORS: ${METAMORPH_CURATORS:-}    # unset: the app refuses to start and says why
-      METAMORPH_WEB_SECRET: ${METAMORPH_WEB_SECRET:-}
-    ports: ["${WEB_PORT:-8000}:8000"]
+      METAMORPH_CURATORS: ${METAMORPH_CURATORS:-}    # the same accounts as the HTML app; unset: it refuses to start
+      METAMORPH_WEB_SECRET: ${METAMORPH_WEB_SECRET:-}  # signs the session tokens
+    ports: ["${API_PORT:-8001}:8001"]
     depends_on:
       migrate: {condition: service_completed_successfully}
       objectstore: {condition: service_healthy}
     restart: on-failure:3
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')\""]
       interval: 15s
       retries: 5
 

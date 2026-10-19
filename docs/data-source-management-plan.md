@@ -54,7 +54,8 @@ src/metamorph_platform/
     postgres/      psycopg3 repositories + migrations/ (numbered plain-SQL files, tiny runner)
     blobs/         s3.py (any S3 API via boto3: SeaweedFS locally, cloud S3/GCS later), local.py (tests and dev)
     bundles/       local-directory reader
-    web/           FastAPI + Jinja2 server-rendered curation app (calls curate/review use cases only)
+    web/           FastAPI + Jinja2 server-rendered curation app (calls curate/review use cases only);
+                   retired 2026-10-19 for Metamorph-Curation-Web over adapters/api (curation-web-separation-design.md)
   wiring.py        the single composition root
   cli.py           `platform db migrate | load <bundle> | resolve | parse | validity | publish | health | web`
 dags/              Airflow DAG files (framework layer; they call containers and the CLI only)

@@ -47,7 +47,15 @@ def _parser() -> argparse.ArgumentParser:
     database.add_parser("status", help="list applied and pending migrations").set_defaults(run=_status)
 
     storage = commands.add_parser("storage", help="object store").add_subparsers(required=True, metavar="ACTION")
-    storage.add_parser("init", help="create the blob bucket if it doesn't exist").set_defaults(run=_storage_init)
+    init = storage.add_parser("init", help="create the blob bucket if it doesn't exist")
+    init.add_argument(
+        "--upload-origin",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="let browsers on this origin (the curation web app) upload files into the bucket; repeatable",
+    )
+    init.set_defaults(run=_storage_init)
 
     load = commands.add_parser("load", help="load a connector's contract v2 bundle into the registry")
     load.add_argument("bundle", type=Path, help="the bundle directory (manifest.json, documents.jsonl, blobs/)")
@@ -80,10 +88,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     health.set_defaults(run=_health)
 
-    web = commands.add_parser("web", help="serve the curation app")
-    web.add_argument("--host", default="127.0.0.1", help="0.0.0.0 inside a container")
-    web.add_argument("--port", type=int, default=8000)
-    web.set_defaults(run=_web)
+    api = commands.add_parser("api", help="serve the curation JSON API (/api/v1) for the curation web app")
+    api.add_argument("--host", default="127.0.0.1", help="0.0.0.0 inside a container")
+    api.add_argument("--port", type=int, default=8001)
+    api.set_defaults(run=_api)
     curator = commands.add_parser("curator", help="curation app accounts").add_subparsers(
         required=True, metavar="ACTION"
     )
@@ -108,9 +116,13 @@ def _status(settings: Settings, _: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _storage_init(settings: Settings, _: argparse.Namespace) -> int:
-    created = wiring.blob_store(settings).ensure_bucket()
+def _storage_init(settings: Settings, arguments: argparse.Namespace) -> int:
+    blobs = wiring.blob_store(settings)
+    created = blobs.ensure_bucket()
     print(f"bucket {settings.s3_bucket}: {'created' if created else 'already there'}")
+    if arguments.upload_origin:
+        blobs.allow_uploads_from(arguments.upload_origin)
+        print(f"uploads allowed from {', '.join(arguments.upload_origin)}")
     return EXIT_OK
 
 
@@ -170,17 +182,17 @@ def _build(settings: Settings, arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _web(settings: Settings, arguments: argparse.Namespace) -> int:
+def _api(settings: Settings, arguments: argparse.Namespace) -> int:
     import uvicorn
 
-    uvicorn.run(wiring.web_app(settings), host=arguments.host, port=arguments.port, proxy_headers=True)
+    uvicorn.run(wiring.api_app(settings), host=arguments.host, port=arguments.port, proxy_headers=True)
     return EXIT_OK
 
 
 def _hash_password(_: None, __: argparse.Namespace) -> int:
     from getpass import getpass
 
-    from metamorph_platform.adapters.web.accounts import hash_password
+    from metamorph_platform.adapters.api.accounts import hash_password
 
     password = getpass("Password: ")
     if len(password) < MIN_PASSWORD_LENGTH or password != getpass("Again: "):

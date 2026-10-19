@@ -7,7 +7,10 @@ from contextlib import contextmanager
 
 import psycopg
 
-from metamorph_platform.adapters.blobs.s3 import S3BlobStore
+from metamorph_platform.adapters.api.accounts import Accounts
+from metamorph_platform.adapters.api.app import ApiServices, create_api
+from metamorph_platform.adapters.api.app import ServicesFactory as ApiServicesFactory
+from metamorph_platform.adapters.blobs.s3 import S3BlobStore, S3FileLinks
 from metamorph_platform.adapters.postgres.curation import PostgresCurationActions, PostgresOverrides
 from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks, PostgresParsedTexts, PostgresValidity
 from metamorph_platform.adapters.postgres.health import PostgresHealth
@@ -15,8 +18,6 @@ from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, P
 from metamorph_platform.adapters.postgres.publishing import PostgresPublication
 from metamorph_platform.adapters.postgres.reviews import PostgresOpenReviews
 from metamorph_platform.adapters.postgres.views import PostgresCurationViews
-from metamorph_platform.adapters.web.accounts import Accounts
-from metamorph_platform.adapters.web.app import ServicesFactory, WebServices, create_app
 from metamorph_platform.application.add_manual_document import AddManualDocument
 from metamorph_platform.application.check_health import CheckHealth
 from metamorph_platform.application.compute_validity import ComputeValidity
@@ -73,27 +74,37 @@ def check_health(connection: psycopg.Connection) -> CheckHealth:
     return CheckHealth(PostgresHealth(connection))
 
 
-def web_services(settings: Settings) -> ServicesFactory:
-    """One connection per request: the app's threads never share one."""
+def api_services(settings: Settings) -> ApiServicesFactory:
+    """One connection per request, as for the HTML app."""
 
     @contextmanager
-    def open_services() -> Iterator[WebServices]:
+    def open_services() -> Iterator[ApiServices]:
         with connect(settings) as connection:
-            views, actions = PostgresCurationViews(connection), PostgresCurationActions(connection)
-            blobs = blob_store(settings)
-            yield WebServices(
+            views, actions, blobs = (
+                PostgresCurationViews(connection),
+                PostgresCurationActions(connection),
+                blob_store(settings),
+            )
+            yield ApiServices(
                 views=views,
                 curate=Curate(actions),
+                correct_text=CorrectText(actions, actions, blobs, blobs),
                 add_manual=AddManualDocument(load_bundle(connection, settings), actions, known=views.exists),
+                parse=parse_texts(connection, settings),
                 publish=publish(connection, settings),
                 blobs=blobs,
-                correct_text=CorrectText(actions, actions, blobs, blobs),
-                parse=parse_texts(connection, settings),
+                files=file_links(settings),
             )
 
     return open_services
 
 
-def web_app(settings: Settings):
-    curators, secret = settings.require_web()
-    return create_app(web_services(settings), Accounts.from_json(curators), secret)
+def file_links(settings: Settings) -> S3FileLinks:
+    return S3FileLinks(
+        settings.s3_bucket, settings.s3_endpoint_url, public_endpoint_url=settings.s3_public_endpoint_url
+    )
+
+
+def api_app(settings: Settings):
+    curators, secret = settings.require_curation()
+    return create_api(api_services(settings), Accounts.from_json(curators), secret)

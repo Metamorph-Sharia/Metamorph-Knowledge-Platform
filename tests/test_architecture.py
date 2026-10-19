@@ -1,6 +1,6 @@
 """The dependency rule, enforced: source-code dependencies point inward only.
 
-    domain  →  application  →  adapters  →  entry points (cli, wiring, config, web, dags)
+    domain  →  application  →  adapters  →  entry points (cli, wiring, config, dags)
 
 Inner rings import only the standard library, the contract package and rings further in.
 Adapted from BPK-Source-Connector/tests/test_architecture.py.
