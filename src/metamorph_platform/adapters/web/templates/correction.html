@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% set section = "documents" %}
+{% set here = "/documents/" ~ (correction.document_id | urlencode) %}
+{% block title %}Correction of {{ correction.citation }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Text Correction</h1>
+  <p class="lede"><a href="{{ here }}#content">{{ correction.citation }}</a>. By {{ correction.note.author }} on {{ correction.note.created_at | day }}: “{{ correction.note.reason }}”.</p>
+</div>
+
+{% if not correction.active %}<p class="notice notice--held">This correction was withdrawn.</p>
+{% elif not correction.current %}<p class="notice notice--held">The source has since sent a new text, so this correction no longer applies. Compare it with the new text, then correct that one if it needs the same fix.</p>
+{% endif %}
+
+<p class="section-note">Lines starting with − are the source’s, lines starting with + are the correction’s.</p>
+<pre class="panel diff">{% for line in diff %}<span class="diff__{% if line.startswith('+') %}add{% elif line.startswith('-') %}remove{% else %}same{% endif %}">{{ line }}</span>
+{% endfor %}</pre>
+{% endblock %}

@@ -9,12 +9,13 @@ from metamorph_contract import Bundle
 from platform_samples import document, unresolved, write_bundle
 
 from metamorph_platform.adapters.postgres.curation import PostgresCurationActions, PostgresOverrides
-from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks
+from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks, PostgresParsedTexts
 from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, PostgresRegistry, PostgresReviewQueue
 from metamorph_platform.adapters.postgres.migrate import migrate
 from metamorph_platform.adapters.postgres.publishing import PostgresPublication
 from metamorph_platform.application.curate import Curate
 from metamorph_platform.application.load_bundle import LoadBundle
+from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.ports import CurationRefused, Curator
 from metamorph_platform.application.publish import Publish
 from metamorph_platform.application.resolve_citations import ResolveCitations
@@ -48,8 +49,10 @@ class Platform:
         LoadBundle(PostgresIngestLedger(self.db), registry, BLOBS, reviews, overrides).run(Bundle(directory), uri="x")
 
     def publish(self) -> dict:
+        """Parse, then publish, as a build does: the publish gate only lets parsed texts through."""
+        ParseTexts(PostgresParsedTexts(self.db), BLOBS).run()
         publication = PostgresPublication(self.db)
-        return Publish(publication, publication, BLOBS).run().counts()
+        return Publish(publication, publication, BLOBS, holds=publication).run().counts()
 
     def one(self, query: str, *params):
         return self.db.execute(query, params).fetchone()
@@ -124,10 +127,7 @@ def test_an_assigned_id_renames_the_document_and_keeps_applying_on_reload(platfo
         2014,
     )
     assert platform.one("SELECT document_id FROM registry.document_source") == ("ojk:pojk:2014:6",)
-    assert (report["added"], report["removed"]) == (1, 1)
-    assert platform.one(
-        "SELECT count(*) FROM curation.review_item WHERE kind = 'unresolved_id' AND state = 'open'"
-    ) == (0,)
+    assert (report["added"], report["removed"]) == (1, 0)  # under its placeholder it was held, never published
 
 
 def test_an_assigned_id_already_in_use_is_refused(platform) -> None:
@@ -159,4 +159,4 @@ def test_every_action_is_in_the_audit_log_with_its_author_and_reason(platform) -
 
     rows = platform.db.execute("SELECT author, action, reason FROM curation.audit_log ORDER BY id").fetchall()
     assert rows == [("ani", "correct", "Tanggal berlaku"), ("ani", "withdraw_correction", "Sumber sudah benar")]
-    assert platform.one("SELECT display_name FROM curation.curator") == ("Ani Rahma",)
+    assert platform.one("SELECT display_name FROM curation.curator WHERE username = 'ani'") == ("Ani Rahma",)

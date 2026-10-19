@@ -25,13 +25,17 @@ MAIN_TEXT = """t.language = 'id'
         SELECT 1 FROM registry.document_file f
         WHERE f.document_id = t.document_id AND f.sha256 = t.of_file AND f.role = 'main'))"""
 
+# The content to parse is the text's effective one: a curator's active correction of it, or its own.
 _TEXTS_TO_PARSE = f"""
-SELECT t.id, t.document_id, d.issuer, d.family, t.sha256, b.storage_key
+SELECT t.id, t.document_id, d.issuer, d.family,
+       coalesce(c.sha256, t.sha256), coalesce(c.storage_key, b.storage_key)
 FROM registry.text_version t
 JOIN registry.document d ON d.id = t.document_id
 JOIN registry.blob b ON b.sha256 = t.sha256
+LEFT JOIN curation.text_correction c ON c.document_id = t.document_id AND c.corrects_sha256 = t.sha256 AND c.active
 WHERE t.is_current AND {MAIN_TEXT}
-  AND (%(everything)s OR t.parsed_with IS DISTINCT FROM %(version)s)
+  AND (%(everything)s OR t.parsed_with IS DISTINCT FROM %(version)s
+       OR t.parsed_sha256 IS DISTINCT FROM coalesce(c.sha256, t.sha256))
 ORDER BY t.id
 """
 
@@ -62,12 +66,13 @@ class PostgresParsedTexts:
             self._replace_citations(parsed)
             self.connection.execute(
                 """
-                UPDATE registry.text_version SET parsed_with = %s, structure_problems = %s,
+                UPDATE registry.text_version SET parsed_with = %s, parsed_sha256 = %s, structure_problems = %s,
                     stated_enacted_on = %s, stated_promulgated_on = %s, stated_effective_on = %s
                 WHERE id = %s
                 """,
                 (
                     parsed.parser_version,
+                    text.sha256,
                     json.dumps(parsed.structure.problems),
                     parsed.dates.enacted,
                     parsed.dates.promulgated,

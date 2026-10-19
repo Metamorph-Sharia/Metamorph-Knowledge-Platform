@@ -1,10 +1,16 @@
-"""PostgreSQL side of publishing: snapshots read from registry + curation, rows written to `published`."""
+"""PostgreSQL side of publishing: snapshots read from registry + curation, rows written to `published`,
+and the documents the publish gate holds back (`registry.hold`)."""
 
 from __future__ import annotations
+
+import json
+from dataclasses import asdict
 
 import psycopg
 from psycopg.rows import dict_row
 
+from metamorph_platform.adapters.postgres.derived import MAIN_TEXT
+from metamorph_platform.domain.gate import Approval, HoldReason, MainText
 from metamorph_platform.domain.publishing import (
     DocumentSnapshot,
     LinkRecord,
@@ -14,6 +20,7 @@ from metamorph_platform.domain.publishing import (
     SourceRecord,
     StatusEventRecord,
     StoredContent,
+    TextCorrection,
 )
 
 DOCUMENT_COLUMNS = (
@@ -65,8 +72,11 @@ _PARTS = {
     ),
     "overrides": "SELECT field, value FROM curation.override WHERE document_id = %s AND active ORDER BY created_at",
     "suppression": "SELECT 1 FROM curation.suppression WHERE document_id = %s",
+    # A provision points into the content it was cut from: the parsed one for the parser's, which is a curator's
+    # correction once one is parsed; the source's own for a provision the source sent.
     "provisions": (
-        "SELECT t.sha256 AS text_sha256, p.address, p.kind, p.label, p.ordinal, p.char_start, p.char_end, "
+        "SELECT CASE WHEN p.origin = 'parsed' THEN coalesce(t.parsed_sha256, t.sha256) ELSE t.sha256 END "
+        "AS text_sha256, p.address, p.kind, p.label, p.ordinal, p.char_start, p.char_end, "
         "p.parent_address, p.heading, p.page_start, p.page_end, p.valid_from, p.valid_to "
         "FROM registry.provision p JOIN registry.text_version t ON t.id = p.text_version_id "
         "WHERE p.document_id = %s AND t.is_current ORDER BY t.sha256, p.ordinal"
@@ -79,6 +89,17 @@ _PARTS = {
         "SELECT address, status, effective_from, source FROM registry.status_event WHERE document_id = %s "
         "ORDER BY effective_from NULLS FIRST, id"
     ),
+    "main_texts": (
+        "SELECT t.sha256, t.parsed_sha256, t.parsed_with, coalesce(t.structure_problems, '[]'::jsonb) AS problems "
+        f"FROM registry.text_version t WHERE t.document_id = %s AND t.is_current AND {MAIN_TEXT} ORDER BY t.sha256"
+    ),
+    "corrections": (
+        "SELECT corrects_sha256, sha256, storage_key FROM curation.text_correction "
+        "WHERE document_id = %s AND active ORDER BY corrects_sha256"
+    ),
+    "approvals": (
+        "SELECT text_sha256, problems FROM curation.approval WHERE document_id = %s AND active ORDER BY text_sha256"
+    ),
     "stated_dates": (
         "SELECT min(stated_enacted_on) AS enacted_on, min(stated_promulgated_on) AS promulgated_on, "
         "min(stated_effective_on) AS effective_on FROM registry.text_version WHERE document_id = %s AND is_current"
@@ -87,7 +108,7 @@ _PARTS = {
 
 
 class PostgresPublication:
-    """Reads what to publish (PublicationSource) and writes it (PublishedStore)."""
+    """Reads what to publish (PublicationSource), writes it (PublishedStore), and keeps the held list (HoldList)."""
 
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
@@ -116,6 +137,12 @@ class PostgresPublication:
             links=tuple(LinkRecord(**row) for row in rows["links"]),
             status_events=tuple(StatusEventRecord(**row) for row in rows["status_events"]),
             stated_dates=rows["stated_dates"][0],
+            main_texts=tuple(
+                MainText(row["sha256"], row["parsed_sha256"], row["parsed_with"], tuple(row["problems"]))
+                for row in rows["main_texts"]
+            ),
+            approvals=tuple(Approval(row["text_sha256"], tuple(row["problems"])) for row in rows["approvals"]),
+            corrections=tuple(TextCorrection(**row) for row in rows["corrections"]),
         )
 
     # --- PublishedStore -----------------------------------------------------------------
@@ -133,6 +160,19 @@ class PostgresPublication:
             if existed:
                 self._log(document_id, "removed")
         return existed
+
+    # --- HoldList -------------------------------------------------------------------------
+
+    def record(self, document_id: str, reasons: tuple[HoldReason, ...]) -> None:
+        """A document held again keeps the time it was first held."""
+        self.connection.execute(
+            "INSERT INTO registry.hold (document_id, reasons) VALUES (%s, %s) "
+            "ON CONFLICT (document_id) DO UPDATE SET reasons = EXCLUDED.reasons",
+            (document_id, json.dumps([asdict(reason) for reason in reasons])),
+        )
+
+    def clear(self, document_id: str) -> None:
+        self.connection.execute("DELETE FROM registry.hold WHERE document_id = %s", (document_id,))
 
     def _delete(self, document_id: str) -> bool:
         """Its sources, files, texts, provisions, links and status events go with it (ON DELETE CASCADE)."""

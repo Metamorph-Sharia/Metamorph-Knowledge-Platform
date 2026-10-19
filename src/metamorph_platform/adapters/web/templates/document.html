@@ -14,12 +14,24 @@
     <span>ID confidence: {{ view.id_confidence }}</span>
     <span>{{ doc.kind | words | capitalize }}</span>
     {{ status_badge(doc.status) }}
-    {% if doc.suppressed %}<span class="badge badge--suppressed">Suppressed</span>{% endif %}
+    {% if doc.suppressed %}<span class="badge badge--suppressed">Suppressed</span>
+    {% elif view.hold %}<span class="badge badge--warning">Held</span>
+    {% elif view.published_at %}<span class="badge badge--ok">Published</span>{% endif %}
   </div>
 </div>
 
 {% if view.suppression %}
 <p class="notice notice--held">Suppressed by {{ view.suppression.author }} on {{ view.suppression.created_at | day }}: “{{ view.suppression.reason }}”. The assistant can’t cite it.</p>
+{% elif view.hold %}
+<div class="notice notice--held">
+  {% for sha in view.lapsed_corrections %}<p>The source sent a new text, so your correction of the previous one no longer applies. <a href="{{ here }}/texts/{{ sha }}/correction">Compare it</a>, then correct the new text if it needs the same fix.</p>{% endfor %}
+  <p><strong>Held back from publishing.</strong>
+    {% if view.published_at %}The assistant sees the version published on {{ view.published_at | day }} until this one passes.
+    {% else %}It has never been published.{% endif %}</p>
+  <ul>
+    {% for reason in view.hold %}<li>{{ HOLD_CHECKS[reason.check][0] }}: {{ reason.detail }}</li>{% endfor %}
+  </ul>
+</div>
 {% endif %}
 
 <nav aria-label="On this page">
@@ -144,8 +156,46 @@
           <td>{{ text.detail }}</td>
           <td>{% if text.problems %}<span class="badge badge--warning">{{ text.problems | length }} {{ "problem" if text.problems | length == 1 else "problems" }}</span>
               <div class="meta">{{ text.problems[:3] | join("; ") }}{% if text.problems | length > 3 %}; and more{% endif %}</div>
+              {% set form = "approve-" ~ text.sha256 %}
+              {% if text.approval %}
+              <p><span class="badge badge--ok">Approved as is</span> <span class="meta">by {{ text.approval.author }} on {{ text.approval.created_at | day }}: “{{ text.approval.reason }}”</span></p>
+              <form class="inline-form" method="post" action="{{ here }}/texts/{{ text.sha256 }}/approve/withdraw">
+                {{ csrf_field() }}
+                <div class="field">
+                  <label for="{{ form }}-reason">Reason</label>
+                  <input type="text" id="{{ form }}-reason" name="reason" autocomplete="off" required placeholder="Why the problems aren’t genuine after all…">
+                </div>
+                <div class="actions"><button class="button button--quiet" data-busy="Withdrawing…">Withdraw Approval</button></div>
+              </form>
+              {% else %}
+              <form class="inline-form" method="post" action="{{ here }}/texts/{{ text.sha256 }}/approve">
+                {{ csrf_field() }}
+                <div class="field">
+                  <label for="{{ form }}-reason">Reason</label>
+                  <input type="text" id="{{ form }}-reason" name="reason" autocomplete="off" required placeholder="Why the gaps are genuine, e.g. Pasal 3 deleted by POJK 12/2021…"
+                         {% if errors.get(form) %}aria-invalid="true" aria-describedby="{{ form }}-error"{% endif %}>
+                </div>
+                <div class="actions"><button class="button" data-busy="Approving…">Approve as Is</button></div>
+              </form>
+              {% endif %}
+              {% if errors.get(form) %}<p class="error" id="{{ form }}-error" role="alert">{{ errors[form] | sentence }}.</p>{% endif %}
               {% else %}<span class="badge badge--ok">Passes</span>{% endif %}</td>
-          <td><a href="{{ here }}/content/{{ text.sha256 }}" target="_blank" rel="noopener">Open Text<span class="visually-hidden"> (new tab)</span></a></td>
+          <td><a href="{{ here }}/content/{{ text.sha256 }}" target="_blank" rel="noopener">Open Text<span class="visually-hidden"> (new tab)</span></a>
+              {% if text.editable %}<div><a href="{{ here }}/texts/{{ text.sha256 }}/edit">Edit Text</a></div>{% endif %}
+              {% if text.correction %}
+              {% set form = "correction-" ~ text.sha256 %}
+              <p><span class="badge badge--ok">Corrected</span> <span class="meta">Corrected by {{ text.correction.author }} on {{ text.correction.created_at | day }}: “{{ text.correction.reason }}”.</span>
+                <a href="{{ here }}/texts/{{ text.sha256 }}/correction">See the changes</a></p>
+              <form class="inline-form" method="post" action="{{ here }}/texts/{{ text.sha256 }}/correction/withdraw">
+                {{ csrf_field() }}
+                <div class="field">
+                  <label for="{{ form }}-reason">Reason</label>
+                  <input type="text" id="{{ form }}-reason" name="reason" autocomplete="off" required placeholder="Why the source’s text is right after all…">
+                </div>
+                <div class="actions"><button class="button button--quiet" data-busy="Withdrawing…">Withdraw Correction</button></div>
+              </form>
+              {% if errors.get(form) %}<p class="error" role="alert">{{ errors[form] | sentence }}.</p>{% endif %}
+              {% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

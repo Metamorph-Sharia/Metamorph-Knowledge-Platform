@@ -1,7 +1,8 @@
 """The curation web app: server-rendered pages over the curation use cases and read views.
 
 Every request opens its services (one database connection) for itself. Every change is a POST form with a
-CSRF token, followed by a redirect (303), and is published at once so the knowledge layer sees it.
+CSRF token, followed by a redirect (303). After it, what changed is parsed and published at once: the
+curator sees whether the document now passes the publish gate, and the knowledge layer sees the result.
 """
 
 # No `from __future__ import annotations`: FastAPI reads the dependency annotations at runtime, and these
@@ -25,10 +26,11 @@ from fastapi.templating import Jinja2Templates
 from metamorph_platform.adapters.web import presentation
 from metamorph_platform.adapters.web.accounts import Accounts
 from metamorph_platform.application.add_manual_document import AddManualDocument
-from metamorph_platform.application.curate import Curate
+from metamorph_platform.application.curate import CorrectText, Curate
+from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.ports import BlobReader, CurationRefused, Curator
 from metamorph_platform.application.publish import Publish
-from metamorph_platform.application.views import REVIEW_KINDS, CurationViews
+from metamorph_platform.application.views import HELD_CHECKS, REVIEW_KINDS, CurationViews
 from metamorph_platform.domain.curation import InvalidCorrection
 from metamorph_platform.domain.manual import InvalidManualDocument, ManualDocument
 
@@ -44,6 +46,8 @@ class WebServices:
     add_manual: AddManualDocument
     publish: Publish
     blobs: BlobReader
+    correct_text: CorrectText
+    parse: ParseTexts  # only what changed: a corrected text
 
 
 ServicesFactory = Callable[[], AbstractContextManager[WebServices]]
@@ -87,6 +91,7 @@ def create_app(open_services: ServicesFactory, accounts: Accounts, secret: str) 
         return templates.TemplateResponse(request, template, context, status_code=status)
 
     def after_change(svc: WebServices, url: str, done: str) -> RedirectResponse:
+        svc.parse.run()
         svc.publish.run()
         separator = "&" if "?" in url else "?"
         path, _, fragment = url.partition("#")
@@ -118,6 +123,12 @@ def create_app(open_services: ServicesFactory, accounts: Accounts, secret: str) 
             return render(request, who, "missing.html", 404, what=f"No review queue {kind}")
         counts = dict(svc.views.dashboard().open_reviews)
         return render(request, who, "review.html", queue=svc.views.review_page(kind, page), counts=counts, error=error)
+
+    @app.get("/held", response_class=HTMLResponse)
+    def held(request: Request, who: Who, svc: Services, check: str = "", page: int = 1) -> HTMLResponse:
+        if check and check not in HELD_CHECKS:
+            return render(request, who, "missing.html", 404, what=f"No check {check}")
+        return render(request, who, "held.html", held=svc.views.held_page(check or None, page))
 
     @app.get("/documents", response_class=HTMLResponse)
     def search(request: Request, who: Who, svc: Services, q: str = "") -> HTMLResponse:
@@ -180,6 +191,90 @@ def create_app(open_services: ServicesFactory, accounts: Accounts, secret: str) 
         who = checked(request, who, token)
         change = partial(svc.curate.correct, who, document_id, field, value, reason)
         return act(request, who, svc, document_id, change, "corrected", "fields", "correction")
+
+    @app.post("/documents/{document_id}/texts/{text_sha256}/approve")
+    def approve(
+        request: Request,
+        who: Who,
+        svc: Services,
+        token: Token,
+        document_id: str,
+        text_sha256: str,
+        reason: Annotated[str, Form()] = "",
+    ) -> Response:
+        who = checked(request, who, token)
+        change = partial(svc.curate.approve, who, document_id, text_sha256, reason)
+        return act(request, who, svc, document_id, change, "approved", "content", f"approve-{text_sha256}")
+
+    @app.post("/documents/{document_id}/texts/{text_sha256}/approve/withdraw")
+    def withdraw_approval(
+        request: Request,
+        who: Who,
+        svc: Services,
+        token: Token,
+        document_id: str,
+        text_sha256: str,
+        reason: Annotated[str, Form()] = "",
+    ) -> Response:
+        who = checked(request, who, token)
+        change = partial(svc.curate.withdraw_approval, who, document_id, text_sha256, reason)
+        return act(request, who, svc, document_id, change, "unapproved", "content", f"approve-{text_sha256}")
+
+    @app.get("/documents/{document_id}/texts/{text_sha256}/edit", response_class=HTMLResponse)
+    def edit_text(request: Request, who: Who, svc: Services, document_id: str, text_sha256: str) -> HTMLResponse:
+        text = svc.views.editable_text(document_id, text_sha256)
+        if text is None:
+            missing = f"{document_id} has no current main text {text_sha256[:12]}"
+            return render(request, who, "missing.html", 404, what=missing)
+        wording = svc.blobs.read(text.storage_key).decode("utf-8")
+        return render(request, who, "edit_text.html", text=text, wording=wording, reason="", error=None)
+
+    @app.post("/documents/{document_id}/texts/{text_sha256}/correction")
+    def correct_text(
+        request: Request,
+        who: Who,
+        svc: Services,
+        token: Token,
+        document_id: str,
+        text_sha256: str,
+        wording: Annotated[str, Form()] = "",
+        reason: Annotated[str, Form()] = "",
+    ) -> Response:
+        who = checked(request, who, token)
+        try:
+            svc.correct_text.correct(who, document_id, text_sha256, wording, reason)
+        except (InvalidCorrection, CurationRefused) as error:
+            text = svc.views.editable_text(document_id, text_sha256)
+            if text is None:
+                return render(request, who, "missing.html", 404, what=str(error))
+            status = 422 if isinstance(error, InvalidCorrection) else 409
+            context = {"text": text, "wording": wording, "reason": reason, "error": str(error)}
+            return render(request, who, "edit_text.html", status, **context)
+        return after_change(svc, f"/documents/{quote(document_id)}#content", "text_corrected")
+
+    @app.post("/documents/{document_id}/texts/{text_sha256}/correction/withdraw")
+    def withdraw_text_correction(
+        request: Request,
+        who: Who,
+        svc: Services,
+        token: Token,
+        document_id: str,
+        text_sha256: str,
+        reason: Annotated[str, Form()] = "",
+    ) -> Response:
+        who = checked(request, who, token)
+        change = partial(svc.correct_text.withdraw, who, document_id, text_sha256, reason)
+        return act(request, who, svc, document_id, change, "text_restored", "content", f"correction-{text_sha256}")
+
+    @app.get("/documents/{document_id}/texts/{text_sha256}/correction", response_class=HTMLResponse)
+    def correction(request: Request, who: Who, svc: Services, document_id: str, text_sha256: str) -> HTMLResponse:
+        found = svc.views.correction(document_id, text_sha256)
+        if found is None:
+            missing = f"{text_sha256[:12]} of {document_id} has no correction"
+            return render(request, who, "missing.html", 404, what=missing)
+        before = svc.blobs.read(found.source_storage_key).decode("utf-8")
+        after = svc.blobs.read(found.corrected_storage_key).decode("utf-8")
+        return render(request, who, "correction.html", correction=found, diff=presentation.text_diff(before, after))
 
     @app.post("/documents/{document_id}/corrections/withdraw")
     def withdraw(

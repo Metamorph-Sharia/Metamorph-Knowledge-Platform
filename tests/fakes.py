@@ -10,6 +10,7 @@ from metamorph_contract import Manifest, NormalizedDocument
 
 from metamorph_platform.application.ports import (
     BundleAlreadyLoaded,
+    CorrectableText,
     Curator,
     NewLink,
     OpenCitation,
@@ -19,10 +20,10 @@ from metamorph_platform.application.ports import (
     TextToParse,
 )
 from metamorph_platform.domain.curation import ActiveOverride
+from metamorph_platform.domain.gate import HoldReason
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
-from metamorph_platform.domain.reviews import TextStanding
 from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, StatusChange
 
 
@@ -37,8 +38,22 @@ class MemoryBlobStore:
             self.writes += 1
         return StoredBlob(sha256, f"blobs/{sha256[:2]}/{sha256}", media_type, len(self.blobs[sha256]))
 
+    def put(self, sha256: str, data: bytes, media_type: str) -> StoredBlob:
+        if sha256 not in self.blobs:
+            self.blobs[sha256] = data
+            self.writes += 1
+        return StoredBlob(sha256, f"blobs/{sha256[:2]}/{sha256}", media_type, len(data))
+
     def read(self, storage_key: str) -> bytes:
         return self.blobs[storage_key.rsplit("/", 1)[-1]]
+
+
+class MemoryCorrectableTexts:
+    def __init__(self, texts: dict[tuple[str, str], CorrectableText]) -> None:
+        self.texts = texts
+
+    def effective(self, document_id: str, text_sha256: str) -> CorrectableText | None:
+        return self.texts.get((document_id, text_sha256))
 
 
 class MemoryLedger:
@@ -126,6 +141,7 @@ class MemoryPublication:
     def __init__(self, snapshots: dict[str, DocumentSnapshot]) -> None:
         self.snapshots = snapshots
         self.published: dict[str, PublishedDocument] = {}
+        self.holds: dict[str, tuple[HoldReason, ...]] = {}
 
     def documents_to_publish(self, everything: bool = False) -> list[str]:
         return sorted(set(self.snapshots) | set(self.published))
@@ -140,6 +156,12 @@ class MemoryPublication:
 
     def remove(self, document_id: str) -> bool:
         return self.published.pop(document_id, None) is not None
+
+    def record(self, document_id: str, reasons: tuple[HoldReason, ...]) -> None:
+        self.holds[document_id] = reasons
+
+    def clear(self, document_id: str) -> None:
+        self.holds.pop(document_id, None)
 
 
 class MemoryBlobReader:
@@ -226,6 +248,21 @@ class MemoryCurationActions:
     def withdraw_correction(self, curator, document_id, field, reason):
         self.record(curator, "withdraw_correction", {"document_id": document_id, "field": field}, None, reason)
 
+    def approve(self, curator, document_id, text_sha256, reason):
+        self.record(curator, "approve", {"document_id": document_id, "text_sha256": text_sha256}, None, reason)
+
+    def correct_text(self, curator, document_id, text_sha256, sha256, storage_key, reason):
+        target = {"document_id": document_id, "text_sha256": text_sha256}
+        self.record(curator, "correct_text", target, {"sha256": sha256, "storage_key": storage_key}, reason)
+
+    def withdraw_text_correction(self, curator, document_id, text_sha256, reason):
+        target = {"document_id": document_id, "text_sha256": text_sha256}
+        self.record(curator, "withdraw_text_correction", target, None, reason)
+
+    def withdraw_approval(self, curator, document_id, text_sha256, reason):
+        target = {"document_id": document_id, "text_sha256": text_sha256}
+        self.record(curator, "withdraw_approval", target, None, reason)
+
     def suppress(self, curator, document_id, reason):
         self.record(curator, "suppress", {"document_id": document_id}, {"suppressed": True}, reason)
 
@@ -253,16 +290,12 @@ class MemoryOpenReviews:
 
     def __init__(self, items: list[OpenReview]) -> None:
         self.items = items
-        self.standings: dict[tuple[str, str], TextStanding] = {}
         self.unlinked: set[tuple[str, str]] = set()
         self.documents: set[str] = set()
         self.settled: dict[int, str] = {}
 
     def open_items(self) -> list[OpenReview]:
         return [item for item in self.items if item.id not in self.settled]
-
-    def text_standing(self, document_id: str, text_sha256: str) -> TextStanding | None:
-        return self.standings.get((document_id, text_sha256))
 
     def still_unlinked(self, document_id: str, target_text: str) -> bool:
         return (document_id, target_text) in self.unlinked

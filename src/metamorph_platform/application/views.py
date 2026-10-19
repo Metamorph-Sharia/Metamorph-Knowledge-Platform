@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol
 
-REVIEW_KINDS = ("unresolved_id", "conflict", "unresolved_citation", "quarantine", "structure_suspect")
+from metamorph_platform.domain.gate import Check, HoldReason
+
+REVIEW_KINDS = ("conflict", "unresolved_citation", "quarantine")  # structure and identity: the held list
 PAGE_SIZE = 50
 
 
@@ -41,6 +43,8 @@ class Dashboard:
     published: int
     open_reviews: tuple[tuple[str, int], ...]  # every review kind, zero included
     recent_bundles: tuple[BundleRow, ...]
+    held: int = 0  # documents the publish gate holds back
+    held_published: int = 0  # of those, the ones whose last good version is still published
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,28 @@ class ReviewPage:
     total: int
     page: int
     pages: int
+
+
+@dataclass(frozen=True)
+class HeldRow:
+    document_id: str
+    title: str
+    reasons: tuple[HoldReason, ...]
+    published_at: datetime | None  # when the version the assistant still sees was published; None: never
+    held_since: datetime
+
+
+@dataclass(frozen=True)
+class HeldPage:
+    check: str | None  # the filter; None: every held document
+    rows: tuple[HeldRow, ...]
+    counts: tuple[tuple[str, int], ...]  # documents held by each check, zero included
+    total: int
+    page: int
+    pages: int
+
+
+HELD_CHECKS = tuple(check.value for check in Check)
 
 
 @dataclass(frozen=True)
@@ -104,12 +130,22 @@ class SourceRow:
 
 
 @dataclass(frozen=True)
+class CuratorNote:
+    reason: str
+    author: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class ContentRow:
     sha256: str
     label: str  # a file's role, a text's language
     media_type: str
     detail: str  # pages; a text's origin and method
     problems: tuple[str, ...] = ()  # a text's structure problems
+    approval: CuratorNote | None = None  # a curator's approval of exactly these problems
+    correction: CuratorNote | None = None  # a curator's correction of the text's wording, in effect
+    editable: bool = False  # a current main text: the kind a curator may correct
 
 
 @dataclass(frozen=True)
@@ -183,6 +219,35 @@ class DocumentView:
     conflicts: tuple[ConflictRow, ...]
     status_history: tuple[StatusRow, ...]
     open_reviews: tuple[ReviewRow, ...]
+    hold: tuple[HoldReason, ...] = ()  # why the publish gate holds it back; empty when it passes
+    published_at: datetime | None = None  # the version the assistant sees; None: not published
+    lapsed_corrections: tuple[str, ...] = ()  # texts corrected before the source replaced them (their sha256)
+
+
+@dataclass(frozen=True)
+class EditableText:
+    """A current main text, to correct: its effective wording is at `storage_key`."""
+
+    document_id: str
+    citation: str
+    sha256: str  # the source text's
+    storage_key: str
+    paged: bool
+    corrected: bool  # the wording at `storage_key` is a curator's correction already
+
+
+@dataclass(frozen=True)
+class CorrectionView:
+    """A curator's correction of a text (the latest one), to compare with the source's wording."""
+
+    document_id: str
+    citation: str
+    sha256: str  # the source text's
+    source_storage_key: str
+    corrected_storage_key: str
+    note: CuratorNote
+    active: bool  # not withdrawn
+    current: bool  # the text it corrects is still the source's current one: the correction applies
 
 
 @dataclass(frozen=True)
@@ -197,9 +262,18 @@ class CurationViews(Protocol):
 
     def review_page(self, kind: str, page: int) -> ReviewPage: ...
 
+    def held_page(self, check: str | None, page: int) -> HeldPage:
+        """Held documents, those whose last good version is still published first."""
+
     def search(self, query: str, limit: int) -> list[DocumentRow]: ...
 
     def document(self, document_id: str) -> DocumentView | None: ...
+
+    def editable_text(self, document_id: str, sha256: str) -> EditableText | None:
+        """None unless `sha256` is a current main text of the document."""
+
+    def correction(self, document_id: str, sha256: str) -> CorrectionView | None:
+        """The latest correction of the document's text `sha256`, current or not; None if it has none."""
 
     def stored(self, document_id: str, sha256: str) -> StoredBytes | None:
         """A file or text of the document, to stream to the curator; None if it isn't the document's."""

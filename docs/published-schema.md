@@ -3,7 +3,8 @@
 The Knowledge and Retrieval layer reads **only** the `published` schema. It never reads `registry`, `curation` or `ingest`. Everything here is already resolved:
 - values are effective: what the sources say, with the Metamorph team's corrections applied;
 - suppressed documents are gone;
-- only `public` or `licensed` content appears. RegAlert's English translations and BPK's abstracts never do.
+- only `public` or `licensed` content appears. RegAlert's English translations and BPK's abstracts never do;
+- only documents that pass the platform's checks appear: a canonical ID, a main text the current parser read, and a structure with no problems (or one a curator approved as it is). A document that later fails keeps its last published version until it passes again.
 
 Each document's rows are rewritten together whenever anything about it changes.
 

@@ -7,7 +7,9 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from metamorph_platform.adapters.postgres.derived import MAIN_TEXT
 from metamorph_platform.application.views import (
+    HELD_CHECKS,
     PAGE_SIZE,
     REVIEW_KINDS,
     BundleRow,
@@ -16,10 +18,15 @@ from metamorph_platform.application.views import (
     ConflictRow,
     ContentRow,
     CorrectionRow,
+    CorrectionView,
+    CuratorNote,
     Dashboard,
     DocumentRow,
     DocumentView,
+    EditableText,
     FieldRow,
+    HeldPage,
+    HeldRow,
     LinkRow,
     ProvisionRow,
     ReviewPage,
@@ -29,6 +36,7 @@ from metamorph_platform.application.views import (
     StoredBytes,
     SuppressionRow,
 )
+from metamorph_platform.domain.gate import Check, HoldReason
 from metamorph_platform.domain.loading import TEXT_MEDIA_TYPE
 
 PROVISIONS_SHOWN = 400
@@ -56,6 +64,18 @@ FROM curation.review_item r
 LEFT JOIN curation.override o ON o.id = (r.subject ->> 'override_id')::bigint
 LEFT JOIN registry.document d ON d.id = coalesce(r.subject ->> 'document_id', o.document_id)
 """
+# The active correction of a text (alias t), if any: `c` in what follows.
+_CORRECTION = (
+    "LEFT JOIN curation.text_correction c ON c.document_id = t.document_id AND c.corrects_sha256 = t.sha256 "
+    "AND c.active"
+)
+# Held documents, filtered by one check (or none); those whose last good version is still published first.
+_HELD_ROWS = """
+SELECT h.document_id, d.title, h.reasons, p.published_at, h.held_since
+FROM registry.hold h JOIN registry.document d ON d.id = h.document_id
+LEFT JOIN published.document p ON p.id = h.document_id
+WHERE %(check)s::text IS NULL OR h.reasons @> jsonb_build_array(jsonb_build_object('check', %(check)s::text))
+"""
 
 
 class PostgresCurationViews:
@@ -82,6 +102,10 @@ class PostgresCurationViews:
             issuers = cursor.execute("SELECT issuer, count(*) FROM registry.document GROUP BY 1 ORDER BY 2 DESC")
             documents_by_issuer = tuple((row["issuer"], row["count"]) for row in issuers)
             (published,) = self.connection.execute("SELECT count(*) FROM published.document").fetchone()
+            held, held_published = self.connection.execute(
+                "SELECT count(*), count(p.id) FROM registry.hold h "
+                "LEFT JOIN published.document p ON p.id = h.document_id"
+            ).fetchone()
         return Dashboard(
             health_status=health["status"] if health else None,
             health_taken_at=health["taken_at"] if health else None,
@@ -90,6 +114,34 @@ class PostgresCurationViews:
             published=published,
             open_reviews=tuple((kind, open_counts.get(kind, 0)) for kind in REVIEW_KINDS),
             recent_bundles=tuple(BundleRow(**row) for row in bundles),
+            held=held,
+            held_published=held_published,
+        )
+
+    def held_page(self, check: str | None, page: int) -> HeldPage:
+        by_check = dict(
+            self.connection.execute(
+                "SELECT reason ->> 'check', count(DISTINCT h.document_id) "
+                "FROM registry.hold h, jsonb_array_elements(h.reasons) reason GROUP BY 1"
+            ).fetchall()
+        )
+        (total,) = self.connection.execute(f"SELECT count(*) FROM ({_HELD_ROWS}) held", {"check": check}).fetchone()
+        pages = max(1, -(-total // PAGE_SIZE))
+        page = min(max(page, 1), pages)
+        rows = self.connection.execute(
+            _HELD_ROWS + " ORDER BY p.id IS NULL, h.held_since, h.document_id LIMIT %(limit)s OFFSET %(offset)s",
+            {"check": check, "limit": PAGE_SIZE, "offset": (page - 1) * PAGE_SIZE},
+        )
+        return HeldPage(
+            check=check,
+            rows=tuple(
+                HeldRow(document_id, title, _hold_reasons(reasons), published_at, held_since)
+                for document_id, title, reasons, published_at, held_since in rows
+            ),
+            counts=tuple((name, by_check.get(name, 0)) for name in HELD_CHECKS),
+            total=total,
+            page=page,
+            pages=pages,
         )
 
     def review_page(self, kind: str, page: int) -> ReviewPage:
@@ -117,14 +169,8 @@ class PostgresCurationViews:
         )
 
     def _summary(self, kind: str, subject: dict) -> str:
-        if kind == "structure_suspect":
-            problems = subject.get("problems", [])
-            more = len(problems) - PROBLEMS_SHOWN
-            return "; ".join(problems[:PROBLEMS_SHOWN]) + (f"; and {more} more" if more > 0 else "")
         if kind == "unresolved_citation":
             return f"Cites “{subject.get('target_text', '')}”, which names no document"
-        if kind == "unresolved_id":
-            return "The connector couldn't tell which document this is"
         if kind == "quarantine":
             row = self.connection.execute(
                 "SELECT problems FROM ingest.quarantine WHERE bundle_id = %s AND line = %s",
@@ -236,7 +282,50 @@ class PostgresCurationViews:
                 )
             ),
             open_reviews=self._open_reviews(document_id),
+            hold=self._hold(document_id),
+            published_at=published["published_at"] if published else None,
+            lapsed_corrections=tuple(
+                sha
+                for (sha,) in self.connection.execute(
+                    "SELECT c.corrects_sha256 FROM curation.text_correction c WHERE c.document_id = %s AND c.active "
+                    "AND NOT EXISTS (SELECT 1 FROM registry.text_version t WHERE t.document_id = c.document_id "
+                    "AND t.sha256 = c.corrects_sha256 AND t.is_current) ORDER BY c.created_at",
+                    (document_id,),
+                )
+            ),
         )
+
+    def editable_text(self, document_id: str, sha256: str) -> EditableText | None:
+        row = self.connection.execute(
+            "SELECT d.citation, coalesce(c.storage_key, b.storage_key), t.paged, c.id IS NOT NULL "
+            "FROM registry.text_version t JOIN registry.document d ON d.id = t.document_id "
+            f"JOIN registry.blob b ON b.sha256 = t.sha256 {_CORRECTION} "
+            f"WHERE t.document_id = %s AND t.sha256 = %s AND t.is_current AND {MAIN_TEXT}",
+            (document_id, sha256),
+        ).fetchone()
+        if row is None:
+            return None
+        citation, storage_key, paged, corrected = row
+        return EditableText(document_id, citation, sha256, storage_key, paged, corrected)
+
+    def correction(self, document_id: str, sha256: str) -> CorrectionView | None:
+        row = self.connection.execute(
+            """
+            SELECT d.citation, b.storage_key, c.storage_key, c.reason, c.author, c.created_at, c.active,
+                   EXISTS (SELECT 1 FROM registry.text_version t
+                           WHERE t.document_id = c.document_id AND t.sha256 = c.corrects_sha256 AND t.is_current)
+            FROM curation.text_correction c JOIN registry.document d ON d.id = c.document_id
+            JOIN registry.blob b ON b.sha256 = c.corrects_sha256
+            WHERE c.document_id = %s AND c.corrects_sha256 = %s
+            ORDER BY c.id DESC LIMIT 1
+            """,
+            (document_id, sha256),
+        ).fetchone()
+        if row is None:
+            return None
+        citation, source_key, corrected_key, reason, author, created_at, active, current = row
+        note = CuratorNote(reason, author, created_at)
+        return CorrectionView(document_id, citation, sha256, source_key, corrected_key, note, active, current)
 
     def stored(self, document_id: str, sha256: str) -> StoredBytes | None:
         row = self.connection.execute(
@@ -248,6 +337,10 @@ class PostgresCurationViews:
             SELECT b.storage_key, %(text)s, t.language || '-' || left(t.sha256, 12) || '.md'
             FROM registry.text_version t JOIN registry.blob b USING (sha256)
             WHERE t.document_id = %(d)s AND t.sha256 = %(s)s
+            UNION ALL
+            SELECT c.storage_key, %(text)s, 'corrected-' || left(c.sha256, 12) || '.md'
+            FROM curation.text_correction c
+            WHERE c.document_id = %(d)s AND c.sha256 = %(s)s
             LIMIT 1
             """,
             {"d": document_id, "s": sha256, "text": TEXT_MEDIA_TYPE},
@@ -267,9 +360,17 @@ class PostgresCurationViews:
         )
 
     def _texts(self, document_id: str) -> tuple[ContentRow, ...]:
+        """Each current text, with its correction if any, and its approval while it covers exactly the problems
+        its effective content (the correction's, or its own) has now."""
         rows = self.connection.execute(
-            "SELECT sha256, language, origin, method, structure_problems FROM registry.text_version "
-            "WHERE document_id = %s AND is_current ORDER BY language, id",
+            f"""
+            SELECT t.sha256, t.language, t.origin, t.method, t.structure_problems,
+                   a.reason, a.author, a.created_at, c.reason, c.author, c.created_at, {MAIN_TEXT} AS editable
+            FROM registry.text_version t {_CORRECTION}
+            LEFT JOIN curation.approval a ON a.document_id = t.document_id
+                 AND a.text_sha256 = coalesce(c.sha256, t.sha256) AND a.active AND a.problems = t.structure_problems
+            WHERE t.document_id = %s AND t.is_current ORDER BY t.language, t.id
+            """,
             (document_id,),
         )
         return tuple(
@@ -279,9 +380,18 @@ class PostgresCurationViews:
                 TEXT_MEDIA_TYPE,
                 f"{origin.replace('_', ' ')}, {method.replace('_', ' ')}",
                 tuple(problems or ()),
+                CuratorNote(approved_why, approved_by, approved_at) if approved_why else None,
+                CuratorNote(corrected_why, corrected_by, corrected_at) if corrected_why else None,
+                editable,
             )
-            for sha, language, origin, method, problems in rows
-        )
+            for (sha, language, origin, method, problems, approved_why, approved_by, approved_at, corrected_why,
+                 corrected_by, corrected_at, editable) in rows
+        )  # fmt: skip
+
+    def _hold(self, document_id: str) -> tuple[HoldReason, ...]:
+        row = self.connection.execute("SELECT reasons FROM registry.hold WHERE document_id = %s", (document_id,))
+        found = row.fetchone()
+        return _hold_reasons(found[0]) if found else ()
 
     def _provisions(self, document_id: str) -> tuple[tuple[ProvisionRow, ...], int]:
         """The first current text's tree: the one the parser read first (the main Indonesian text)."""
@@ -318,6 +428,10 @@ class PostgresCurationViews:
                 _REVIEW_ROWS + " WHERE r.state = 'open' AND d.id = %s ORDER BY r.created_at", (document_id,)
             ).fetchall()
         return tuple(self._review_row(row) for row in rows)
+
+
+def _hold_reasons(stored: list[dict]) -> tuple[HoldReason, ...]:
+    return tuple(HoldReason(Check(reason["check"]), reason["detail"]) for reason in stored)
 
 
 def _at(received: dict, path: str) -> Any:

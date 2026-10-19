@@ -5,8 +5,19 @@
 {% block content %}
 <div class="page-head">
   <h1>Overview</h1>
-  <p class="lede">Ingestion health, what waits for review, and the latest loads.</p>
+  <p class="lede">What the publish gate holds back, what waits for review, ingestion health, and the latest loads.</p>
 </div>
+
+<section aria-labelledby="held-heading">
+  <h2 id="held-heading">Held Back from Publishing</h2>
+  <div class="queues">
+    <a class="queue-link" href="/held">
+      <strong>{{ dashboard.held | count }}</strong>
+      <span>Held documents</span>
+    </a>
+  </div>
+  <p class="section-note">{{ dashboard.held_published | count }} of them still have an earlier version published, which the assistant sees until they pass again: work on those first.</p>
+</section>
 
 <section aria-labelledby="queues-heading">
   <h2 id="queues-heading">Waiting for Review</h2>

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import document_link with context %}
+{% set section = "held" %}
+{% block title %}Held Documents{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Held Documents</h1>
+  <p class="lede">Documents the publish gate holds back. Each stays out of what the assistant reads, or keeps its last good version, until it passes its checks or a curator approves its problems as they are.</p>
+</div>
+
+<nav class="tabs" aria-label="Held by check">
+  <a href="/held" {% if not held.check %}aria-current="page"{% endif %}>All</a>
+  {% for check, total in held.counts %}
+  <a href="/held?check={{ check }}" {% if check == held.check %}aria-current="page"{% endif %}>{{ HOLD_CHECKS[check][0] }}<span class="count">{{ total | count }}</span></a>
+  {% endfor %}
+</nav>
+
+{% if held.check %}<p class="section-note">{{ HOLD_CHECKS[held.check][1] }}</p>{% endif %}
+
+{% if held.rows %}
+<ul class="items">
+  {% for row in held.rows %}
+  <li class="item">
+    <div class="item__what">
+      {{ document_link(row.document_id, row.title) }}
+      <ul class="item__summary">
+        {% for reason in row.reasons %}<li>{{ HOLD_CHECKS[reason.check][0] }}: {{ reason.detail }}</li>{% endfor %}
+      </ul>
+      <p class="meta">Held since {{ row.held_since | day }} &middot;
+        {% if row.published_at %}Last published {{ row.published_at | day }}: the assistant still sees that version
+        {% else %}Never published{% endif %}</p>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% if held.pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if held.page > 1 %}<a href="/held?check={{ held.check or '' }}&page={{ held.page - 1 }}">Previous</a>{% endif %}
+  <span class="meta">Page {{ held.page }} of {{ held.pages }}</span>
+  {% if held.page < held.pages %}<a href="/held?check={{ held.check or '' }}&page={{ held.page + 1 }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="empty">Nothing is held here. Every document passes the publish gate.</p>
+{% endif %}
+{% endblock %}

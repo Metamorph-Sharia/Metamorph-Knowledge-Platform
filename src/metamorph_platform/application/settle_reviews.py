@@ -1,6 +1,6 @@
-"""Settle the review items whose cause went away by itself; leave the rest for the Metamorph team.
+"""Settle the citation items whose cause went away by itself; leave the rest for the Metamorph team.
 
-It runs in the build after parse and resolve, so each item is judged against today's texts and links
+It runs in the build after parse and resolve, so each item is judged against today's citations and links
 (domain/reviews.py). What it leaves open is what needs a person, counted by kind in its report.
 """
 
@@ -11,10 +11,8 @@ from dataclasses import dataclass, field
 
 from metamorph_platform.application.ports import OpenReview, OpenReviews
 from metamorph_platform.domain.loading import ReviewKind
-from metamorph_platform.domain.reviews import citation_settlement, identity_settlement, structure_settlement
-from metamorph_platform.domain.structure import PARSER_VERSION
-
-ABOUT_A_DOCUMENT = {ReviewKind.STRUCTURE_SUSPECT, ReviewKind.UNRESOLVED_CITATION}
+from metamorph_platform.domain.resolution import named_targets
+from metamorph_platform.domain.reviews import citation_settlement
 
 
 @dataclass
@@ -27,9 +25,8 @@ class SettleReport:
 
 
 class SettleReviews:
-    def __init__(self, reviews: OpenReviews, *, parser_version: str = PARSER_VERSION) -> None:
+    def __init__(self, reviews: OpenReviews) -> None:
         self.reviews = reviews
-        self.parser_version = parser_version
 
     def run(self) -> SettleReport:
         report = SettleReport()
@@ -43,15 +40,11 @@ class SettleReviews:
         return report
 
     def _settlement(self, item: OpenReview) -> str | None:
-        subject = item.subject
-        if item.kind is ReviewKind.UNRESOLVED_ID:
-            return identity_settlement(document_exists=self.reviews.document_exists(subject["document_id"]))
-        if item.kind in ABOUT_A_DOCUMENT and not self.reviews.document_exists(subject["document_id"]):
+        if item.kind is not ReviewKind.UNRESOLVED_CITATION:
+            return None  # a conflict, or a quarantined line: always a person's call
+        document_id, target_text = item.subject["document_id"], item.subject["target_text"]
+        if not self.reviews.document_exists(document_id):
             return None  # renamed by a curator since: its evidence is filed under the new ID
-        if item.kind is ReviewKind.STRUCTURE_SUSPECT:
-            standing = self.reviews.text_standing(subject["document_id"], subject["text_sha256"])
-            return structure_settlement(standing, subject.get("problems", []), self.parser_version)
-        if item.kind is ReviewKind.UNRESOLVED_CITATION:
-            unlinked = self.reviews.still_unlinked(subject["document_id"], subject["target_text"])
-            return citation_settlement(still_unlinked=unlinked)
-        return None  # a conflict, or a quarantined line: always a person's call
+        unlinked = self.reviews.still_unlinked(document_id, target_text)
+        named = named_targets(None, target_text)
+        return citation_settlement(still_unlinked=unlinked, named=named, citing=document_id)

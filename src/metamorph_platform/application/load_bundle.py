@@ -30,7 +30,7 @@ class LoadReport:
     unchanged: int = 0
     quarantined: int = 0
     missing: int = 0  # records this connector no longer lists
-    to_review: int = 0  # documents waiting for a person to identify them
+    to_review: int = 0  # documents waiting for a person to identify them (the publish gate holds them)
     changed_documents: set[str] = field(default_factory=set)
 
     def counts(self) -> dict[str, int]:
@@ -93,9 +93,7 @@ class LoadBundle:
             report.changed += outcome is SaveOutcome.CHANGED
             report.changed_documents.add(document.document.id)
             self._check_corrections(document)
-        if needs_identity_review(document):
-            self.reviews.ensure_open(ReviewKind.UNRESOLVED_ID, {"document_id": document.document.id})
-            report.to_review += 1
+        report.to_review += needs_identity_review(document)
 
     def _check_corrections(self, document) -> None:
         overrides = self.overrides.active(document.document.id)

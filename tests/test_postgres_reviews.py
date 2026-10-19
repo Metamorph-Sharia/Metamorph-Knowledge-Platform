@@ -1,4 +1,4 @@
-"""Settling review items against PostgreSQL: judged on today's texts, decided as the platform, audited."""
+"""Settling citation items against PostgreSQL: judged on today's citations, decided as the platform, audited."""
 
 from __future__ import annotations
 
@@ -24,18 +24,14 @@ from metamorph_platform.application.settle_reviews import SettleReviews
 pytestmark = pytest.mark.database
 DOCUMENT = "ojk:pojk:2018:35"
 
-GAPPY = """\
+CITING = """\
 PERATURAN OTORITAS JASA KEUANGAN
-Mengingat : Keputusan Presiden Nomor 84/P Tahun 2009;
+Mengingat : Keputusan Presiden Nomor 84/P;
 MEMUTUSKAN:
 Pasal 1
 Satu.
-Pasal 3
-Tiga.
 """
-CORRECTED = GAPPY.replace("Keputusan Presiden Nomor 84/P Tahun 2009", "Undang-Undang Nomor 21 Tahun 2011").replace(
-    "Pasal 3", "Pasal 2\nDua.\nPasal 3"
-)
+CORRECTED = CITING.replace("Keputusan Presiden Nomor 84/P", "Undang-Undang Nomor 21 Tahun 2011")
 
 
 def regulation(text: str) -> NormalizedDocument:
@@ -71,7 +67,7 @@ def load_and_build(db, blobs, tmp_path, text: str, run: str) -> None:
     LoadBundle(PostgresIngestLedger(db), PostgresRegistry(db), blobs, reviews, PostgresOverrides(db)).run(
         Bundle(tmp_path / run), uri="x"
     )
-    ParseTexts(PostgresParsedTexts(db), blobs, reviews).run()
+    ParseTexts(PostgresParsedTexts(db), blobs).run()
     ResolveCitations(PostgresCitationLinks(db), reviews).run()
 
 
@@ -80,27 +76,26 @@ def open_kinds(db) -> list[str]:
 
 
 def test_items_whose_cause_remains_stay_open(db, blobs, tmp_path) -> None:
-    load_and_build(db, blobs, tmp_path, GAPPY, "r1")
+    load_and_build(db, blobs, tmp_path, CITING, "r1")
 
     report = SettleReviews(PostgresOpenReviews(db)).run()
 
-    assert report.counts() == {"settled": {}, "needs_a_person": {"structure_suspect": 1, "unresolved_citation": 1}}
-    assert open_kinds(db) == ["structure_suspect", "unresolved_citation"]
+    assert report.counts() == {"settled": {}, "needs_a_person": {"unresolved_citation": 1}}
+    assert open_kinds(db) == ["unresolved_citation"]
 
 
 def test_items_a_corrected_text_answers_are_settled_as_the_platform_and_audited(db, blobs, tmp_path) -> None:
-    load_and_build(db, blobs, tmp_path, GAPPY, "r1")
+    load_and_build(db, blobs, tmp_path, CITING, "r1")
     load_and_build(db, blobs, tmp_path, CORRECTED, "r2")  # the source replaced its text
 
     report = SettleReviews(PostgresOpenReviews(db)).run()
 
-    assert report.counts() == {"settled": {"structure_suspect": 1, "unresolved_citation": 1}, "needs_a_person": {}}
+    assert report.counts() == {"settled": {"unresolved_citation": 1}, "needs_a_person": {}}
     assert open_kinds(db) == []
-    decided = db.execute("SELECT kind, decided_by, note FROM curation.review_item ORDER BY kind").fetchall()
+    decided = db.execute("SELECT kind, decided_by, note FROM curation.review_item").fetchall()
     assert decided == [
-        ("structure_suspect", PLATFORM.username, "the text was replaced by a newer version"),
         ("unresolved_citation", PLATFORM.username, "the citation was linked, or the text no longer cites it"),
     ]
-    audited = db.execute("SELECT author, action, reason FROM curation.audit_log ORDER BY id").fetchall()
-    assert [(author, action) for author, action, _ in audited] == [(PLATFORM.username, "decide_review")] * 2
+    audited = db.execute("SELECT author, action FROM curation.audit_log ORDER BY id").fetchall()
+    assert audited == [(PLATFORM.username, "decide_review")]
     assert SettleReviews(PostgresOpenReviews(db)).run().counts()["settled"] == {}

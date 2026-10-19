@@ -15,10 +15,10 @@ from metamorph_contract import Manifest, NormalizedDocument
 from metamorph_platform.domain.citations import TextCitation
 from metamorph_platform.domain.curation import ActiveOverride
 from metamorph_platform.domain.dates import TextDates
+from metamorph_platform.domain.gate import HoldReason
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
-from metamorph_platform.domain.reviews import TextStanding
 from metamorph_platform.domain.structure import Structure
 from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, StatusChange
 
@@ -38,6 +38,9 @@ class StoredBlob:
 class BlobStore(Protocol):
     def store(self, sha256: str, source: Path, media_type: str) -> StoredBlob:
         """Write-once and content-addressed: storing bytes that are already there is a no-op."""
+
+    def put(self, sha256: str, data: bytes, media_type: str) -> StoredBlob:
+        """The same, for bytes in hand (a curator's corrected text)."""
 
 
 class BlobReader(Protocol):
@@ -105,9 +108,6 @@ class OpenReviews(Protocol):
 
     def open_items(self) -> list[OpenReview]: ...
 
-    def text_standing(self, document_id: str, text_sha256: str) -> TextStanding | None:
-        """None when the registry no longer has that text version."""
-
     def still_unlinked(self, document_id: str, target_text: str) -> bool:
         """Whether the document still has a citation with that text and no link."""
 
@@ -132,6 +132,14 @@ class PublishedStore(Protocol):
         """True when there was something to remove."""
 
 
+class HoldList(Protocol):
+    """The documents the publish gate holds back, and why: what the curators' held list shows."""
+
+    def record(self, document_id: str, reasons: tuple[HoldReason, ...]) -> None: ...
+
+    def clear(self, document_id: str) -> None: ...
+
+
 @dataclass(frozen=True)
 class TextToParse:
     """A current main text of a document, in the language the parser reads (Indonesian)."""
@@ -140,7 +148,7 @@ class TextToParse:
     document_id: str
     issuer: str
     family: str
-    sha256: str
+    sha256: str  # the content to parse: a curator's correction of the text, or the source's text
     storage_key: str
 
 
@@ -226,6 +234,19 @@ class Curator:
     display_name: str
 
 
+@dataclass(frozen=True)
+class CorrectableText:
+    """Where a current main text's effective content is (its correction's, or its own), and how it is laid out."""
+
+    storage_key: str
+    paged: bool
+
+
+class CorrectableTexts(Protocol):
+    def effective(self, document_id: str, text_sha256: str) -> CorrectableText | None:
+        """None unless `text_sha256` is a current main text of the document: the only texts a curator corrects."""
+
+
 class CurationActions(Protocol):
     """The Metamorph team's changes. Each is atomic, writes curation.audit_log with the state before it,
     and marks the documents it touches for the next publish."""
@@ -233,6 +254,19 @@ class CurationActions(Protocol):
     def correct(self, curator: Curator, document_id: str, field: str, value: Any, reason: str) -> None: ...
 
     def withdraw_correction(self, curator: Curator, document_id: str, field: str, reason: str) -> None: ...
+
+    def approve(self, curator: Curator, document_id: str, text_sha256: str, reason: str) -> None:
+        """Approve a current main text's structure problems as they are now; refused when it has none."""
+
+    def correct_text(
+        self, curator: Curator, document_id: str, text_sha256: str, sha256: str, storage_key: str, reason: str
+    ) -> None:
+        """Make the stored wording (sha256, storage_key) the correction of a current main text, replacing any
+        correction it had."""
+
+    def withdraw_text_correction(self, curator: Curator, document_id: str, text_sha256: str, reason: str) -> None: ...
+
+    def withdraw_approval(self, curator: Curator, document_id: str, text_sha256: str, reason: str) -> None: ...
 
     def suppress(self, curator: Curator, document_id: str, reason: str) -> None: ...
 

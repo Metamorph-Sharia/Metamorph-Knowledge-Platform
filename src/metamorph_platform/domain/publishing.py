@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
+from metamorph_platform.domain.gate import Approval, HoldReason, MainText, hold_reasons
 from metamorph_platform.domain.validity import SOURCE as LINKS
 
 PUBLISHABLE_RIGHTS = frozenset({"public", "licensed"})
@@ -103,6 +104,15 @@ class StatusEventRecord:
 
 
 @dataclass(frozen=True)
+class TextCorrection:
+    """A curator's corrected wording of one of the document's texts (an overlay: the source text stays)."""
+
+    corrects_sha256: str
+    sha256: str
+    storage_key: str
+
+
+@dataclass(frozen=True)
 class DocumentSnapshot:
     """Everything the registry and curation know about one document, read at one moment."""
 
@@ -118,6 +128,9 @@ class DocumentSnapshot:
     links: tuple[LinkRecord, ...] = ()
     status_events: tuple[StatusEventRecord, ...] = ()
     stated_dates: Mapping[str, date | None] = field(default_factory=dict)  # what the document's own text says
+    main_texts: tuple[MainText, ...] = ()  # what the publish gate reads (domain/gate.py), as the sources sent them
+    approvals: tuple[Approval, ...] = ()
+    corrections: tuple[TextCorrection, ...] = ()  # the active ones, of the document's current texts
 
 
 @dataclass(frozen=True)
@@ -134,18 +147,34 @@ class PublishedDocument:
     status_events: tuple[StatusEventRecord, ...] = ()
 
 
-def publication_of(snapshot: DocumentSnapshot, texts: Mapping[str, str] | None = None) -> PublishedDocument | None:
-    """None: the document must not be published (suppressed by a curator, or no source holds it any more).
+def must_be_removed(snapshot: DocumentSnapshot) -> bool:
+    """Suppressed by a curator, or no source holds it any more.
 
     A document a source stopped listing is still published: a regulation doesn't stop existing because
     a website dropped it. Only a document no source record points to (e.g. its ID was corrected) goes.
+    """
+    return snapshot.suppressed or not snapshot.sources
+
+
+def hold_reasons_of(snapshot: DocumentSnapshot, parser_version: str) -> tuple[HoldReason, ...]:
+    """Why the publish gate holds the document back; empty when it may be published."""
+    corrected = {correction.corrects_sha256: correction.sha256 for correction in snapshot.corrections}
+    return hold_reasons(
+        snapshot.id,
+        tuple(replace(text, sha256=corrected.get(text.sha256, text.sha256)) for text in snapshot.main_texts),
+        snapshot.approvals,
+        acquired_roles=(file.details.get("role", "file") for file in snapshot.files),
+        parser_version=parser_version,
+    )
+
+
+def publication_of(snapshot: DocumentSnapshot, texts: Mapping[str, str] | None = None) -> PublishedDocument:
+    """What `published` holds for a document that may be published (see must_be_removed, hold_reasons_of).
 
     `texts`: the decoded texts the provisions point into, by sha256.
     """
-    if snapshot.suppressed or not snapshot.sources:
-        return None
     values, curated = effective_values(_derived_values(snapshot), snapshot.overrides)
-    published_texts = _publishable(snapshot.texts)
+    published_texts = _publishable(effective_texts(snapshot.texts, snapshot.corrections))
     return PublishedDocument(
         id=snapshot.id,
         values=values,
@@ -207,6 +236,23 @@ def effective_values(values: Mapping[str, Any], overrides: tuple[Override, ...])
             raise ValueError(f"{override.field!r} can't be overridden; allowed: {sorted(OVERRIDABLE_FIELDS)}")
         effective[override.field] = override.value
     return effective, effective != dict(values)
+
+
+def effective_texts(
+    texts: tuple[StoredContent, ...], corrections: tuple[TextCorrection, ...]
+) -> tuple[StoredContent, ...]:
+    """Each text with its curator's correction applied: the corrected wording, and nothing else changed.
+
+    Its rights, language, origin and method stay the source's: nothing marks it as corrected (a decision of
+    the Metamorph team); the correction itself, and both wordings, stay in curation for anyone who asks.
+    """
+    corrected = {correction.corrects_sha256: correction for correction in corrections}
+    return tuple(
+        replace(text, sha256=corrected[text.sha256].sha256, storage_key=corrected[text.sha256].storage_key)
+        if text.sha256 in corrected
+        else text
+        for text in texts
+    )
 
 
 def _publishable(contents: tuple[StoredContent, ...]) -> tuple[StoredContent, ...]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from datetime import date
 
@@ -22,6 +23,7 @@ from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.publish import Publish
 from metamorph_platform.application.resolve_citations import ResolveCitations
+from metamorph_platform.domain.structure import grammar_for, parse
 
 pytestmark = pytest.mark.database
 
@@ -93,16 +95,28 @@ def load(db, blobs, tmp_path) -> None:
     LoadBundle(PostgresIngestLedger(db), PostgresRegistry(db), blobs, reviews, PostgresOverrides(db)).run(
         Bundle(tmp_path / "bundle"), uri="x"
     )
+    approve_as_is(db, "ojk:pojk:2018:35", TARGET_TEXT)
+
+
+def approve_as_is(db, document_id: str, text: str) -> None:
+    """TARGET_TEXT is an excerpt (Pasal 110 and 115 only): a curator approved its gaps, so it is published."""
+    problems = parse(text, grammar_for("ojk", "pojk")).problems
+    db.execute("INSERT INTO curation.curator (username, display_name) VALUES ('ana', 'Ana') ON CONFLICT DO NOTHING")
+    db.execute(
+        "INSERT INTO curation.approval (document_id, text_sha256, problems, reason, author) "
+        "VALUES (%s, %s, %s, 'an excerpt', 'ana')",
+        (document_id, hashlib.sha256(text.encode()).hexdigest(), json.dumps(problems)),
+    )
 
 
 def build(db, blobs) -> dict[str, dict[str, int]]:
     reviews = PostgresReviewQueue(db)
     publication = PostgresPublication(db)
     return {
-        "parse": ParseTexts(PostgresParsedTexts(db), blobs, reviews).run().counts(),
+        "parse": ParseTexts(PostgresParsedTexts(db), blobs).run().counts(),
         "resolve": ResolveCitations(PostgresCitationLinks(db), reviews).run().counts(),
         "validity": ComputeValidity(PostgresValidity(db)).run().counts(),
-        "publish": Publish(publication, publication, blobs).run().counts(),
+        "publish": Publish(publication, publication, blobs, holds=publication).run().counts(),
     }
 
 
@@ -153,5 +167,5 @@ def test_building_again_changes_nothing(db, blobs, tmp_path) -> None:
         "parse": {"texts": 0, "provisions": 0, "citations": 0, "suspect": 0},
         "resolve": {"linked": 0, "waiting": 3, "unidentified": 0, "links_dropped": 0},
         "validity": {"status_changes": 3, "expiries": 2, "documents_changed": 0},
-        "publish": {"added": 0, "updated": 0, "removed": 0},
+        "publish": {"added": 0, "updated": 0, "removed": 0, "held": 0},
     }

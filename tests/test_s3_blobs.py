@@ -39,3 +39,15 @@ def test_a_blob_is_stored_once_under_its_content_address(store, tmp_path) -> Non
 
 def test_ensuring_an_existing_bucket_changes_nothing(store) -> None:
     assert store.ensure_bucket() is False
+
+
+def test_bytes_in_hand_are_stored_once_under_their_content_address(store) -> None:
+    """A curator's corrected text comes from a form, not a file."""
+    data = b"Pasal 1\nSatu.\n"
+    sha = hashlib.sha256(data).hexdigest()
+
+    first = store.put(sha, data, "text/markdown; charset=utf-8")
+
+    assert first == store.put(sha, data, "text/markdown; charset=utf-8")
+    assert (first.storage_key, first.size_bytes) == (storage_key(sha), len(data))
+    assert store.read(first.storage_key) == data

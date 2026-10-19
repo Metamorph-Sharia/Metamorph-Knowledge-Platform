@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from datetime import UTC, date, datetime
 from typing import Any
@@ -48,11 +49,6 @@ FIELD_HINTS = {
 
 # (tab label, what a curator does with an item, why items land here)
 REVIEW_QUEUES = {
-    "unresolved_id": (
-        "Unidentified",
-        "Assign the document’s canonical ID.",
-        "The connector couldn’t tell which regulation the document is.",
-    ),
     "conflict": (
         "Conflicts",
         "Keep the correction or accept the source’s new value.",
@@ -68,11 +64,14 @@ REVIEW_QUEUES = {
         "Ask the connector’s owner to fix the export, then dismiss.",
         "A bundle line broke the contract and wasn’t loaded.",
     ),
-    "structure_suspect": (
-        "Structure",
-        "Check the text, then resolve or dismiss.",
-        "The parser found gaps: missing articles, paragraphs, or no articles at all.",
-    ),
+}
+
+# (label, what a curator does about it) for each check of the publish gate (domain/gate.py)
+HOLD_CHECKS = {
+    "identity": ("Unidentified", "Assign the document’s canonical ID."),
+    "text": ("No Main Text", "Ask the connector’s owner to acquire the regulation’s own text."),
+    "parsed": ("Not Parsed Yet", "Nothing to do: the next build parses it."),
+    "structure": ("Structure", "Fix it at its source or in the parser, or approve the problems as they are."),
 }
 
 KINDS = tuple(kind.value for kind in Kind)
@@ -90,10 +89,19 @@ DONE = {
     "resolved": "Review item resolved.",
     "dismissed": "Review item dismissed.",
     "added": "Document added and published.",
+    "approved": "Approved. The document is checked again and published if it passes.",
+    "unapproved": "Approval withdrawn. The document is checked again.",
+    "text_corrected": "Text corrected, parsed again and checked. Published if it passes.",
+    "text_restored": "Correction withdrawn. The source’s text is back, parsed again and checked.",
 }
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")  # a source’s date, as its document states it
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def text_diff(before: str, after: str) -> list[str]:
+    """A unified diff of a correction (source → corrected), with a few lines of context."""
+    return list(difflib.unified_diff(before.splitlines(), after.splitlines(), "source", "correction", lineterm=""))
 
 
 def day(value: Any) -> Markup:
@@ -151,6 +159,7 @@ def install(environment: Environment) -> None:
         "FIELD_LABELS": FIELD_LABELS,
         "FIELD_HINTS": FIELD_HINTS,
         "REVIEW_QUEUES": REVIEW_QUEUES,
+        "HOLD_CHECKS": HOLD_CHECKS,
         "KINDS": KINDS,
         "STATUSES": STATUSES,
         "RIGHTS": RIGHTS,

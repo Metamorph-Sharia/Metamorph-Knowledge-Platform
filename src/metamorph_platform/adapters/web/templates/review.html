@@ -29,10 +29,8 @@
       <p class="item__summary">{{ item.summary }}</p>
       <p class="meta">Waiting since {{ item.created_at | day }}
         {% if item.document_id %}
-          {% if item.kind == "unresolved_id" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#manage">Assign an ID</a>
-          {% elif item.kind == "conflict" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#conflicts">Decide the conflict</a>
+          {% if item.kind == "conflict" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#conflicts">Decide the conflict</a>
           {% elif item.kind == "unresolved_citation" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#citations">Link the citation</a>
-          {% elif item.kind == "structure_suspect" %} &middot; <a href="/documents/{{ item.document_id | urlencode }}#content">Read the text</a>
           {% endif %}
         {% endif %}
       </p>

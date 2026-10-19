@@ -14,15 +14,17 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | [docs/data-source-management-plan.md](docs/data-source-management-plan.md) | The phased plan for this layer |
 | [dags](dags/README.md) | Airflow DAGs: one ingest DAG per connector job, `registry_build`, `health` |
 | [docs/published-schema.md](docs/published-schema.md) | **The read contract** for the Knowledge and Retrieval layer: tables, IDs, provision addresses, links, validity |
+| [docs/curation-workflow-design.md](docs/curation-workflow-design.md) | The publish gate, held documents, approving as is, and text correction |
+| [docs/curation-workflow-implementation-plan.md](docs/curation-workflow-implementation-plan.md) | How that design is built: two releases, step by step, test lists first |
 
 ## The database
 
 | Schema | Holds | Written by |
 |---|---|---|
 | `ingest` | Runs, bundles received, quarantined lines, events | Airflow tasks, the loader |
-| `registry` | The system of record: documents merged across sources, files, text versions, provisions, citations, links, status history | The loader, resolver and parser only |
-| `curation` | The Metamorph team's overrides, suppressions, review queue, conflicts, audit log | The curation web app only |
-| `published` | **The read contract for the Knowledge and Retrieval layer:** effective values, public content, `change_log` for incremental indexing | The publish step only |
+| `registry` | The system of record: documents merged across sources, files, text versions, provisions, citations, links, status history; and `hold`, the documents the publish gate holds back | The loader, resolver and parser; the publish step writes `hold` |
+| `curation` | The Metamorph team's overrides, approvals, text corrections, suppressions, review queue, conflicts, audit log | The curation web app only |
+| `published` | **The read contract for the Knowledge and Retrieval layer:** effective values, public content, `change_log` for incremental indexing. Only documents that pass the publish gate | The publish step only |
 
 ## Run the stack
 
@@ -49,15 +51,15 @@ uv run --env-file .env metamorph build        # parse → resolve → settle rev
 
 | Step | Command | What it does |
 |---|---|---|
-| Parse | `metamorph parse [--all]` | Each new or changed main text becomes a provision tree (`domain/structure/`) with citations found in the text (`domain/citations.py`) and the dates it states (`domain/dates.py`). A text whose structure fails the quality checks is queued as `structure_suspect` |
+| Parse | `metamorph parse [--all]` | Each new or changed main text becomes a provision tree (`domain/structure/`) with citations found in the text (`domain/citations.py`) and the dates it states (`domain/dates.py`). A text whose structure fails the quality checks is stored with its problems, for the publish gate |
 | Resolve | `metamorph resolve` | Citations become links when their target is held. A target not held yet waits and links once its connector loads it |
-| Settle reviews | `metamorph settle` | Review items whose cause has gone are resolved by the platform (`metamorph-platform`), each with its reason and an audit row: a replaced or re-parsed clean text, a file that is no longer the main text, a citation now linked or no longer made, a placeholder document since identified. The rest are counted as needing a person. Conflicts and quarantined lines always wait for a person |
+| Settle reviews | `metamorph settle` | Unlinked-citation items whose cause has gone are resolved by the platform (`metamorph-platform`), each with its reason and an audit row: the citation is now linked, no longer made, or read as naming a document. The rest are counted as needing a person. Conflicts and quarantined lines always wait for a person |
 | Validity | `metamorph validity` | Amending and revoking links become status events and article end dates (`valid_to`) |
-| Publish | `metamorph publish` | Refreshes `published` for every document any step changed |
+| Publish | `metamorph publish` | Refreshes `published` for every document any step changed, through the **publish gate** (`domain/gate.py`): a document is published only when its ID is canonical, it has a main text, today's parser read it, and its structure has no problems (or a curator approved them as they are). A document that fails is **held**: its last good version, if any, stays published, and its reasons go to `registry.hold`. The report counts `held` |
 
 Each step only does what is new, so a second `build` changes nothing.
 
-`load` refuses a connector run it has loaded before (a failed one may be retried). Lines that break the contract are quarantined in `ingest.quarantine`, and the rest still loads. Documents that need a person (unresolved IDs, quarantined lines) are queued in `curation.review_item`.
+`load` refuses a connector run it has loaded before (a failed one may be retried). Lines that break the contract are quarantined in `ingest.quarantine`, and the rest still loads. Quarantined lines and conflicts are queued in `curation.review_item`; a document the connector couldn't identify is held by the publish gate until a curator assigns its ID.
 
 ## Run on a schedule (Airflow)
 
@@ -94,8 +96,9 @@ docker compose exec postgres sh /docker-entrypoint-initdb.d/02-bi.sh   # only on
 
 The Metamorph team's console at http://localhost:8000 (`docker compose up -d web`, or `uv run --env-file .env metamorph web` on the host).
 
-- **Overview:** ingestion health, review queue counts, the registry by issuer, and the latest loads.
-- **Review:** one queue each for unidentified documents, conflicts, unlinked citations, quarantined lines and structure problems. The queue and page are in the URL. Every item is resolved or dismissed with a note.
+- **Overview:** held documents, review queue counts, ingestion health, the registry by issuer, and the latest loads.
+- **Held:** the documents the publish gate holds back, with why, filterable by check (unidentified, no main text, not parsed yet, structure). Those whose last good version is still published come first.
+- **Review:** one queue each for conflicts, unlinked citations and quarantined lines. The queue and page are in the URL. Every item is resolved or dismissed with a note.
 - **Document:** for each field, the published value beside every source's value. Also its sources, files and texts, open citations, links in and out, status history, provision tree and review items.
 - **Actions:**
   - correct or withdraw a field;
@@ -103,9 +106,11 @@ The Metamorph team's console at http://localhost:8000 (`docker compose up -d web
   - suppress or restore a document;
   - link a citation by hand;
   - keep a correction, or accept the source's new value;
+  - approve a text's structure problems as they are (a genuine gap), or withdraw the approval. It holds for exactly that text and those problems: a new text or a parser that reads it differently lapses it;
+  - correct a main text's wording (**Edit Text**): a damaged heading, an article typed in from the official PDF. The correction is an overlay: the source's text stays, the corrected wording is stored beside it, parsed and checked within the request, and published if the document passes. A paged text must keep its page markers. Withdrawing it brings the source's text back. When the source later sends a new text, the correction no longer applies, and the document page says so, with the old changes to compare;
   - add a manual document. It loads as a one-document `manual` bundle, the same path as every connector.
 
-Every action needs a reason. It is written to `curation.audit_log` in the same transaction as the change, and published at once.
+Every action needs a reason. It is written to `curation.audit_log` in the same transaction as the change; then what changed is parsed and published at once.
 
 **Behaviour:**
 - **Corrections are overlays:** a reload never undoes one. A source that later changes a corrected field raises a conflict.

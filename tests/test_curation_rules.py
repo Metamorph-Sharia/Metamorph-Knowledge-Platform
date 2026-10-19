@@ -6,10 +6,12 @@ from dataclasses import replace
 
 import pytest
 from contract_samples import build_document
+from metamorph_contract import join_pages
 
 from metamorph_platform.domain.curation import (
     ActiveOverride,
     InvalidCorrection,
+    checked_text_correction,
     conflicts,
     id_parts,
     parse_correction,
@@ -90,3 +92,35 @@ def test_an_assigned_id_also_sets_the_family_number_and_year_it_names():
 
     assert (assigned.issuer, assigned.family, assigned.number, assigned.year) == ("ojk", "seojk", "9", 2016)
     assert id_parts("dsnmui:fatwa:117") == ("dsnmui", "fatwa", None, "117")
+
+
+PAGED = join_pages(["PERATURAN OTORITAS JASA KEUANGAN", "Pasa1 1\nSatu.", "Pasal 2\nDua."])
+
+
+def test_a_corrected_text_is_normalised_to_newlines_and_a_final_newline():
+    assert checked_text_correction("Pasa1 1\n", "Pasal 1\r\nSatu.", paged=False) == "Pasal 1\nSatu.\n"
+
+
+def test_an_empty_or_unchanged_text_is_refused():
+    with pytest.raises(InvalidCorrection, match="empty"):
+        checked_text_correction("Pasa1 1\n", "  \n ", paged=False)
+    with pytest.raises(InvalidCorrection, match="unchanged"):
+        checked_text_correction("Pasal 1\nSatu.", "Pasal 1\r\nSatu.\n", paged=False)
+
+
+def test_a_paged_text_keeps_every_page_marker_in_order():
+    """Page numbers come from the markers: a lost or moved one would misplace every provision after it."""
+    fixed = PAGED.replace("Pasa1 1", "Pasal 1")
+
+    assert checked_text_correction(PAGED, fixed, paged=True) == fixed + "\n"
+    with pytest.raises(InvalidCorrection, match="page 2"):
+        checked_text_correction(PAGED, fixed.replace("<!-- page 2 -->\n", ""), paged=True)
+    with pytest.raises(InvalidCorrection, match="page 4"):
+        checked_text_correction(PAGED, fixed + "\n<!-- page 4 -->\nLampiran", paged=True)
+    swapped = fixed.replace("<!-- page 2 -->", "<!-- page X -->").replace("<!-- page 3 -->", "<!-- page 2 -->")
+    with pytest.raises(InvalidCorrection, match="order"):
+        checked_text_correction(PAGED, swapped.replace("<!-- page X -->", "<!-- page 3 -->"), paged=True)
+
+
+def test_an_unpaged_text_may_contain_anything():
+    assert checked_text_correction("Pasa1 1\n", "<!-- page 9 -->\nPasal 1\n", paged=False).startswith("<!--")

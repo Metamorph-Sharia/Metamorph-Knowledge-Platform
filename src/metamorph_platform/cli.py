@@ -64,7 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("resolve", help="link citations to the documents they name").set_defaults(run=_resolve)
     commands.add_parser("validity", help="status events and article end dates from links").set_defaults(run=_validity)
     commands.add_parser(
-        "settle", help="resolve the review items whose cause is gone; count those that need a person"
+        "settle", help="resolve the citation items whose cause is gone; count those that need a person"
     ).set_defaults(run=_settle)
     build = commands.add_parser(
         "build", help="parse, resolve, settle reviews, validity, then publish: the registry build"
@@ -156,8 +156,8 @@ def _validity(settings: Settings, _: argparse.Namespace) -> int:
 
 
 def _build(settings: Settings, arguments: argparse.Namespace) -> int:
-    """The order matters: links need the parsed citations, settling judges review items on today's texts and
-    links, validity needs the links, publish needs them all."""
+    """The order matters: links need the parsed citations, settling judges citation items on today's
+    citations and links, validity needs the links, publish (and its gate) needs them all."""
     with wiring.connect(settings) as connection:
         result = {
             "parse": wiring.parse_texts(connection, settings).run(everything=arguments.reparse).counts(),

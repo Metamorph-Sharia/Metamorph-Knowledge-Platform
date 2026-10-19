@@ -20,7 +20,7 @@ from metamorph_platform.adapters.web.app import ServicesFactory, WebServices, cr
 from metamorph_platform.application.add_manual_document import AddManualDocument
 from metamorph_platform.application.check_health import CheckHealth
 from metamorph_platform.application.compute_validity import ComputeValidity
-from metamorph_platform.application.curate import Curate
+from metamorph_platform.application.curate import CorrectText, Curate
 from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.publish import Publish
@@ -50,11 +50,11 @@ def load_bundle(connection: psycopg.Connection, settings: Settings) -> LoadBundl
 
 def publish(connection: psycopg.Connection, settings: Settings) -> Publish:
     publication = PostgresPublication(connection)
-    return Publish(source=publication, published=publication, texts=blob_store(settings))
+    return Publish(source=publication, published=publication, texts=blob_store(settings), holds=publication)
 
 
 def parse_texts(connection: psycopg.Connection, settings: Settings) -> ParseTexts:
-    return ParseTexts(PostgresParsedTexts(connection), blob_store(settings), PostgresReviewQueue(connection))
+    return ParseTexts(PostgresParsedTexts(connection), blob_store(settings))
 
 
 def resolve_citations(connection: psycopg.Connection) -> ResolveCitations:
@@ -80,12 +80,15 @@ def web_services(settings: Settings) -> ServicesFactory:
     def open_services() -> Iterator[WebServices]:
         with connect(settings) as connection:
             views, actions = PostgresCurationViews(connection), PostgresCurationActions(connection)
+            blobs = blob_store(settings)
             yield WebServices(
                 views=views,
                 curate=Curate(actions),
                 add_manual=AddManualDocument(load_bundle(connection, settings), actions, known=views.exists),
                 publish=publish(connection, settings),
-                blobs=blob_store(settings),
+                blobs=blobs,
+                correct_text=CorrectText(actions, actions, blobs, blobs),
+                parse=parse_texts(connection, settings),
             )
 
     return open_services

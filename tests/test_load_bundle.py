@@ -68,12 +68,12 @@ def test_a_document_absent_from_a_full_snapshot_is_marked_missing(tmp_path, port
     assert ports[1].records[("ojk", "regalert:b")]["missing"] is True
 
 
-def test_an_unidentified_document_loads_and_waits_for_a_person(tmp_path, ports) -> None:
+def test_an_unidentified_document_loads_and_is_counted_for_a_person_to_identify(tmp_path, ports) -> None:
+    """The publish gate holds it until a curator assigns an ID: no review item is needed for that."""
     report = load(ports, write_bundle(tmp_path / "b1", [unresolved()]))
 
     assert report.new == 1 and report.to_review == 1
-    kind, subject = ports[3].open[0]
-    assert kind is ReviewKind.UNRESOLVED_ID and subject["document_id"].startswith("unresolved:ojk:")
+    assert ports[3].open == []
 
 
 def test_a_broken_line_is_quarantined_and_the_rest_still_loads(tmp_path, ports) -> None:

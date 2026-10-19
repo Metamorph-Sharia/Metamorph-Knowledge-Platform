@@ -15,11 +15,20 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from metamorph_platform.adapters.postgres.derived import touch
-from metamorph_platform.application.ports import CurationRefused, Curator
+from metamorph_platform.adapters.postgres.derived import MAIN_TEXT, touch
+from metamorph_platform.application.ports import CorrectableText, CurationRefused, Curator
 from metamorph_platform.domain.curation import ActiveOverride, id_parts
 from metamorph_platform.domain.loading import ReviewKind
 from metamorph_platform.domain.publishing import OVERRIDABLE_FIELDS
+
+# A current main text of the document, with its effective content: a curator's active correction, or its own.
+_CURRENT_MAIN_TEXT = f"""
+SELECT coalesce(c.sha256, t.sha256) AS effective_sha256, coalesce(c.storage_key, b.storage_key) AS storage_key,
+       t.paged, t.parsed_sha256, coalesce(t.structure_problems, '[]'::jsonb) AS problems
+FROM registry.text_version t JOIN registry.blob b ON b.sha256 = t.sha256
+LEFT JOIN curation.text_correction c ON c.document_id = t.document_id AND c.corrects_sha256 = t.sha256 AND c.active
+WHERE t.document_id = %s AND t.sha256 = %s AND t.is_current AND {MAIN_TEXT}
+"""
 
 
 def _json(value: Any) -> Any:
@@ -70,6 +79,96 @@ class PostgresCurationActions:
             (document_id, field),
         ).fetchone()
         return {"value": row[0], "author": row[1], "reason": row[2]} if row else None
+
+    # --- approvals -----------------------------------------------------------------------------
+
+    def approve(self, curator: Curator, document_id: str, text_sha256: str, reason: str) -> None:
+        """The problems approved are the ones stored for the text now, read in this transaction: the ones the
+        curator was shown. They belong to its effective content (a correction's, once parsed), which is what
+        the approval names; any other problems, after a re-parse, lapse it (domain/gate.py)."""
+        target = {"document_id": document_id, "text_sha256": text_sha256}
+        with self.connection.transaction():
+            self._begin(curator)
+            effective_sha256, _, _, parsed_sha256, problems = self._current_main_text(document_id, text_sha256)
+            if parsed_sha256 != effective_sha256:
+                raise CurationRefused(f"{text_sha256[:12]} isn't parsed since it changed: approve it once it is")
+            if not problems:
+                raise CurationRefused(f"{text_sha256[:12]} has no structure problems to approve")
+            before = self._withdraw_approval(document_id, effective_sha256)
+            self.connection.execute(
+                "INSERT INTO curation.approval (document_id, text_sha256, problems, reason, author) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (document_id, effective_sha256, Jsonb(problems), reason, curator.username),
+            )
+            self._audit(curator, "approve", target, before, {"problems": problems}, reason)
+            touch(self.connection, [document_id])
+
+    def withdraw_approval(self, curator: Curator, document_id: str, text_sha256: str, reason: str) -> None:
+        target = {"document_id": document_id, "text_sha256": text_sha256}
+        with self.connection.transaction():
+            self._begin(curator)
+            effective_sha256, *_ = self._current_main_text(document_id, text_sha256)
+            before = self._withdraw_approval(document_id, effective_sha256)
+            if before is None:
+                raise CurationRefused(f"{text_sha256[:12]} of {document_id} has no approval to withdraw")
+            self._audit(curator, "withdraw_approval", target, before, None, reason)
+            touch(self.connection, [document_id])
+
+    def _withdraw_approval(self, document_id: str, text_sha256: str) -> dict | None:
+        row = self.connection.execute(
+            "UPDATE curation.approval SET active = false WHERE document_id = %s AND text_sha256 = %s AND active "
+            "RETURNING problems, author, reason",
+            (document_id, text_sha256),
+        ).fetchone()
+        return {"problems": row[0], "author": row[1], "reason": row[2]} if row else None
+
+    # --- text corrections ------------------------------------------------------------------------
+
+    def effective(self, document_id: str, text_sha256: str) -> CorrectableText | None:
+        row = self.connection.execute(_CURRENT_MAIN_TEXT, (document_id, text_sha256)).fetchone()
+        return CorrectableText(storage_key=row[1], paged=row[2]) if row else None
+
+    def correct_text(
+        self, curator: Curator, document_id: str, text_sha256: str, sha256: str, storage_key: str, reason: str
+    ) -> None:
+        target = {"document_id": document_id, "text_sha256": text_sha256}
+        with self.connection.transaction():
+            self._begin(curator)
+            self._current_main_text(document_id, text_sha256)
+            before = self._withdraw_text_correction(document_id, text_sha256)
+            self.connection.execute(
+                "INSERT INTO curation.text_correction (document_id, corrects_sha256, sha256, storage_key, reason, "
+                "author) VALUES (%s, %s, %s, %s, %s, %s)",
+                (document_id, text_sha256, sha256, storage_key, reason, curator.username),
+            )
+            self._audit(curator, "correct_text", target, before, {"sha256": sha256}, reason)
+            touch(self.connection, [document_id])
+
+    def withdraw_text_correction(self, curator: Curator, document_id: str, text_sha256: str, reason: str) -> None:
+        target = {"document_id": document_id, "text_sha256": text_sha256}
+        with self.connection.transaction():
+            self._begin(curator)
+            before = self._withdraw_text_correction(document_id, text_sha256)
+            if before is None:
+                raise CurationRefused(f"{text_sha256[:12]} of {document_id} has no correction to withdraw")
+            self._audit(curator, "withdraw_text_correction", target, before, None, reason)
+            touch(self.connection, [document_id])
+
+    def _current_main_text(self, document_id: str, text_sha256: str) -> tuple:
+        return self._one(
+            _CURRENT_MAIN_TEXT,
+            document_id,
+            text_sha256,
+            missing=f"{text_sha256[:12]} isn't a current main text of {document_id}",
+        )
+
+    def _withdraw_text_correction(self, document_id: str, text_sha256: str) -> dict | None:
+        row = self.connection.execute(
+            "UPDATE curation.text_correction SET active = false "
+            "WHERE document_id = %s AND corrects_sha256 = %s AND active RETURNING sha256, author, reason",
+            (document_id, text_sha256),
+        ).fetchone()
+        return {"sha256": row[0], "author": row[1], "reason": row[2]} if row else None
 
     # --- suppression ---------------------------------------------------------------------------
 
@@ -149,7 +248,6 @@ class PostgresCurationActions:
                 "author = EXCLUDED.author, created_at = now()",
                 (new_id, curator.username, new_id),
             )
-            self._close_reviews(curator, ReviewKind.UNRESOLVED_ID, {"document_id": document_id}, reason)
             self._audit(curator, "assign_id", {"document_id": document_id}, before, {"document_id": new_id}, reason)
 
     def link_citation(self, curator: Curator, citation_id: int, target_id: str, reason: str) -> None:

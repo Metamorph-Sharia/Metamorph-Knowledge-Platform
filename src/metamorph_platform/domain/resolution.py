@@ -24,7 +24,7 @@ class Resolution:
 def resolve(
     target_id: str | None, target_text: str, *, known: Container[str], aliases: Mapping[str, str]
 ) -> Resolution | None:
-    for candidate in _candidates(target_id, target_text):
+    for candidate in named_targets(target_id, target_text):
         if candidate in known:
             return Resolution(candidate, "exact_id")
     aliased = aliases.get(alias_key(target_text))
@@ -33,9 +33,10 @@ def resolve(
 
 def identifiable(target_id: str | None, target_text: str) -> bool:
     """False when nothing names the target: a person must link it by hand."""
-    return bool(_candidates(target_id, target_text))
+    return bool(named_targets(target_id, target_text))
 
 
-def _candidates(target_id: str | None, target_text: str) -> list[str]:
+def named_targets(target_id: str | None, target_text: str) -> list[str]:
+    """The IDs a citation names: the one its connector gave, then those its text names."""
     named = [ref.target_id for ref in references(target_text) if ref.target_id]
     return [*([target_id] if target_id else []), *named]

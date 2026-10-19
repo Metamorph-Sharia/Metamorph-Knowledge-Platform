@@ -30,6 +30,12 @@ class S3BlobStore:
             self.client.upload_file(str(source), self.bucket, key, ExtraArgs={"ContentType": media_type})
         return StoredBlob(sha256=sha256, storage_key=key, media_type=media_type, size_bytes=source.stat().st_size)
 
+    def put(self, sha256: str, data: bytes, media_type: str) -> StoredBlob:
+        key = storage_key(sha256)
+        if not self._exists(key):
+            self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=media_type)
+        return StoredBlob(sha256=sha256, storage_key=key, media_type=media_type, size_bytes=len(data))
+
     def read(self, key: str) -> bytes:
         return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
 

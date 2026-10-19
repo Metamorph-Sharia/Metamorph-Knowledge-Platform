@@ -10,19 +10,12 @@ from __future__ import annotations
 import psycopg
 
 from metamorph_platform.adapters.postgres.curation import PostgresCurationActions
-from metamorph_platform.adapters.postgres.derived import MAIN_TEXT
 from metamorph_platform.application.ports import Curator, OpenReview
 from metamorph_platform.domain.loading import ReviewKind
-from metamorph_platform.domain.reviews import TextStanding
 
 PLATFORM = Curator("metamorph-platform", "Metamorph platform (automatic)")
 
 _OPEN = "SELECT id, kind, subject FROM curation.review_item WHERE state = 'open' ORDER BY id"
-_STANDING = f"""
-SELECT t.is_current, {MAIN_TEXT} AS main, t.parsed_with, coalesce(t.structure_problems, '[]'::jsonb)
-FROM registry.text_version t
-WHERE t.document_id = %s AND t.sha256 = %s
-"""
 # A citation still waiting: the source sent it, or the document's current text makes it (a replaced text's
 # citations stay behind with it).
 _UNLINKED = """
@@ -41,13 +34,6 @@ class PostgresOpenReviews:
 
     def open_items(self) -> list[OpenReview]:
         return [OpenReview(id, ReviewKind(kind), subject) for id, kind, subject in self.connection.execute(_OPEN)]
-
-    def text_standing(self, document_id: str, text_sha256: str) -> TextStanding | None:
-        row = self.connection.execute(_STANDING, (document_id, text_sha256)).fetchone()
-        if row is None:
-            return None
-        current, main, parsed_with, problems = row
-        return TextStanding(current=current, main=main, parsed_with=parsed_with, problems=tuple(problems))
 
     def still_unlinked(self, document_id: str, target_text: str) -> bool:
         return self.connection.execute(_UNLINKED, (document_id, target_text)).fetchone()[0]

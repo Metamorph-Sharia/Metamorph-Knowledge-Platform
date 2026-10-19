@@ -9,10 +9,12 @@ from metamorph_contract import Bundle
 from platform_samples import document, unresolved, write_bundle
 
 from metamorph_platform.adapters.postgres.curation import PostgresOverrides
+from metamorph_platform.adapters.postgres.derived import PostgresParsedTexts
 from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, PostgresRegistry, PostgresReviewQueue
 from metamorph_platform.adapters.postgres.migrate import migrate
 from metamorph_platform.adapters.postgres.publishing import PostgresPublication
 from metamorph_platform.application.load_bundle import LoadBundle
+from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.ports import BundleAlreadyLoaded
 from metamorph_platform.application.publish import Publish
 
@@ -35,8 +37,10 @@ def load(db, directory):
 
 
 def publish(db, everything=False):
+    """Parse, then publish, as a build does: the publish gate only lets parsed texts through."""
+    ParseTexts(PostgresParsedTexts(db), BLOBS).run()
     publication = PostgresPublication(db)
-    return Publish(publication, publication, BLOBS).run(everything=everything).counts()
+    return Publish(publication, publication, BLOBS, holds=publication).run(everything=everything).counts()
 
 
 def one(db, sql, *params):
@@ -56,7 +60,7 @@ def test_a_bundle_becomes_registry_rows_and_then_published_rows(db, tmp_path) ->
     assert one(db, "SELECT count(*) FROM registry.provision WHERE origin = 'source'") == (1,)
     assert one(db, "SELECT state, loaded FROM ingest.bundle") == ("loaded", 1)
 
-    assert publish(db) == {"added": 1, "updated": 0, "removed": 0}
+    assert publish(db) == {"added": 1, "updated": 0, "removed": 0, "held": 0}
     assert one(db, "SELECT id, aliases FROM published.document") == (
         "ojk:pojk:2014:5",
         ["5/POJK.05/2014", "POJK 5/2014", "POJK 5/POJK.05/2014"],
@@ -72,7 +76,7 @@ def test_reloading_and_republishing_an_unchanged_snapshot_is_a_no_op(db, tmp_pat
     report = load(db, write_bundle(tmp_path / "b2", [document()], run_id="run-2"))
 
     assert (report.new, report.changed, report.unchanged) == (0, 0, 1)
-    assert publish(db) == {"added": 0, "updated": 0, "removed": 0}
+    assert publish(db) == {"added": 0, "updated": 0, "removed": 0, "held": 0}
     assert one(db, "SELECT count(*) FROM published.change_log") == (1,)
 
 
@@ -82,7 +86,7 @@ def test_a_changed_document_is_republished(db, tmp_path) -> None:
 
     load(db, write_bundle(tmp_path / "b2", [document(title="JUDUL BARU")], run_id="run-2"))
 
-    assert publish(db) == {"added": 0, "updated": 1, "removed": 0}
+    assert publish(db) == {"added": 0, "updated": 1, "removed": 0, "held": 0}
     assert one(db, "SELECT title FROM published.document") == ("JUDUL BARU",)
     assert one(db, "SELECT count(*) FROM ingest.event WHERE kind = 'document_changed'") == (1,)
 
@@ -96,21 +100,22 @@ def test_a_curator_override_wins_and_a_suppression_unpublishes(db, tmp_path) -> 
         "VALUES ('ojk:pojk:2014:5', 'status', '\"revoked\"', 'replaced by POJK 2/2026', 'rina')"
     )
 
-    assert publish(db) == {"added": 0, "updated": 1, "removed": 0}
+    assert publish(db) == {"added": 0, "updated": 1, "removed": 0, "held": 0}
     assert one(db, "SELECT status, curated FROM published.document") == ("revoked", True)
 
     db.execute(
         "INSERT INTO curation.suppression (document_id, reason, author) VALUES ('ojk:pojk:2014:5', 'test', 'rina')"
     )
-    assert publish(db) == {"added": 0, "updated": 0, "removed": 1}
+    assert publish(db) == {"added": 0, "updated": 0, "removed": 1, "held": 0}
     assert one(db, "SELECT change FROM published.change_log ORDER BY id DESC LIMIT 1") == ("removed",)
 
 
-def test_an_unresolved_document_is_queued_for_review_once(db, tmp_path) -> None:
+def test_an_unresolved_document_is_held_rather_than_queued(db, tmp_path) -> None:
     load(db, write_bundle(tmp_path / "b1", [unresolved()]))
-    load(db, write_bundle(tmp_path / "b2", [unresolved()], run_id="run-2"))
 
-    assert one(db, "SELECT count(*), min(kind) FROM curation.review_item WHERE state = 'open'") == (1, "unresolved_id")
+    assert publish(db)["held"] == 1
+    assert one(db, "SELECT count(*) FROM curation.review_item WHERE state = 'open'") == (0,)
+    assert one(db, "SELECT reasons -> 0 ->> 'check' FROM registry.hold") == ("identity",)
 
 
 def test_a_broken_line_is_quarantined_with_its_problems(db, tmp_path) -> None:

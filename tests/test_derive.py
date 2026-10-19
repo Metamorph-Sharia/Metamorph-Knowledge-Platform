@@ -36,33 +36,28 @@ def text(text_version_id: int, document_id: str = "ojk:pojk:2019:10") -> TextToP
 def parse_all(*contents: str):
     texts = [text(number) for number in range(1, len(contents) + 1)]
     store = MemoryParsedTexts(texts)
-    reviews = MemoryReviewQueue()
     blobs = MemoryBlobReader({t.storage_key: content.encode() for t, content in zip(texts, contents, strict=True)})
-    report = ParseTexts(store, blobs, reviews).run()
-    return store, reviews, report
+    report = ParseTexts(store, blobs).run()
+    return store, report
 
 
 def test_each_text_is_parsed_once_into_provisions_citations_and_dates() -> None:
-    store, reviews, report = parse_all(GOOD)
+    store, report = parse_all(GOOD)
 
     [parsed] = store.saved
     assert parsed.parser_version == PARSER_VERSION
     assert [n.address for n in parsed.structure.nodes][:3] == ["mengingat", "memutuskan", "pasal-1"]
     assert [c.target_id for c in parsed.citations] == ["id:uu:2011:21"]
     assert parsed.dates.effective == date(2019, 2, 27)
-    assert reviews.open == []
     assert report.counts() == {"texts": 1, "provisions": 5, "citations": 1, "suspect": 0}
-    assert ParseTexts(store, MemoryBlobReader({}), reviews).run().texts == 0  # nothing left at this version
+    assert ParseTexts(store, MemoryBlobReader({})).run().texts == 0  # nothing left at this version
 
 
-def test_a_text_whose_structure_looks_wrong_is_queued_for_review() -> None:
-    _, reviews, report = parse_all(GAPPY)
+def test_a_text_whose_structure_looks_wrong_is_stored_with_its_problems_for_the_publish_gate() -> None:
+    store, report = parse_all(GAPPY)
 
     assert report.suspect == 1
-    assert reviews.open == [
-        (ReviewKind.STRUCTURE_SUSPECT, {"document_id": "ojk:pojk:2019:10", "text_sha256": text(1).sha256,
-                                        "problems": ["Pasal 2 missing"]})
-    ]  # fmt: skip
+    assert store.saved[0].structure.problems == ["Pasal 2 missing"]
 
 
 def citation(id_: int, target_id: str | None, target_text: str, relation: str = "legal_basis") -> OpenCitation:

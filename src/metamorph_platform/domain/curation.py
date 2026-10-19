@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any
 
-from metamorph_contract import Confidence, Kind, NormalizedDocument, Status, is_canonical, is_unresolved
+from metamorph_contract import Confidence, Kind, NormalizedDocument, Status, is_canonical, is_unresolved, split_pages
 
 from metamorph_platform.domain.publishing import OVERRIDABLE_FIELDS
 
@@ -113,3 +113,38 @@ def with_assigned_id(document: NormalizedDocument, assigned_id: str) -> Normaliz
         id_evidence=f"assigned by a curator (the connector said {document.document.id})",
     )
     return replace(document, document=info)
+
+
+def checked_text_correction(current: str, corrected: str, *, paged: bool) -> str:
+    """The corrected wording of a text, as it will be stored: `\\n` line endings and a final newline.
+
+    A paged text keeps every page marker (`<!-- page N -->`) in order: page numbers come from them, so a
+    lost or moved one would misplace every provision after it.
+    """
+    text = _normalised(corrected)
+    if not text.strip():
+        raise InvalidCorrection("the text can't be empty")
+    if text == _normalised(current):
+        raise InvalidCorrection("the text is unchanged: there is nothing to correct")
+    if paged:
+        _check_pages(_page_numbers(current), _page_numbers(text))
+    return text
+
+
+def _normalised(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
+
+
+def _page_numbers(text: str) -> list[int]:
+    return [number for number, _ in split_pages(text)]
+
+
+def _check_pages(before: list[int], after: list[int]) -> None:
+    lost = sorted(set(before) - set(after))
+    added = sorted(set(after) - set(before))
+    if lost:
+        raise InvalidCorrection(f"keep every page marker: the one for page {lost[0]} (<!-- page {lost[0]} -->) is gone")
+    if added:
+        raise InvalidCorrection(f"don't add page markers: page {added[0]} isn't in the source's text")
+    if before != after:
+        raise InvalidCorrection("keep the page markers in their order")

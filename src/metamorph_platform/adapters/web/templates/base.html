@@ -19,6 +19,7 @@
       <nav aria-label="Main">
         <ul>
           <li><a href="/" {% if section == "overview" %}aria-current="page"{% endif %}>Overview</a></li>
+          <li><a href="/held" {% if section == "held" %}aria-current="page"{% endif %}>Held</a></li>
           <li><a href="/review" {% if section == "review" %}aria-current="page"{% endif %}>Review</a></li>
           <li><a href="/documents" {% if section == "documents" %}aria-current="page"{% endif %}>Documents</a></li>
           <li><a href="/documents/new" {% if section == "add" %}aria-current="page"{% endif %}>Add Document</a></li>
