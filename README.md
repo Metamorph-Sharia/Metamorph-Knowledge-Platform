@@ -99,7 +99,7 @@ docker compose exec postgres sh /docker-entrypoint-initdb.d/02-bi.sh   # only on
 The Metamorph team's console is **[Metamorph-Curation-Web](../Metamorph-Curation-Web)** (Next.js and TypeScript), in its own repository. The compose `web` service builds it from there and serves it at http://localhost:8000 (`docker compose up -d web`). It calls the platform only through the **curation JSON API**.
 
 **The curation JSON API** is `metamorph api` (`adapters/api/`; `docker compose up -d api`, at http://localhost:8001/api/v1):
-- **Reads:** the overview, the held list, the review queues, search, a document's full view, a text to edit, a correction's changes, and file links.
+- **Reads:** the overview, the held list, the review queues, search (documents by metadata or published wording, and the matching articles, with filters), browsing by series, a document's full view, a text read as the parser cut it, a text to edit, a correction's changes, and file links.
 - **Actions:** correcting and withdrawing fields; approving a text's problems as they are; correcting a text's wording and withdrawing it; suppressing and restoring; assigning an ID; linking citations; deciding conflicts and review items; adding a document. Each action calls exactly one curation use case, then parses, publishes and re-checks the publish gate before it answers.
 - **Sign-in:** `POST /api/v1/auth/session` returns a short-lived session token (ADR-4).
 - **Files:** they move through short-lived S3 links. The bucket must let the web app's origin upload: `metamorph storage init --upload-origin URL`.

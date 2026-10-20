@@ -1,6 +1,62 @@
 {
   "components": {
     "schemas": {
+      "ArticleHit": {
+        "description": "A published article whose wording matches: the unit lawyers cite, not each of its paragraphs.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "citation": {
+            "title": "Citation",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "citation",
+          "title",
+          "address",
+          "label",
+          "heading",
+          "excerpt",
+          "status"
+        ],
+        "title": "ArticleHit",
+        "type": "object"
+      },
       "BundleRow": {
         "properties": {
           "connector": {
@@ -506,6 +562,71 @@
         "title": "Dashboard",
         "type": "object"
       },
+      "DocumentHit": {
+        "properties": {
+          "citation": {
+            "title": "Citation",
+            "type": "string"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "id",
+          "citation",
+          "title",
+          "issuer",
+          "family",
+          "number",
+          "year",
+          "kind",
+          "status",
+          "state"
+        ],
+        "title": "DocumentHit",
+        "type": "object"
+      },
       "DocumentRow": {
         "properties": {
           "citation": {
@@ -750,6 +871,37 @@
         "title": "EditableText",
         "type": "object"
       },
+      "Facet": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "title": "Facet",
+        "type": "object"
+      },
       "FieldCorrection": {
         "properties": {
           "field": {
@@ -973,6 +1125,17 @@
       },
       "LinkRow": {
         "properties": {
+          "document_citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Citation"
+          },
           "document_id": {
             "title": "Document Id",
             "type": "string"
@@ -987,6 +1150,18 @@
               }
             ],
             "title": "Document Title"
+          },
+          "effective_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective On"
           },
           "from_address": {
             "anyOf": [
@@ -1137,6 +1312,86 @@
         "title": "NewId",
         "type": "object"
       },
+      "PassageReference": {
+        "description": "A reference in a passage to another provision of the same text (\"Pasal 19 ayat (2)\").",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "address"
+        ],
+        "title": "PassageReference",
+        "type": "object"
+      },
+      "ProvisionChange": {
+        "description": "Another document's change to a provision: an amendment or a revocation, and where the new wording is.",
+        "properties": {
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "effective_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective On"
+          },
+          "new_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Address"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "document_id",
+          "citation",
+          "effective_on",
+          "new_address"
+        ],
+        "title": "ProvisionChange",
+        "type": "object"
+      },
       "ProvisionRow": {
         "properties": {
           "address": {
@@ -1200,6 +1455,189 @@
           "valid_to"
         ],
         "title": "ProvisionRow",
+        "type": "object"
+      },
+      "ReadableText": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "main": {
+            "title": "Main",
+            "type": "boolean"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "language",
+          "detail",
+          "main"
+        ],
+        "title": "ReadableText",
+        "type": "object"
+      },
+      "ReadingPassage": {
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "opens": {
+            "title": "Opens",
+            "type": "boolean"
+          },
+          "references": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PassageReference"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "titled": {
+            "title": "Titled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "address",
+          "text",
+          "opens",
+          "titled"
+        ],
+        "title": "ReadingPassage",
+        "type": "object"
+      },
+      "ReadingProvision": {
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ProvisionChange"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "edit_from": {
+            "title": "Edit From",
+            "type": "integer"
+          },
+          "edit_to": {
+            "title": "Edit To",
+            "type": "integer"
+          },
+          "heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "parent_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Address"
+          },
+          "part": {
+            "title": "Part",
+            "type": "integer"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "address",
+          "parent_address",
+          "kind",
+          "label",
+          "heading",
+          "depth",
+          "part",
+          "page_start",
+          "page_end",
+          "valid_to",
+          "changes",
+          "edit_from",
+          "edit_to"
+        ],
+        "title": "ReadingProvision",
         "type": "object"
       },
       "Reason": {
@@ -1326,6 +1764,237 @@
         "title": "ReviewRow",
         "type": "object"
       },
+      "SearchFilters": {
+        "properties": {
+          "family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Family"
+          },
+          "issuer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issuer"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "title": "SearchFilters",
+        "type": "object"
+      },
+      "SearchPage": {
+        "properties": {
+          "articles": {
+            "items": {
+              "$ref": "#/components/schemas/ArticleHit"
+            },
+            "title": "Articles",
+            "type": "array"
+          },
+          "articles_total": {
+            "title": "Articles Total",
+            "type": "integer"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentHit"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "documents_total": {
+            "title": "Documents Total",
+            "type": "integer"
+          },
+          "facets": {
+            "items": {
+              "$ref": "#/components/schemas/Facet"
+            },
+            "title": "Facets",
+            "type": "array"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/SearchFilters"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "kind",
+          "filters",
+          "documents",
+          "articles",
+          "documents_total",
+          "articles_total",
+          "facets",
+          "page",
+          "pages"
+        ],
+        "title": "SearchPage",
+        "type": "object"
+      },
+      "SeriesPage": {
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentHit"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "years": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Years",
+            "type": "array"
+          }
+        },
+        "required": [
+          "issuer",
+          "family",
+          "years",
+          "year",
+          "documents"
+        ],
+        "title": "SeriesPage",
+        "type": "object"
+      },
+      "SeriesRow": {
+        "description": "An issuer's family of instruments (OJK's POJK, BI's PADG \u2026): what the registry holds of it.",
+        "properties": {
+          "documents": {
+            "title": "Documents",
+            "type": "integer"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "first_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Year"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "last_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Year"
+          }
+        },
+        "required": [
+          "issuer",
+          "family",
+          "documents",
+          "first_year",
+          "last_year"
+        ],
+        "title": "SeriesRow",
+        "type": "object"
+      },
       "Session": {
         "properties": {
           "curator": {
@@ -1422,6 +2091,28 @@
             ],
             "title": "Address"
           },
+          "caused_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caused By"
+          },
+          "caused_by_citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caused By Citation"
+          },
           "effective_from": {
             "anyOf": [
               {
@@ -1490,6 +2181,99 @@
           "created_at"
         ],
         "title": "SuppressionRow",
+        "type": "object"
+      },
+      "TextReading": {
+        "description": "One part of a text, read as the parser cut it, with the whole text's outline.",
+        "properties": {
+          "citation": {
+            "title": "Citation",
+            "type": "string"
+          },
+          "corrected": {
+            "title": "Corrected",
+            "type": "boolean"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "part": {
+            "title": "Part",
+            "type": "integer"
+          },
+          "parts": {
+            "title": "Parts",
+            "type": "integer"
+          },
+          "passages": {
+            "items": {
+              "$ref": "#/components/schemas/ReadingPassage"
+            },
+            "title": "Passages",
+            "type": "array"
+          },
+          "pdf_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Sha256"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "provisions": {
+            "items": {
+              "$ref": "#/components/schemas/ReadingProvision"
+            },
+            "title": "Provisions",
+            "type": "array"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "texts": {
+            "items": {
+              "$ref": "#/components/schemas/ReadableText"
+            },
+            "title": "Texts",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "citation",
+          "title",
+          "sha256",
+          "problems",
+          "corrected",
+          "editable",
+          "pdf_sha256",
+          "texts",
+          "part",
+          "parts",
+          "provisions",
+          "passages"
+        ],
+        "title": "TextReading",
         "type": "object"
       },
       "TextToEdit": {
@@ -1684,6 +2468,7 @@
     },
     "/api/v1/documents": {
       "get": {
+        "description": "Documents whose metadata or published wording matches `q` (all of them when it is empty), or, with\nkind=articles, the matching articles; filtered, with each filter's counts.",
         "operationId": "search_api_v1_documents_get",
         "parameters": [
           {
@@ -1695,6 +2480,82 @@
               "title": "Q",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "documents",
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "issuer",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Issuer",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "family",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Family",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "State",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -1702,11 +2563,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentRow"
-                  },
-                  "title": "Response Search Api V1 Documents Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/SearchPage"
                 }
               }
             },
@@ -2191,6 +3048,84 @@
         "summary": "Assign Id",
         "tags": [
           "actions"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/reading": {
+      "get": {
+        "description": "A text as the parser cut it, one part at a time: `text` (the main text when empty), and the part asked\nfor or the one the provision `at` opens in.",
+        "operationId": "reading_api_v1_documents__document_id__reading_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "text",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "part",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Part",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "At",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TextReading"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reading",
+        "tags": [
+          "reads"
         ]
       }
     },
@@ -2878,6 +3813,110 @@
         "summary": "Decide Review",
         "tags": [
           "actions"
+        ]
+      }
+    },
+    "/api/v1/series": {
+      "get": {
+        "description": "Each issuer's families of instruments, with what the registry holds of them.",
+        "operationId": "series_api_v1_series_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SeriesRow"
+                  },
+                  "title": "Response Series Api V1 Series Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Series",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/series/{issuer}/{family}": {
+      "get": {
+        "description": "A family's documents of one year (the newest when none is asked for), by number.",
+        "operationId": "series_page_api_v1_series__issuer___family__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "issuer",
+            "required": true,
+            "schema": {
+              "title": "Issuer",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "family",
+            "required": true,
+            "schema": {
+              "title": "Family",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Series Page",
+        "tags": [
+          "reads"
         ]
       }
     },

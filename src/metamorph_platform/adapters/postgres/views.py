@@ -7,11 +7,14 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from metamorph_platform.adapters.postgres.derived import MAIN_TEXT
+from metamorph_platform.adapters.postgres.derived import MAIN_TEXT, TAKES_EFFECT, TAKING_EFFECT
 from metamorph_platform.application.views import (
+    FACETS,
     HELD_CHECKS,
     PAGE_SIZE,
     REVIEW_KINDS,
+    SEARCH_PAGE_SIZE,
+    ArticleHit,
     BundleRow,
     CheckRow,
     CitationRow,
@@ -21,16 +24,26 @@ from metamorph_platform.application.views import (
     CorrectionView,
     CuratorNote,
     Dashboard,
+    DocumentHit,
     DocumentRow,
     DocumentView,
     EditableText,
+    Facet,
     FieldRow,
     HeldPage,
     HeldRow,
     LinkRow,
+    ProvisionChange,
     ProvisionRow,
+    ReadableText,
+    ReadingSource,
     ReviewPage,
     ReviewRow,
+    SearchFilters,
+    SearchPage,
+    SeriesPage,
+    SeriesRow,
+    SourceProvision,
     SourceRow,
     StatusRow,
     StoredBytes,
@@ -69,6 +82,58 @@ _CORRECTION = (
     "LEFT JOIN curation.text_correction c ON c.document_id = t.document_id AND c.corrects_sha256 = t.sha256 "
     "AND c.active"
 )
+# Every document, as search and browsing list it: its effective status (the published one, else the registry's)
+# and whether the assistant sees it.
+_HITS = """
+SELECT d.id, d.citation, d.title, d.issuer, d.family, d.number, d.year, d.kind, coalesce(pd.status, d.status),
+       CASE WHEN s.document_id IS NOT NULL THEN 'suppressed' WHEN h.document_id IS NOT NULL THEN 'held'
+            WHEN pd.id IS NOT NULL THEN 'published' ELSE 'unpublished' END
+FROM registry.document d
+LEFT JOIN curation.suppression s ON s.document_id = d.id
+LEFT JOIN registry.hold h ON h.document_id = d.id
+LEFT JOIN published.document pd ON pd.id = d.id
+"""
+_BY_METADATA = """
+d.id ILIKE %(p)s OR d.citation ILIKE %(p)s OR d.title ILIKE %(p)s
+OR EXISTS (SELECT 1 FROM registry.alias a WHERE a.document_id = d.id AND a.text ILIKE %(p)s)
+"""
+# Published articles whose wording matches: the units lawyers cite (an article, the considerations, a fatwa's
+# ruling), not each paragraph, which its article already holds; and not an amending Pasal I, but the articles
+# it words anew.
+_ARTICLE_HITS = """
+SELECT p.document_id, p.text_sha256, p.address, ts_rank(p.search, q) AS rank
+FROM published.provision p CROSS JOIN websearch_to_tsquery('simple', %(q)s) q
+LEFT JOIN (SELECT DISTINCT document_id, text_sha256, parent_address FROM published.provision
+           WHERE kind = 'pasal' AND parent_address IS NOT NULL) quoted
+       ON quoted.document_id = p.document_id AND quoted.text_sha256 = p.text_sha256
+      AND quoted.parent_address = p.address
+WHERE p.search @@ q AND p.kind <> 'ayat' AND quoted.document_id IS NULL
+ORDER BY rank DESC, p.document_id, p.ordinal
+"""
+_EXCERPT = "'MaxWords=28, MinWords=12, MaxFragments=2, FragmentDelimiter=\" … \", StartSel=«, StopSel=»'"
+# A document number as a number, so 9 comes before 10 (numbers are text: some carry letters).
+_NUMBER = "nullif(regexp_replace(d.number, '\\D', '', 'g'), '')::numeric"
+# A document's current texts that have provisions (alias t), the text a reading starts from first.
+_READABLE = """
+SELECT t.id, t.sha256, t.language, t.origin, t.method, t.structure_problems, {main} AS main,
+       coalesce(c.storage_key, b.storage_key) AS storage_key, c.id IS NOT NULL AS corrected
+FROM registry.text_version t JOIN registry.blob b ON b.sha256 = t.sha256 {correction}
+WHERE t.document_id = %s AND t.is_current
+  AND EXISTS (SELECT 1 FROM registry.provision p WHERE p.text_version_id = t.id)
+ORDER BY t.id
+"""
+# What other documents changed in each provision of a text (alias p), and where the new wording is: the changing
+# document's own provision quoting the article (pasal-i/pasal-115 for pasal-115).
+_CHANGES = f"""
+SELECT l.to_address, l.type, l.from_document, changing.citation, {TAKES_EFFECT},
+       (SELECT q.address FROM registry.provision q
+        JOIN registry.text_version v ON v.id = q.text_version_id AND v.is_current
+        WHERE l.type = 'amends' AND q.document_id = l.from_document AND q.address LIKE '%%/' || l.to_address
+        ORDER BY v.id, q.ordinal LIMIT 1)
+FROM registry.link l {TAKING_EFFECT}
+WHERE l.to_document = %s AND l.to_address IS NOT NULL AND l.type IN ('amends', 'partly_revokes', 'revokes')
+ORDER BY 5 NULLS LAST, l.from_document, l.type
+"""
 # Held documents, filtered by one check (or none); those whose last good version is still published first.
 _HELD_ROWS = """
 SELECT h.document_id, d.title, h.reasons, p.published_at, h.held_since
@@ -190,19 +255,88 @@ class PostgresCurationViews:
 
     # --- documents -------------------------------------------------------------------------------
 
-    def search(self, query: str, limit: int) -> list[DocumentRow]:
-        pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        rows = self.connection.execute(
-            _DOCUMENT_ROW
-            + """
-            WHERE d.id ILIKE %(p)s OR d.citation ILIKE %(p)s OR d.title ILIKE %(p)s
-               OR EXISTS (SELECT 1 FROM registry.alias a WHERE a.document_id = d.id AND a.text ILIKE %(p)s)
-            ORDER BY (lower(d.id) = lower(%(q)s)) DESC, d.issuer, d.year DESC NULLS LAST, d.id
-            LIMIT %(limit)s
-            """,
-            {"p": pattern, "q": query, "limit": limit},
+    def search(self, query: str, filters: SearchFilters, kind: str, page: int) -> SearchPage:
+        terms = {"q": query, "p": "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"}
+        matching = self.connection.execute(_ARTICLE_HITS, terms).fetchall() if query else []
+        by_metadata = _BY_METADATA if query else "true"
+        hits = {
+            row[0]: DocumentHit(*row)
+            for row in self.connection.execute(
+                _HITS + f", LATERAL (SELECT {by_metadata} AS by_metadata) m "
+                "WHERE m.by_metadata OR d.id = ANY(%(worded)s) "
+                f"ORDER BY lower(d.id) = lower(%(q)s) DESC, m.by_metadata DESC, d.year DESC NULLS LAST, d.issuer, "
+                f"d.family, {_NUMBER} DESC NULLS LAST, d.id",
+                {**terms, "worded": list({row[0] for row in matching})},
+            )
+        }
+        kept = {hit.id: hit for hit in hits.values() if _passes(hit, filters)}
+        articles = [row for row in matching if row[0] in kept]
+        offset = (page - 1) * SEARCH_PAGE_SIZE
+        shown = articles[offset : offset + SEARCH_PAGE_SIZE] if kind == "articles" else []
+        total = len(kept) if kind == "documents" else len(articles)
+        return SearchPage(
+            query=query,
+            kind=kind,
+            filters=filters,
+            documents=tuple(list(kept.values())[offset : offset + SEARCH_PAGE_SIZE]) if kind == "documents" else (),
+            articles=self._excerpts(query, shown, kept),
+            documents_total=len(kept),
+            articles_total=len(articles),
+            facets=tuple(_facet(name, hits.values(), filters) for name in FACETS),
+            page=page,
+            pages=max(1, -(-total // SEARCH_PAGE_SIZE)),
         )
-        return [DocumentRow(*row) for row in rows]
+
+    def _excerpts(self, query: str, shown: list, documents: dict[str, DocumentHit]) -> tuple[ArticleHit, ...]:
+        """The articles shown, each with its matching words in context."""
+        if not shown:
+            return ()
+        found = {
+            (document, sha, address): (label, heading, " ".join(excerpt.split()))
+            for document, sha, address, label, heading, excerpt in self.connection.execute(
+                "SELECT p.document_id, p.text_sha256, p.address, p.label, p.heading, "
+                f"ts_headline('simple', p.body, websearch_to_tsquery('simple', %(q)s), {_EXCERPT}) "
+                "FROM published.provision p "
+                "WHERE (p.document_id, p.text_sha256, p.address) IN "
+                "(SELECT * FROM unnest(%(d)s::text[], %(s)s::text[], %(a)s::text[]))",
+                {"q": query, "d": [r[0] for r in shown], "s": [r[1] for r in shown], "a": [r[2] for r in shown]},
+            )
+        }
+        hits = []
+        for document, sha, address, _ in shown:
+            label, heading, excerpt = found[(document, sha, address)]
+            hit = documents[document]
+            hits.append(ArticleHit(document, hit.citation, hit.title, address, label, heading, excerpt, hit.status))
+        return tuple(hits)
+
+    def series(self) -> tuple[SeriesRow, ...]:
+        rows = self.connection.execute(
+            "SELECT issuer, family, count(*), min(year), max(year) FROM registry.document "
+            "WHERE id NOT LIKE 'unresolved:%%' GROUP BY 1, 2 ORDER BY 1, 3 DESC, 2"
+        )
+        return tuple(SeriesRow(*row) for row in rows)
+
+    def series_page(self, issuer: str, family: str, year: int | None) -> SeriesPage | None:
+        years = tuple(
+            (held_year, count)
+            for held_year, count in self.connection.execute(
+                "SELECT year, count(*) FROM registry.document WHERE issuer = %s AND family = %s "
+                "AND id NOT LIKE 'unresolved:%%' AND year IS NOT NULL GROUP BY 1 ORDER BY 1 DESC",
+                (issuer, family),
+            )
+        )
+        if not years:
+            return None
+        shown = year if year is not None else years[0][0]
+        documents = tuple(
+            DocumentHit(*row)
+            for row in self.connection.execute(
+                _HITS + "WHERE d.issuer = %s AND d.family = %s AND d.year = %s AND d.id NOT LIKE 'unresolved:%%' "
+                f"ORDER BY {_NUMBER} NULLS LAST, d.number, d.id",
+                (issuer, family, shown),
+            )
+        )
+        return SeriesPage(issuer, family, years, shown, documents)
 
     def exists(self, document_id: str) -> bool:
         return (
@@ -276,8 +410,10 @@ class PostgresCurationViews:
             status_history=tuple(
                 StatusRow(*row)
                 for row in self.connection.execute(
-                    "SELECT address, status, effective_from, source FROM registry.status_event WHERE document_id = %s "
-                    "ORDER BY effective_from NULLS FIRST, recorded_at",
+                    "SELECT e.address, e.status, e.effective_from, e.source, l.from_document, d.citation "
+                    "FROM registry.status_event e LEFT JOIN registry.link l ON l.id = e.link_id "
+                    "LEFT JOIN registry.document d ON d.id = l.from_document WHERE e.document_id = %s "
+                    "ORDER BY e.effective_from NULLS FIRST, e.recorded_at",
                     (document_id,),
                 )
             ),
@@ -347,6 +483,52 @@ class PostgresCurationViews:
         ).fetchone()
         return StoredBytes(*row) if row else None
 
+    def reading_source(self, document_id: str, sha256: str | None) -> ReadingSource | None:
+        summary = self.connection.execute(
+            "SELECT citation, title FROM registry.document WHERE id = %s", (document_id,)
+        ).fetchone()
+        if summary is None:
+            return None
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            readable = cursor.execute(
+                _READABLE.format(main=MAIN_TEXT, correction=_CORRECTION), (document_id,)
+            ).fetchall()
+        chosen = next((t for t in readable if sha256 in (None, t["sha256"])), None)
+        if chosen is None:
+            return None
+        changes: dict[str, list[ProvisionChange]] = {}
+        for address, *change in self.connection.execute(_CHANGES, (document_id,)):
+            changes.setdefault(address, []).append(ProvisionChange(*change))
+        provisions = tuple(
+            SourceProvision(*row, changes=tuple(changes.get(row[0], ())))
+            for row in self.connection.execute(
+                "SELECT address, parent_address, kind, label, heading, char_start, char_end, page_start, page_end, "
+                "valid_to FROM registry.provision WHERE text_version_id = %s ORDER BY ordinal",
+                (chosen["id"],),
+            )
+        )
+        pdf = self.connection.execute(
+            "SELECT f.sha256 FROM registry.document_file f JOIN registry.blob b USING (sha256) "
+            "WHERE f.document_id = %s AND f.role = 'main' AND b.media_type = 'application/pdf' "
+            "ORDER BY f.sha256 LIMIT 1",
+            (document_id,),
+        ).fetchone()
+        return ReadingSource(
+            document_id=document_id,
+            citation=summary[0],
+            title=summary[1],
+            sha256=chosen["sha256"],
+            storage_key=chosen["storage_key"],
+            problems=tuple(chosen["structure_problems"] or ()),
+            corrected=chosen["corrected"],
+            editable=chosen["main"],
+            pdf_sha256=pdf[0] if pdf else None,
+            texts=tuple(
+                ReadableText(t["sha256"], t["language"], _detail(t["origin"], t["method"]), t["main"]) for t in readable
+            ),
+            provisions=provisions,
+        )
+
     # --- parts of the document page ---------------------------------------------------------------
 
     def _files(self, document_id: str) -> tuple[ContentRow, ...]:
@@ -378,7 +560,7 @@ class PostgresCurationViews:
                 sha,
                 language,
                 TEXT_MEDIA_TYPE,
-                f"{origin.replace('_', ' ')}, {method.replace('_', ' ')}",
+                _detail(origin, method),
                 tuple(problems or ()),
                 CuratorNote(approved_why, approved_by, approved_at) if approved_why else None,
                 CuratorNote(corrected_why, corrected_by, corrected_at) if corrected_why else None,
@@ -416,8 +598,10 @@ class PostgresCurationViews:
     def _links(self, document_id: str, *, outgoing: bool) -> tuple[LinkRow, ...]:
         here, there = ("from_document", "to_document") if outgoing else ("to_document", "from_document")
         rows = self.connection.execute(
-            f"SELECT l.type, l.{there}, d.title, l.from_address, l.to_address, l.method FROM registry.link l "
-            f"LEFT JOIN registry.document d ON d.id = l.{there} WHERE l.{here} = %s ORDER BY l.type, l.{there}",
+            f"SELECT l.type, l.{there}, d.title, l.from_address, l.to_address, l.method, d.citation, "
+            f"coalesce(l.effective_on, {TAKES_EFFECT}) FROM registry.link l {TAKING_EFFECT} "
+            f"LEFT JOIN registry.document d ON d.id = l.{there} "
+            f"WHERE l.{here} = %s ORDER BY l.type, l.{there}, l.to_address NULLS FIRST",
             (document_id,),
         )
         return tuple(LinkRow(*row) for row in rows)
@@ -428,6 +612,28 @@ class PostgresCurationViews:
                 _REVIEW_ROWS + " WHERE r.state = 'open' AND d.id = %s ORDER BY r.created_at", (document_id,)
             ).fetchall()
         return tuple(self._review_row(row) for row in rows)
+
+
+def _passes(hit: DocumentHit, filters: SearchFilters, *, but: str | None = None) -> bool:
+    return all(
+        getattr(filters, name) is None or getattr(hit, name) == getattr(filters, name) for name in FACETS if name != but
+    )
+
+
+def _facet(name: str, hits, filters: SearchFilters) -> Facet:
+    """Each value of a facet, counted over the matches the other filters leave: choosing one shows its count."""
+    counts: dict[str, int] = {}
+    for hit in hits:
+        value = getattr(hit, name)
+        if value is not None and _passes(hit, filters, but=name):
+            counts[str(value)] = counts.get(str(value), 0) + 1
+    order = (lambda item: (-int(item[0]),)) if name == "year" else (lambda item: (-item[1], item[0]))
+    return Facet(name, tuple(sorted(counts.items(), key=order)))
+
+
+def _detail(origin: str, method: str) -> str:
+    """How a text was made, in words: "self extracted, text layer"."""
+    return f"{origin.replace('_', ' ')}, {method.replace('_', ' ')}"
 
 
 def _hold_reasons(stored: list[dict]) -> tuple[HoldReason, ...]:

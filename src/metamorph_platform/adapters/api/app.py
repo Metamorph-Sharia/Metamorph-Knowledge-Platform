@@ -34,24 +34,30 @@ from metamorph_platform.application.curate import CorrectText, Curate
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.ports import BlobReader, CurationRefused, Curator
 from metamorph_platform.application.publish import Publish
+from metamorph_platform.application.reading import ReadText
 from metamorph_platform.application.views import (
     HELD_CHECKS,
     REVIEW_KINDS,
+    SEARCH_KINDS,
+    STATES,
     CorrectionView,
     CurationViews,
     Dashboard,
-    DocumentRow,
     DocumentView,
     EditableText,
     HeldPage,
     ReviewPage,
+    SearchFilters,
+    SearchPage,
+    SeriesPage,
+    SeriesRow,
+    TextReading,
 )
 from metamorph_platform.domain.curation import InvalidCorrection, validate_assigned_id
 from metamorph_platform.domain.manual import InvalidManualDocument, ManualDocument
 
 API = "/api/v1"
 T = TypeVar("T")
-SEARCH_LIMIT = 50
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # UU 4/2023, the largest file we hold, is 82 MB
 UPLOADS = "uploads/"  # where browsers put files: a document is only ever added from one of these
 
@@ -243,12 +249,47 @@ def create_api(
         return svc.views.review_page(kind, page)
 
     @router.get("/documents", tags=["reads"])
-    def search(who: Who, svc: Services, q: str = "") -> list[DocumentRow]:
-        return svc.views.search(q.strip(), SEARCH_LIMIT) if q.strip() else []
+    def search(
+        who: Who,
+        svc: Services,
+        q: str = "",
+        kind: str = SEARCH_KINDS[0],
+        issuer: str = "",
+        family: str = "",
+        year: int | None = None,
+        status: str = "",
+        state: str = "",
+        page: int = 1,
+    ) -> SearchPage:
+        """Documents whose metadata or published wording matches `q` (all of them when it is empty), or, with
+        kind=articles, the matching articles; filtered, with each filter's counts."""
+        if kind not in SEARCH_KINDS:
+            raise NotFound(f"no search of {kind}")
+        if state and state not in STATES:
+            raise NotFound(f"no state {state}")
+        filters = SearchFilters(issuer or None, family or None, year, status or None, state or None)
+        return svc.views.search(q.strip(), filters, kind, max(page, 1))
+
+    @router.get("/series", tags=["reads"])
+    def series(who: Who, svc: Services) -> list[SeriesRow]:
+        """Each issuer's families of instruments, with what the registry holds of them."""
+        return list(svc.views.series())
+
+    @router.get("/series/{issuer}/{family}", tags=["reads"])
+    def series_page(who: Who, svc: Services, issuer: str, family: str, year: int | None = None) -> SeriesPage:
+        """A family's documents of one year (the newest when none is asked for), by number."""
+        return _found(svc.views.series_page(issuer, family, year), f"no series {issuer}:{family}")
 
     @router.get("/documents/{document_id}", tags=["reads"])
     def document(who: Who, svc: Services, document_id: str) -> DocumentView:
         return _found(svc.views.document(document_id), f"no document {document_id}")
+
+    @router.get("/documents/{document_id}/reading", tags=["reads"])
+    def reading(who: Who, svc: Services, document_id: str, text: str = "", part: int = 0, at: str = "") -> TextReading:
+        """A text as the parser cut it, one part at a time: `text` (the main text when empty), and the part asked
+        for or the one the provision `at` opens in."""
+        found = ReadText(svc.views, svc.blobs).read(document_id, text or None, part=part, at=at or None)
+        return _found(found, f"no text to read for {document_id}")
 
     @router.get("/documents/{document_id}/texts/{text_sha256}/editable", tags=["reads"])
     def editable(who: Who, svc: Services, document_id: str, text_sha256: str) -> TextToEdit:

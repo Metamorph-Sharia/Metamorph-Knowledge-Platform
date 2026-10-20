@@ -26,7 +26,7 @@ ORDER BY document_id, changed_at DESC;
 | `document_source` | source record describing it | `connector`, `source_id`, `url`, `fetched_at` |
 | `file` | official file (PDF, HTML page …) | `sha256`, `role` (main, annex, faq, guide, abstract, other …), `media_type`, `storage_key` |
 | `text` | text of the document | `sha256`, `language`, `origin`, `method` (text_layer, ocr, source), `paged`, `of_file`, `storage_key` |
-| `provision` | addressable unit of a text | `text_sha256`, `address`, `parent_address`, `kind`, `label`, `heading`, `ordinal`, `body`, `char_start`/`char_end`, `page_start`/`page_end`, `valid_to` |
+| `provision` | addressable unit of a text | `text_sha256`, `address`, `parent_address`, `kind`, `label`, `heading`, `ordinal`, `body`, `char_start`/`char_end`, `page_start`/`page_end`, `valid_to`, `search` (the body's `tsvector`, `simple` configuration, GIN-indexed) |
 | `link` | relation from this document to another | `type`, `from_address`, `to_document`, `to_address`, `effective_on`, `confidence` |
 | `status_event` | status change in the document's history | `address` (null: the whole document), `status`, `effective_from`, `source` |
 | `change_log` | write to the schema | `document_id`, `change`, `changed_at` |

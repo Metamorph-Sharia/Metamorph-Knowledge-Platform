@@ -186,23 +186,30 @@ class PostgresCitationLinks:
         return len(dropped)
 
 
+# When the document a link (alias l) comes from takes effect: a source's date, else the one its own text states.
+TAKING_EFFECT = """
+JOIN registry.document changing ON changing.id = l.from_document
+LEFT JOIN LATERAL (
+    SELECT min(stated_effective_on) AS effective, min(stated_promulgated_on) AS promulgated,
+           min(stated_enacted_on) AS enacted
+    FROM registry.text_version t WHERE t.document_id = changing.id AND t.is_current
+) stated ON true
+"""
+TAKES_EFFECT = (
+    "coalesce(changing.effective_on, changing.promulgated_on, changing.enacted_on, "
+    "stated.effective, stated.promulgated, stated.enacted)"
+)
+
+
 class PostgresValidity:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
 
     def dated_links(self) -> list[DatedLink]:
         rows = self.connection.execute(
-            """
-            SELECT l.id, l.type, l.from_document, l.to_document, l.to_address,
-                   coalesce(d.effective_on, d.promulgated_on, d.enacted_on,
-                            stated.effective, stated.promulgated, stated.enacted)
-            FROM registry.link l
-            JOIN registry.document d ON d.id = l.from_document
-            LEFT JOIN LATERAL (
-                SELECT min(stated_effective_on) AS effective, min(stated_promulgated_on) AS promulgated,
-                       min(stated_enacted_on) AS enacted
-                FROM registry.text_version t WHERE t.document_id = d.id AND t.is_current
-            ) stated ON true
+            f"""
+            SELECT l.id, l.type, l.from_document, l.to_document, l.to_address, {TAKES_EFFECT}
+            FROM registry.link l {TAKING_EFFECT}
             WHERE l.type = ANY(%s)
             ORDER BY l.id
             """,

@@ -5,20 +5,30 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 from metamorph_platform.application.views import (
+    ArticleHit,
     CheckRow,
     CitationRow,
     ContentRow,
     CorrectionView,
     CuratorNote,
     Dashboard,
+    DocumentHit,
     DocumentRow,
     DocumentView,
     EditableText,
+    Facet,
     FieldRow,
     HeldPage,
     HeldRow,
+    ReadableText,
+    ReadingSource,
     ReviewPage,
     ReviewRow,
+    SearchFilters,
+    SearchPage,
+    SeriesPage,
+    SeriesRow,
+    SourceProvision,
     SourceRow,
     StoredBytes,
 )
@@ -35,6 +45,7 @@ ROW = DocumentRow(
     "in_force",
     suppressed=False,
 )
+HIT = DocumentHit(DOC, ROW.citation, ROW.title, "ojk", "pojk", "10", 2019, "regulation", "in_force", "held")
 TEXT_SHA = "a" * 64
 GAPPY_SHA = "b" * 64
 GAP = HoldReason(Check.STRUCTURE, "Pasal 3 missing")
@@ -68,8 +79,21 @@ class MemoryViews:
         citations = kind == "unresolved_citation"
         return ReviewPage(kind, rows if citations else (), 1 if citations else 0, 1, 1)
 
-    def search(self, query: str, limit: int) -> list[DocumentRow]:
-        return [ROW] if "10" in query else []
+    def search(self, query: str, filters: SearchFilters, kind: str, page: int) -> SearchPage:
+        hits = (HIT,) if "10" in query or not query else ()
+        articles = (ArticleHit(DOC, ROW.citation, ROW.title, "pasal-1", "Pasal 1", None, "«Satu».", "in_force"),)
+        shown = articles if kind == "articles" and query else ()
+        facets = (Facet("issuer", (("ojk", len(hits)),)),)
+        return SearchPage(query, kind, filters, hits if kind == "documents" else (), shown, len(hits), len(shown),
+                          facets, page, 1)  # fmt: skip
+
+    def series(self) -> tuple[SeriesRow, ...]:
+        return (SeriesRow("ojk", "pojk", 602, 2013, 2026),)
+
+    def series_page(self, issuer: str, family: str, year: int | None) -> SeriesPage | None:
+        if (issuer, family) != ("ojk", "pojk"):
+            return None
+        return SeriesPage(issuer, family, ((2019, 1),), year or 2019, (HIT,))
 
     def document(self, document_id: str) -> DocumentView | None:
         if document_id != DOC:
@@ -128,6 +152,19 @@ class MemoryViews:
 
     def exists(self, document_id: str) -> bool:
         return document_id == DOC
+
+    def reading_source(self, document_id: str, sha256: str | None) -> ReadingSource | None:
+        if document_id != DOC or sha256 not in (None, GAPPY_SHA):
+            return None
+        third = GAPPY_TEXT.index("Pasal 3")
+        provisions = (
+            SourceProvision("pasal-1", None, "pasal", "Pasal 1", None, 0, third, 1, 1, None),
+            SourceProvision("pasal-3", None, "pasal", "Pasal 3", None, third, len(GAPPY_TEXT), 1, 1, None),
+        )
+        texts = (ReadableText(GAPPY_SHA, "id", "source text", main=True),)
+        return ReadingSource(DOC, ROW.citation, ROW.title, GAPPY_SHA, "blobs/bb/gappy", ("Pasal 2 missing",),
+                             corrected=False, editable=True, pdf_sha256=None, texts=texts,
+                             provisions=provisions)  # fmt: skip
 
 
 class CountingParse:

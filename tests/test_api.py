@@ -132,8 +132,8 @@ def test_every_api_route_needs_a_valid_unexpired_token(world) -> None:
     assert client.get("/healthz").text == "ok"
 
 
-def get(client: TestClient, path: str):
-    return client.get(f"/api/v1{path}", headers=signed_in(client))
+def get(client: TestClient, path: str, **params: str):
+    return client.get(f"/api/v1{path}", params=params or None, headers=signed_in(client))
 
 
 def test_the_overview_and_the_held_list_are_the_curation_read_models(world) -> None:
@@ -152,8 +152,30 @@ def test_the_review_queues_and_search(world) -> None:
 
     assert get(client, "/reviews?kind=unresolved_citation").json()["total"] == 1
     assert get(client, "/reviews?kind=structure_suspect").status_code == 404
-    assert [row["id"] for row in get(client, "/documents?q=10/POJK").json()] == [DOC]
-    assert get(client, "/documents?q=").json() == []
+    assert [row["id"] for row in get(client, "/documents?q=10/POJK").json()["documents"]] == [DOC]
+    assert get(client, "/documents?q=zzz").json()["documents"] == []
+
+
+def test_search_lists_documents_or_articles_filtered_and_refuses_a_kind_it_does_not_know(world) -> None:
+    client = world[0]
+
+    articles = get(client, "/documents", q="satu", kind="articles", year="2019").json()
+    assert [(hit["address"], hit["excerpt"]) for hit in articles["articles"]] == [("pasal-1", "«Satu».")]
+    assert articles["filters"]["year"] == 2019 and articles["facets"][0]["name"] == "issuer"
+    assert [hit["state"] for hit in get(client, "/documents").json()["documents"]] == ["held"]  # every document
+    assert get(client, "/documents", kind="everything").status_code == 404
+    assert get(client, "/documents", state="lost").status_code == 404
+
+
+def test_browsing_lists_each_series_and_a_series_by_year(world) -> None:
+    client = world[0]
+
+    assert get(client, "/series").json() == [
+        {"issuer": "ojk", "family": "pojk", "documents": 602, "first_year": 2013, "last_year": 2026}
+    ]
+    page = get(client, "/series/ojk/pojk", year="2019").json()
+    assert (page["year"], [d["number"] for d in page["documents"]]) == (2019, ["10"])
+    assert get(client, "/series/ojk/fatwa").status_code == 404
 
 
 def test_a_document_reads_as_its_full_view_and_a_missing_one_is_404(world) -> None:
@@ -184,6 +206,21 @@ def test_a_correction_comes_with_both_wordings_and_the_diff(world) -> None:
     assert (body["source"], body["corrected"]) == (GAPPY_TEXT, FIXED_TEXT)
     assert "+Pasal 2" in body["diff"]
     assert get(client, f"/documents/{DOC}/texts/{'f' * 64}/correction").status_code == 404
+
+
+def test_a_text_reads_as_the_parser_cut_it_with_its_outline_and_a_missing_one_is_404(world) -> None:
+    client = world[0]
+
+    body = get(client, f"/documents/{DOC}/reading", at="pasal-3").json()
+
+    assert (body["sha256"], body["part"], body["parts"]) == (GAPPY_SHA, 0, 1)
+    assert [p["address"] for p in body["provisions"]] == ["pasal-1", "pasal-3"]
+    assert body["passages"] == [
+        {"address": "pasal-1", "text": "Satu.\n", "opens": True, "titled": True, "references": []},
+        {"address": "pasal-3", "text": "Tiga.\n", "opens": True, "titled": True, "references": []},
+    ]
+    assert get(client, f"/documents/{DOC}/reading", text="f" * 64).status_code == 404
+    assert get(client, "/documents/ojk:pojk:1999:1/reading").status_code == 404
 
 
 def test_a_file_or_text_is_opened_through_a_short_lived_link(world) -> None:

@@ -17,6 +17,6 @@ def test_every_curation_capability_is_in_the_contract() -> None:
     """The design's tables (docs/curation-web-separation-design.md): 9 reads, 14 actions, and signing in."""
     operations = [(method, path) for path, item in openapi_document()["paths"].items() for method in item]
 
-    assert sum(method == "get" for method, _ in operations) == 9
+    assert sum(method == "get" for method, _ in operations) == 12
     assert sum(method == "post" for method, _ in operations) == 15
     assert ("post", "/api/v1/documents/{document_id}/texts/{text_sha256}/correction") in operations
