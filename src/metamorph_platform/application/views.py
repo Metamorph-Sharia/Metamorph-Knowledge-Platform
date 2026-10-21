@@ -408,20 +408,36 @@ class ReadingProvision:
 
 @dataclass(frozen=True)
 class PassageReference:
-    """A reference in a passage to another provision of the same text ("Pasal 19 ayat (2)")."""
+    """A reference in a block to another provision of the same text ("Pasal 19 ayat (2)")."""
 
-    start: int  # where it is in the passage's text, in UTF-16 units (as the browser counts)
+    start: int  # where it is in the block's text, in UTF-16 units (as the browser counts)
     end: int
     address: str
 
 
 @dataclass(frozen=True)
+class PageStart:
+    at: int  # where in the block's text the page's first word is, in UTF-16 units
+    page: int  # of the official file
+
+
+@dataclass(frozen=True)
+class ReadingBlock:
+    """A paragraph or a list item of a passage, its printed lines joined (domain/layout.py)."""
+
+    text: str
+    marker: str | None = None  # a list item's number: "(1)", "a.", "16."
+    depth: int = 0  # a list item's nesting, from 0
+    pages: tuple[PageStart, ...] = ()
+    references: tuple[PassageReference, ...] = ()
+
+
+@dataclass(frozen=True)
 class ReadingPassage:
     address: str | None  # None: text outside every provision (a title, a closing)
-    text: str
     opens: bool  # the provision's first passage: where its heading goes
     titled: bool  # its heading lines were taken off the text: show the label and heading instead
-    references: tuple[PassageReference, ...] = ()
+    blocks: tuple[ReadingBlock, ...] = ()  # its wording, laid out for reading
 
 
 @dataclass(frozen=True)

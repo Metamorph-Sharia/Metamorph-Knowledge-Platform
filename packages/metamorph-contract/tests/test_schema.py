@@ -7,11 +7,14 @@ from enum import StrEnum
 import pytest
 from jsonschema import Draft202012Validator
 from metamorph_contract import (
+    CONTRACT_VERSION,
     KNOWN_ISSUERS,
+    READABLE_VERSIONS,
     Citation,
     Confidence,
     Dates,
     DocumentInfo,
+    Extraction,
     ExtractionMethod,
     FileRef,
     FileRole,
@@ -40,6 +43,7 @@ OBJECTS = {
     Dates: DEFINITIONS["dates"],
     FileRef: DEFINITIONS["file"],
     TextRef: DEFINITIONS["text"],
+    Extraction: DEFINITIONS["extraction"],
     Provision: DEFINITIONS["provision"],
     Citation: DEFINITIONS["citation"],
 }
@@ -87,3 +91,9 @@ def test_restricted_rights_exist_in_python_but_are_not_bundleable() -> None:
 def test_the_canonical_id_pattern_names_exactly_the_known_issuers() -> None:
     issuers = re.match(r"\^\(\?:([a-z|]+)\)", DEFINITIONS["canonicalId"]["pattern"])[1].split("|")
     assert set(issuers) == KNOWN_ISSUERS == set(DEFINITIONS["issuer"]["enum"])
+
+
+def test_the_contract_writes_its_newest_version_and_reads_every_one_it_ever_wrote() -> None:
+    assert DOCUMENT["properties"]["contract_version"]["enum"] == list(READABLE_VERSIONS)
+    assert load_schema(MANIFEST_SCHEMA)["properties"]["contract_version"]["enum"] == list(READABLE_VERSIONS)
+    assert READABLE_VERSIONS[-1] == CONTRACT_VERSION

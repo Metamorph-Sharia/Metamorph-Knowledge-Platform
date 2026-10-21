@@ -1312,8 +1312,26 @@
         "title": "NewId",
         "type": "object"
       },
+      "PageStart": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "at",
+          "page"
+        ],
+        "title": "PageStart",
+        "type": "object"
+      },
       "PassageReference": {
-        "description": "A reference in a passage to another provision of the same text (\"Pasal 19 ayat (2)\").",
+        "description": "A reference in a block to another provision of the same text (\"Pasal 19 ayat (2)\").",
         "properties": {
           "address": {
             "title": "Address",
@@ -1485,6 +1503,52 @@
         "title": "ReadableText",
         "type": "object"
       },
+      "ReadingBlock": {
+        "description": "A paragraph or a list item of a passage, its printed lines joined (domain/layout.py).",
+        "properties": {
+          "depth": {
+            "default": 0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "marker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marker"
+          },
+          "pages": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PageStart"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "references": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PassageReference"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ReadingBlock",
+        "type": "object"
+      },
       "ReadingPassage": {
         "properties": {
           "address": {
@@ -1498,21 +1562,17 @@
             ],
             "title": "Address"
           },
+          "blocks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ReadingBlock"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
           "opens": {
             "title": "Opens",
             "type": "boolean"
-          },
-          "references": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/PassageReference"
-            },
-            "title": "References",
-            "type": "array"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
           },
           "titled": {
             "title": "Titled",
@@ -1521,7 +1581,6 @@
         },
         "required": [
           "address",
-          "text",
           "opens",
           "titled"
         ],

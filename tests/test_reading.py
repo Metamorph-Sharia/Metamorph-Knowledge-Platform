@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from metamorph_platform.domain.reading import Passage, parts, passages, split_long, utf16_offsets
+from metamorph_platform.domain.reading import Passage, list_depth, parts, passages, split_long, utf16_offsets
 
 TEXT = """\
 PERATURAN OTORITAS JASA KEUANGAN
@@ -63,11 +63,33 @@ def test_each_character_is_read_once_in_the_innermost_provision_that_holds_it() 
     ).replace("Pasal 2\n", "")
 
 
-def test_a_heading_stays_in_the_text_when_it_shares_its_line_with_the_wording() -> None:
+def test_a_label_opening_the_wording_on_its_line_is_taken_off_it_as_the_heading() -> None:
+    """Printed a line to a line, a fatwa's ruling shares its line with its first item (dsnmui:fatwa:24)."""
     text = "Menimbang : a. bahwa perlu diatur;\n"
-    considered = Unit("menimbang", None, "Menimbang", None, 0, len(text))
+    ruling = "Pertama 1. Berdasarkan sifatnya,\nSDB adalah ijarah.\n"
 
-    assert passages(text, [considered]) == [Passage("menimbang", text, opens=True)]
+    assert passages(text, [Unit("menimbang", None, "Menimbang", None, 0, len(text))]) == [
+        Passage("menimbang", "a. bahwa perlu diatur;\n", opens=True, titled=True)
+    ]
+    assert passages(ruling, [Unit("diktum-pertama", None, "Pertama", None, 0, len(ruling))]) == [
+        Passage("diktum-pertama", "1. Berdasarkan sifatnya,\nSDB adalah ijarah.\n", opens=True, titled=True)
+    ]
+
+
+def test_a_heading_split_by_a_page_break_is_still_taken_off_and_the_page_break_kept() -> None:
+    """UU 42/1999: "BAB I", then the next page, then its title."""
+    text = "BAB I\n<!-- page 2 -->\n2\nKETENTUAN UMUM\n"
+    chapter = Unit("bab-i", None, "BAB I", "KETENTUAN UMUM", 0, len(text))
+
+    assert passages(text, [chapter]) == [Passage("bab-i", "<!-- page 2 -->\n2\n", opens=True, titled=True)]
+
+
+def test_a_paragraphs_number_stays_in_its_wording_where_it_hangs() -> None:
+    text = "(1) Perusahaan wajib melapor.\n"
+
+    assert passages(text, [Unit("pasal-1/ayat-1", None, "(1)", None, 0, len(text))]) == [
+        Passage("pasal-1/ayat-1", text, opens=True)
+    ]
 
 
 def test_a_heading_line_ending_in_a_colon_is_still_the_heading() -> None:
@@ -103,3 +125,19 @@ def test_offsets_count_as_an_editor_does_in_utf16_units() -> None:
     text = "a😀b😀c"
 
     assert utf16_offsets(text, [0, 1, 2, 3, 5]) == {0: 0, 1: 1, 2: 3, 3: 4, 5: 7}
+
+
+def test_an_items_letter_stays_in_its_wording_where_it_hangs() -> None:
+    text = "a. bahwa untuk melaksanakan ketentuan;\n"
+
+    assert passages(text, [Unit("menimbang/huruf-a", None, "a.", None, 0, len(text))]) == [
+        Passage("menimbang/huruf-a", text, opens=True)
+    ]
+
+
+def test_an_items_marker_hangs_at_the_depth_of_its_list() -> None:
+    assert [list_depth(a) for a in ("pasal-1", "pasal-1/angka-2", "pasal-2/ayat-1", "pasal-2/ayat-1/huruf-a")] == [
+        0, 0, 0, 1,
+    ]  # fmt: skip
+    assert list_depth("pasal-1/angka-2/huruf-a/angka-1") == 2
+    assert list_depth("penjelasan/pasal-1/huruf-a") == 0

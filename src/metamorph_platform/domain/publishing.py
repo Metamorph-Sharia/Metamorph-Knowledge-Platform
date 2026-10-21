@@ -7,7 +7,9 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
+from metamorph_platform.domain.cross_references import cross_references
 from metamorph_platform.domain.gate import Approval, HoldReason, MainText, hold_reasons
+from metamorph_platform.domain.reading import passages, wording
 from metamorph_platform.domain.validity import SOURCE as LINKS
 
 PUBLISHABLE_RIGHTS = frozenset({"public", "licensed"})
@@ -16,6 +18,9 @@ UNKNOWN_STATUS = "unknown"
 # Headings that only group others: their text is their children's, so it isn't published twice.
 CONTAINER_KINDS = frozenset({"bab", "bagian", "paragraf", "memutuskan", "pengesahan"})
 SECTION_ROOTS = frozenset({"penjelasan"})
+TITLED_BY_CHILDREN = frozenset({"bab", "lampiran"})  # an annex and its chapters carry their own text when childless
+REFERS_TO = "refers_to"  # a provision naming another of the same document: "sebagaimana dimaksud dalam Pasal 5"
+WITHIN_DOCUMENT = "high"  # such a link's confidence: its target is a provision the text has
 
 # The document fields a curator may override; anything else is refused before it reaches publishing.
 OVERRIDABLE_FIELDS = frozenset(
@@ -81,6 +86,9 @@ class ProvisionRecord:
 class PublishedProvision:
     record: ProvisionRecord
     body: str  # the provision's text; empty for headings that only group others
+    heading_path: tuple[str, ...] = ()  # each provision from the root down to this one, named: "BAB II …", "Pasal 5"
+    depth: int = 0  # how many provisions hold it
+    wording: str = ""  # the body to read or embed: no heading lines of its own, no page furniture
 
 
 @dataclass(frozen=True)
@@ -175,6 +183,7 @@ def publication_of(snapshot: DocumentSnapshot, texts: Mapping[str, str] | None =
     """
     values, curated = effective_values(_derived_values(snapshot), snapshot.overrides)
     published_texts = _publishable(effective_texts(snapshot.texts, snapshot.corrections))
+    provisions = _provisions(snapshot.provisions, {text.sha256 for text in published_texts}, texts or {})
     return PublishedDocument(
         id=snapshot.id,
         values=values,
@@ -183,8 +192,8 @@ def publication_of(snapshot: DocumentSnapshot, texts: Mapping[str, str] | None =
         files=_publishable(snapshot.files),
         texts=published_texts,
         curated=curated,
-        provisions=_provisions(snapshot.provisions, {text.sha256 for text in published_texts}, texts or {}),
-        links=snapshot.links,
+        provisions=provisions,
+        links=snapshot.links + _references_within(snapshot.id, provisions, texts or {}),
         status_events=snapshot.status_events,
     )
 
@@ -212,20 +221,57 @@ def _provisions(
     records: tuple[ProvisionRecord, ...], published_texts: set[str], texts: Mapping[str, str]
 ) -> tuple[PublishedProvision, ...]:
     parents = {record.parent_address for record in records}
-    return tuple(
-        PublishedProvision(
-            record,
-            "" if _groups_only(record, parents) else texts[record.text_sha256][record.char_start : record.char_end],
-        )
-        for record in records
-        if record.text_sha256 in published_texts and record.text_sha256 in texts
-    )
+    by_address = {record.address: record for record in records}
+    published = []
+    for record in records:
+        if record.text_sha256 not in published_texts or record.text_sha256 not in texts:
+            continue
+        body = "" if _groups_only(record, parents) else texts[record.text_sha256][record.char_start : record.char_end]
+        path = heading_path(record, by_address)
+        published.append(PublishedProvision(record, body, path, len(path) - 1, wording(body, record) if body else ""))
+    return tuple(published)
 
 
 def _groups_only(record: ProvisionRecord, parents: set[str | None]) -> bool:
-    if record.kind in CONTAINER_KINDS or record.address in SECTION_ROOTS:
+    """A heading whose text is its children's, so it isn't published twice. An annex, or an annex's chapter, with
+    nothing nested in it carries its own."""
+    if record.address in SECTION_ROOTS:
         return True
-    return record.kind == "lampiran" and record.address in parents  # an annex with chapters: they carry its text
+    if record.kind in TITLED_BY_CHILDREN:
+        return record.address in parents
+    return record.kind in CONTAINER_KINDS
+
+
+def heading_path(record: ProvisionRecord, by_address: Mapping[str, ProvisionRecord]) -> tuple[str, ...]:
+    """The provisions from the root down to `record`, each named by its label and heading: what to read a provision
+    under ("BAB II KEGIATAN USAHA", "Bagian Kesatu Jenis Kegiatan", "Pasal 5", "(1)")."""
+    names: list[str] = []
+    seen: set[str] = set()
+    node: ProvisionRecord | None = record
+    while node is not None and node.address not in seen:
+        seen.add(node.address)
+        names.append(" ".join(part for part in (node.label, node.heading) if part))
+        node = by_address.get(node.parent_address) if node.parent_address else None
+    return tuple(reversed(names))
+
+
+def _references_within(
+    document_id: str, provisions: tuple[PublishedProvision, ...], texts: Mapping[str, str]
+) -> tuple[LinkRecord, ...]:
+    """Each provision's references to the document's other provisions, found in its own wording: a reference in an
+    article's paragraph is the paragraph's, as domain/reading.py reads each character in its innermost provision."""
+    by_text: dict[str, list[ProvisionRecord]] = {}
+    for provision in provisions:
+        by_text.setdefault(provision.record.text_sha256, []).append(provision.record)
+    found: dict[tuple[str, str], LinkRecord] = {}
+    for sha256, records in by_text.items():
+        addresses = {record.address for record in records}
+        for passage in passages(texts[sha256], records):
+            for reference in cross_references(passage.text, within=passage.address, addresses=addresses):
+                if passage.address not in (None, reference.address):
+                    link = LinkRecord(REFERS_TO, passage.address, document_id, reference.address, None, WITHIN_DOCUMENT)
+                    found[(passage.address, reference.address)] = link
+    return tuple(found.values())
 
 
 def effective_values(values: Mapping[str, Any], overrides: tuple[Override, ...]) -> tuple[dict[str, Any], bool]:

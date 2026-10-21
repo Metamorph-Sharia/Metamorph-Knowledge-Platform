@@ -17,6 +17,7 @@ metamorph = "metamorph_platform.cli:main"
 [dependency-groups]
 dev = [
     "httpx>=0.27",
+    "metamorph-pdf-text",
     "pytest>=8",
     "ruff>=0.6",
 ]
@@ -33,13 +34,15 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 metamorph-contract = { workspace = true }
+metamorph-pdf-text = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "tests"]
 addopts = "--import-mode=importlib"
-pythonpath = ["packages/metamorph-contract/tests", "tests", "dags"]
+pythonpath = ["packages/metamorph-contract/tests", "packages/metamorph-pdf-text/tests", "tests", "dags"]
 markers = [
     "database: needs a PostgreSQL server (METAMORPH_TEST_DATABASE_URL); skipped otherwise",
+    "mineru: needs a MinerU service (METAMORPH_TEST_MINERU_URL); skipped otherwise",
     "s3: needs an S3-compatible store (METAMORPH_TEST_S3_ENDPOINT_URL + AWS_* credentials); skipped otherwise",
 ]
 

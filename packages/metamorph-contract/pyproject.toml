@@ -1,7 +1,7 @@
 [project]
 name = "metamorph-contract"
-version = "2.0.0"
-description = "Contract v2: JSON Schemas and Python types for the document every Metamorph source connector emits"
+version = "2.1.0"
+description = "Contract v2 (2.1): JSON Schemas and Python types for the document every Metamorph source connector emits"
 readme = "CONTRACT_V2.md"
 requires-python = ">=3.11"
 dependencies = [

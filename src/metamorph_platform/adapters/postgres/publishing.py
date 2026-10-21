@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from metamorph_platform.adapters.postgres.derived import MAIN_TEXT
 from metamorph_platform.domain.gate import Approval, HoldReason, MainText
@@ -66,7 +67,7 @@ _PARTS = {
         "FROM registry.document_file f JOIN registry.blob b USING (sha256) WHERE f.document_id = %s ORDER BY f.sha256"
     ),
     "texts": (
-        "SELECT t.sha256, t.rights, b.storage_key, t.language, t.origin, t.method, t.paged, t.of_file "
+        "SELECT t.sha256, t.rights, b.storage_key, t.language, t.origin, t.method, t.paged, t.of_file, t.extraction "
         "FROM registry.text_version t JOIN registry.blob b USING (sha256) "
         "WHERE t.document_id = %s AND t.is_current ORDER BY t.language, t.sha256"
     ),
@@ -214,7 +215,7 @@ class PostgresPublication:
         for text in document.texts:
             self.connection.execute(
                 "INSERT INTO published.text (document_id, sha256, language, origin, method, paged, of_file, "
-                "storage_key) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "storage_key, extraction) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     document.id,
                     text.sha256,
@@ -224,6 +225,7 @@ class PostgresPublication:
                     text.details["paged"],
                     text.details["of_file"],
                     text.storage_key,
+                    _jsonb(text.details["extraction"]),
                 ),
             )
         self._insert_derived(document)
@@ -232,13 +234,15 @@ class PostgresPublication:
         with self.connection.cursor() as cursor:
             cursor.executemany(
                 "INSERT INTO published.provision (document_id, address, text_sha256, parent_address, kind, label, "
-                "heading, ordinal, body, char_start, char_end, page_start, page_end, valid_from, valid_to) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "heading, ordinal, body, char_start, char_end, page_start, page_end, valid_from, valid_to, "
+                "heading_path, depth, wording) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 [
                     (document.id, p.record.address, p.record.text_sha256, p.record.parent_address, p.record.kind,
                      p.record.label, p.record.heading, p.record.ordinal, p.body.replace("\x00", ""),
                      p.record.char_start, p.record.char_end, p.record.page_start, p.record.page_end,
-                     p.record.valid_from, p.record.valid_to)
+                     p.record.valid_from, p.record.valid_to,
+                     [name.replace("\x00", "") for name in p.heading_path], p.depth, p.wording.replace("\x00", ""))
                     for p in document.provisions
                 ],
             )  # fmt: skip
@@ -269,6 +273,10 @@ def _source_record(row: dict) -> SourceRecord:
         fetched_at=row["fetched_at"].isoformat(),
         missing_since=missing_since.isoformat() if missing_since else None,
     )
+
+
+def _jsonb(value: object) -> Jsonb | None:
+    return None if value is None else Jsonb(value)
 
 
 def _stored_content(row: dict) -> StoredContent:

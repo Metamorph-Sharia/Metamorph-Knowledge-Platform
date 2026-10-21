@@ -25,9 +25,11 @@ ORDER BY document_id, changed_at DESC;
 | `document` | document | `id`, `issuer`, `family`, `number`, `year`, `citation`, `title`, `kind`, `status`, `enacted_on`, `promulgated_on`, `effective_on`, `aliases[]`, `curated` |
 | `document_source` | source record describing it | `connector`, `source_id`, `url`, `fetched_at` |
 | `file` | official file (PDF, HTML page …) | `sha256`, `role` (main, annex, faq, guide, abstract, other …), `media_type`, `storage_key` |
-| `text` | text of the document | `sha256`, `language`, `origin`, `method` (text_layer, ocr, source), `paged`, `of_file`, `storage_key` |
-| `provision` | addressable unit of a text | `text_sha256`, `address`, `parent_address`, `kind`, `label`, `heading`, `ordinal`, `body`, `char_start`/`char_end`, `page_start`/`page_end`, `valid_to`, `search` (the body's `tsvector`, `simple` configuration, GIN-indexed) |
+| `text` | text of the document | `sha256`, `language`, `origin`, `method` (text_layer, ocr, source), `paged`, `of_file`, `storage_key`, `extraction` (how an engine read it: `engine`, `engine_version`, `tier`, `ocr_mode`, `pages_ocrd`, `pages_fallen_back`; null when the connector read it itself) |
+| `provision` | addressable unit of a text | `text_sha256`, `address`, `parent_address`, `kind`, `label`, `heading`, `ordinal`, `body`, `char_start`/`char_end`, `page_start`/`page_end`, `valid_to`, `search` (the body's `tsvector`, `simple` configuration, GIN-indexed), `heading_path` (each provision from the root down to this one: `{"BAB II KEGIATAN USAHA", "Pasal 5", "(1)"}`), `depth` (how many provisions hold it), `wording` (the body without its own heading lines and page furniture: what to read or embed) |
 | `link` | relation from this document to another | `type`, `from_address`, `to_document`, `to_address`, `effective_on`, `confidence` |
+| `provision_unit` (view) | **what to embed**: the smallest provisions with wording of their own | `document_id`, `address`, `kind`, `label`, `heading`, `heading_path`, `wording`, `text_sha256`, `page_start`/`page_end`, `valid_from`/`valid_to`; the document's `issuer`, `family`, `number`, `year`, `citation`, `title`, `status`, `effective_on`; `elucidation_address` (its `penjelasan/…`, if published) |
+| `edge` (view) | **the graph**: every link and the structure, in one place | `type`, `from_document`, `from_address`, `to_document`, `to_address`, `effective_on`, `confidence` |
 | `status_event` | status change in the document's history | `address` (null: the whole document), `status`, `effective_from`, `source` |
 | `change_log` | write to the schema | `document_id`, `change`, `changed_at` |
 
@@ -54,6 +56,8 @@ ORDER BY document_id, changed_at DESC;
 | `menimbang`, `mengingat` | The considerations and the legal basis |
 | `bab-ii`, `bab-ii/bagian-kesatu` | A chapter and its part |
 | `pasal-5`, `pasal-5/ayat-1` | An article and its paragraph: the unit lawyers cite |
+| `pasal-5/ayat-1/huruf-a`, `pasal-1/angka-3`, `pasal-1/angka-3/huruf-b` | An item of a paragraph or an article (`huruf` lettered, `angka` numbered), and an item within an item. The preamble's, a circular section's and a ruling's items too: `menimbang/huruf-a`, `mengingat/angka-2`, `romawi-ii/angka-3`, `diktum-kedua/angka-1`. |
+| `penjelasan/pasal-5/ayat-1/huruf-a` | The elucidation of that item (`kind` `penjelasan`, label `Huruf a`) |
 | `pasal-i/pasal-115` | Article 115 as worded by an amending regulation's Pasal I |
 | `penjelasan/pasal-5`, `penjelasan/pasal-5/ayat-1` | The official elucidation of that article or paragraph |
 | `lampiran-i`, `lampiran-i/bab-ii` | An annex and its chapters |
@@ -62,6 +66,29 @@ ORDER BY document_id, changed_at DESC;
 
 - A text can have several provision trees: BI sometimes publishes a regulation's body and its elucidation as separate PDFs. Group provisions by `text_sha256`.
 - Some texts' structure failed the platform's quality checks: a gap in the article numbers, missing paragraphs, or no articles at all (a captured web page instead of the regulation). They are still published, and queued for the Metamorph team to review.
+
+## Retrieval units and the graph
+
+**A unit** (`provision_unit`) is the smallest provision with wording of its own:
+- an ayat, with its items;
+- a pasal without ayat;
+- a fatwa's ruling, or a circular's section without a provision of its own inside;
+- the preamble's parts;
+- an elucidation entry.
+
+A grouping heading (`bab`, `bagian`, `paragraf`) and an article whose ayat carry its wording are context, not units. A unit's items (`huruf`, `angka`) stay addressable in `provision`, so a long unit, such as a Ketentuan Umum's definitions, can be split by them.
+
+**Embedding input.** We recommend `"{citation}, {heading_path joined by ' › '}\n{wording}"`, e.g. `POJK 10/POJK.05/2019, BAB II KEGIATAN USAHA › Pasal 5 › (1)` followed by the words. Re-embed a document when `change_log` says it changed.
+
+**Edges** (`edge`) are `link`'s rows plus three kinds of edge between one document's own provisions:
+
+| `type` | From → to | Comes from |
+|---|---|---|
+| `contains` | a provision → each provision directly inside it | `parent_address` |
+| `elucidates` | `penjelasan/X` → `X` | the addresses |
+| `refers_to` | a provision → another provision it names ("sebagaimana dimaksud dalam Pasal 5 ayat (1) huruf a") | its wording, read when the document is published. It is credited to the innermost provision holding the reference, and stored in `link`. |
+
+`refers_to` also links one fatwa to another fatwa it cites. That edge is between documents, so `to_document` differs from `from_document`.
 
 ## Links
 

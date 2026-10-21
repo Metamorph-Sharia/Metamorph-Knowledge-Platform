@@ -1,0 +1,39 @@
+{
+  "schema": "docvortex.middle",
+  "schema_version": "2.0",
+  "metadata": {"file_suffix": "pdf", "producer": {"name": "mineru", "version": "4.0.12"}},
+  "extensions": {"mineru": {"tier": "standard", "parse_mode": "txt"}},
+  "is_full_document": true,
+  "pages": [
+    {
+      "page_idx": 0,
+      "blocks": [
+        {"type": "header", "index": 0, "bbox": [0.38, 0.03, 0.62, 0.07], "content": [{"type": "text", "content": "PRESIDEN REPUBLIK INDONESIA"}]},
+        {"type": "doc_title", "index": 1, "level": 1, "bbox": [0.2, 0.12, 0.8, 0.2], "content": [{"type": "text", "content": "PERATURAN PRESIDEN REPUBLIK INDONESIA NOMOR 10 TAHUN 2021"}]},
+        {"type": "paragraph_title", "index": 2, "level": 2, "bbox": [0.45, 0.24, 0.55, 0.26], "content": [{"type": "text", "content": "Pasal 1"}]},
+        {"type": "text", "index": 3, "bbox": [0.12, 0.27, 0.88, 0.33], "content": [{"type": "text", "content": "Dalam Peraturan Presiden ini yang dimaksud dengan:"}]},
+        {"type": "list", "index": 4, "bbox": [0.12, 0.34, 0.88, 0.5], "sub_type": "text", "content": [
+          {"type": "text", "bbox": [0.12, 0.34, 0.88, 0.41], "content": [{"type": "text", "content": "1. Penanaman Modal adalah segala bentuk kegiatan menanam modal, sebagaimana dimaksud dalam "}, {"type": "hyperlink", "url": "https://peraturan.go.id/id/uu-no-25-tahun-2007", "content": [{"type": "text", "content": "Undang-Undang Nomor 25 Tahun 2007"}]}, {"type": "text", "content": "."}]},
+          {"type": "text", "bbox": [0.12, 0.42, 0.88, 0.5], "content": [{"type": "text", "content": "2. Bidang Usaha adalah segala bentuk kegiatan usaha."}]}
+        ]},
+        {"type": "table", "index": 5, "bbox": [0.1, 0.52, 0.9, 0.8], "content": [
+          {"type": "table_caption", "bbox": [0.1, 0.52, 0.9, 0.54], "content": [{"type": "text", "content": "Daftar Bidang Usaha"}]},
+          {"type": "table_body", "index": 5, "bbox": [0.1, 0.52, 0.9, 0.8], "content": "<table><tr><th>No.</th><th>Bidang Usaha</th><th>KBLI</th></tr><tr><td>21</td><td>Angkutan penyeberangan<br>perintis</td><td>50217</td></tr></table>"}
+        ]},
+        {"type": "image", "index": 6, "bbox": [0.6, 0.82, 0.8, 0.9], "content": [
+          {"type": "image_body", "index": 6, "bbox": [0.6, 0.82, 0.8, 0.9], "content": "", "image_path": "images/page_0_image_6.jpg"}
+        ]},
+        {"type": "page_footnote", "index": 7, "bbox": [0.1, 0.9, 0.9, 0.92], "content": [{"type": "text", "content": "1) Lembaran Negara Tahun 2007 Nomor 67"}]},
+        {"type": "footer", "index": 8, "bbox": [0.1, 0.94, 0.4, 0.96], "content": [{"type": "text", "content": "SK No 054949 C"}]},
+        {"type": "page_number", "index": 9, "bbox": [0.48, 0.96, 0.52, 0.98], "content": [{"type": "text", "content": "- 1 -"}]}
+      ]
+    },
+    {
+      "page_idx": 1,
+      "blocks": [
+        {"type": "equation", "index": 0, "bbox": [0.3, 0.1, 0.7, 0.14], "content": "x = \\frac{a}{b}"},
+        {"type": "text", "index": 1, "bbox": [0.12, 0.2, 0.88, 0.25], "content": [{"type": "text", "content": "Peraturan Presiden ini mulai berlaku pada tanggal diundangkan."}]}
+      ]
+    }
+  ]
+}

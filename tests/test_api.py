@@ -215,9 +215,10 @@ def test_a_text_reads_as_the_parser_cut_it_with_its_outline_and_a_missing_one_is
 
     assert (body["sha256"], body["part"], body["parts"]) == (GAPPY_SHA, 0, 1)
     assert [p["address"] for p in body["provisions"]] == ["pasal-1", "pasal-3"]
+    block = {"marker": None, "depth": 0, "pages": [], "references": []}
     assert body["passages"] == [
-        {"address": "pasal-1", "text": "Satu.\n", "opens": True, "titled": True, "references": []},
-        {"address": "pasal-3", "text": "Tiga.\n", "opens": True, "titled": True, "references": []},
+        {"address": "pasal-1", "opens": True, "titled": True, "blocks": [{**block, "text": "Satu."}]},
+        {"address": "pasal-3", "opens": True, "titled": True, "blocks": [{**block, "text": "Tiga."}]},
     ]
     assert get(client, f"/documents/{DOC}/reading", text="f" * 64).status_code == 404
     assert get(client, "/documents/ojk:pojk:1999:1/reading").status_code == 404

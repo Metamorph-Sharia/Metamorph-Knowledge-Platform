@@ -2,7 +2,8 @@
 
     parse(text, grammar_for("ojk", "pojk"))  →  Structure(nodes=(Node("pasal-5/ayat-1", …), …), problems=[…])
 
-Addresses: pasal-115/ayat-1, bab-ii/bagian-kesatu, penjelasan/pasal-115, lampiran-i/bab-ii,
+Addresses: pasal-115/ayat-1, pasal-1/angka-3, pasal-5/ayat-1/huruf-a (items.py), bab-ii/bagian-kesatu,
+penjelasan/pasal-115, lampiran-i/bab-ii,
 pasal-i/pasal-115 (an article an amending regulation quotes), romawi-ii (a circular's section),
 diktum-kedua (a fatwa's ruling).
 """

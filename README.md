@@ -16,6 +16,9 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | [docs/published-schema.md](docs/published-schema.md) | **The read contract** for the Knowledge and Retrieval layer: tables, IDs, provision addresses, links, validity |
 | [docs/curation-workflow-design.md](docs/curation-workflow-design.md) | The publish gate, held documents, approving as is, and text correction |
 | [docs/curation-workflow-implementation-plan.md](docs/curation-workflow-implementation-plan.md) | How that design is built: two releases, step by step, test lists first |
+| [docs/aws-step9-guide.md](docs/aws-step9-guide.md) | Running the plan's step 9 (MinerU re-extraction) on one AWS GPU instance in Jakarta, then the live rollout from its cached readings: design, costs, runbook with the AWS CLI |
+| [docs/aws-step9-console-guide.md](docs/aws-step9-console-guide.md) | The same, step by step in the AWS web console |
+| [docs/mineru-extraction-plan.md](docs/mineru-extraction-plan.md) | MinerU extraction in every connector, text cleaning, parser 6 (huruf/angka) and the retrieval units: architecture, steps, validation |
 | [docs/curation-web-separation-design.md](docs/curation-web-separation-design.md) | The curation web app in its own repository (Next.js + TypeScript) over the curation JSON API; migration plan (Phases 1 to 3 built) |
 
 ## The database
@@ -94,12 +97,58 @@ docker compose exec postgres sh /docker-entrypoint-initdb.d/02-bi.sh   # only on
 - **Code changes:** images contain their code. After changing a connector, rebuild with `docker compose --profile connectors build <name>-connector`.
 - **Starting:** the DAGs ship paused. To try one without scheduling it, run `docker compose exec airflow airflow dags test ingest_dsn_fatwa`. To run unattended, unpause the DAGs in the UI, or with `airflow dags unpause <dag_id>`.
 
+## Running MinerU
+
+With `METAMORPH_PDF_ENGINE=mineru`, connectors send their PDFs to one MinerU service (`packages/metamorph-pdf-text`; design: [docs/mineru-extraction-plan.md](docs/mineru-extraction-plan.md)). It runs MinerU 4.0.12, the only version the reader accepts, started with `--tier standard`, which serves both tiers the connectors ask for. With the default, `pymupdf`, nothing calls it.
+
+**On a Mac** it runs natively, because Docker on macOS has no GPU. The VLM runs on llama.cpp, the small models on torch.
+
+```bash
+uv tool install --python 3.12 "mineru[torch]==4.0.12"
+mineru-kit models download --tier standard     # 2.1 GB into ~/.mineru/models; covers basic too
+mineru-kit models verify --tier standard
+docker/mineru/run-dev.sh                        # http://127.0.0.1:8010; connectors reach it at host.docker.internal:8010
+```
+
+To keep it running, install the launchd agent, which runs `run-dev.sh` at login and restarts it if it stops:
+
+```bash
+sed -e "s|@PLATFORM@|$PWD|g" -e "s|@HOME@|$HOME|g" docker/mineru/dev.mineru.plist \
+    > ~/Library/LaunchAgents/dev.metamorph.mineru.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.metamorph.mineru.plist   # log: ~/Library/Logs/metamorph-mineru.log
+launchctl bootout gui/$(id -u)/dev.metamorph.mineru                                   # to stop it
+```
+
+**In production** it is the compose service `mineru` (profile `mineru`): Linux, an NVIDIA GPU with at least 8 GB, and 16 GB of RAM. Its image (`docker/mineru/Dockerfile`) pins MinerU and holds its models, and the VLM runs on vLLM. Start it with `docker compose --profile mineru up -d mineru`, and give the connectors `METAMORPH_MINERU_URL=http://mineru:8010`.
+
+**The API key** is `METAMORPH_MINERU_API_KEY` in `.env`: both `run-dev.sh` and the compose service start MinerU with it, and Airflow gives it to the connectors. Without a key, anything that can reach the port can use the service. That is only this Mac (`127.0.0.1`), or the compose network and the server's own loopback.
+
+**Check it** before pointing connectors at it. The check confirms the version, the tiers, and that each tier's models read a page from its text and from its image. Any PDFs given are also timed per tier and mode:
+
+```bash
+uv run python packages/metamorph-pdf-text/scripts/mineru_check.py [PDF ...]   # METAMORPH_MINERU_URL, default :8010
+```
+
+Measured on this Mac (M5, 24 GB) on 2026-10-21, with BPK files of 43 and 50 pages:
+
+| Tier | Born-digital: MinerU reads the PDF's characters | Scan: MinerU reads the page image | Born-digital, OCR forced |
+|---|---|---|---|
+| `basic` (annexes and other files) | 74 pages a minute | 28 | 32 |
+| `standard` (main files) | 86 | 7.7 | 12 |
+
+Scans and noisy text layers, which `request_for` forces to OCR, are the slow case. The rates include the reader's 5-second poll, so they are what a connector gets.
+
+**Licenses:**
+- **MinerU** is under the MinerU Open Source License (Apache 2.0 with conditions). A service offered to third parties must say visibly that it uses MinerU.
+- **Its models** are Apache 2.0: `opendatalab/MinerU-4_models_torch` and `opendatalab/MinerU2.5-Pro-2605-1.2B`, which production runs.
+- **The Mac's VLM** comes from `jinzhenj/MinerU2.5-Pro-2605-1.2B-GGUF`, a third party's GGUF conversion of that model. Its card states no license, so it is for development only.
+
 ## Curate
 
 The Metamorph team's console is **[Metamorph-Curation-Web](../Metamorph-Curation-Web)** (Next.js and TypeScript), in its own repository. The compose `web` service builds it from there and serves it at http://localhost:8000 (`docker compose up -d web`). It calls the platform only through the **curation JSON API**.
 
 **The curation JSON API** is `metamorph api` (`adapters/api/`; `docker compose up -d api`, at http://localhost:8001/api/v1):
-- **Reads:** the overview, the held list, the review queues, search (documents by metadata or published wording, and the matching articles, with filters), browsing by series, a document's full view, a text read as the parser cut it, a text to edit, a correction's changes, and file links.
+- **Reads:** the overview, the held list, the review queues, search (documents by metadata or published wording, and the matching articles, with filters), browsing by series, a document's full view, a text read as the parser cut it (laid out for reading: printed lines joined into paragraphs and list items, page furniture dropped, `domain/layout.py`), a text to edit, a correction's changes, and file links.
 - **Actions:** correcting and withdrawing fields; approving a text's problems as they are; correcting a text's wording and withdrawing it; suppressing and restoring; assigning an ID; linking citations; deciding conflicts and review items; adding a document. Each action calls exactly one curation use case, then parses, publishes and re-checks the publish gate before it answers.
 - **Sign-in:** `POST /api/v1/auth/session` returns a short-lived session token (ADR-4).
 - **Files:** they move through short-lived S3 links. The bucket must let the web app's origin upload: `metamorph storage init --upload-origin URL`.

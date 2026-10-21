@@ -16,6 +16,8 @@ _LETTERHEAD = ("PRESIDEN", "REPUBLIKINDONESIA", "PRESIDENREPUBLIKINDONESIA")
 _LETTERHEAD_SIMILARITY = 0.8
 _LONGEST_LETTERHEAD_LINE = 40
 _ROMAN = re.compile(r"^[IVXLC]+$", re.IGNORECASE)
+# "X. PENUTUP . . .", "b. bahwa …": the next page's first words, at this one's foot
+CATCHWORD = re.compile(r"(?:\.\s*){3}$|…$")
 _ROMAN_VALUES = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100}
 
 
@@ -49,12 +51,12 @@ def next_line(text: str, offset: int) -> str:
 
 
 def _carries_content(stripped: str) -> bool:
-    return (
-        bool(stripped)
-        and not _PAGE_MARKER.match(stripped)
-        and not _RUNNING_PAGE_NUMBER.match(stripped)
-        and not _is_letterhead(stripped)
-    )
+    return bool(stripped) and not is_page_furniture(stripped)
+
+
+def is_page_furniture(stripped: str) -> bool:
+    """A page marker, a running page number or a letterhead: a line that is the page's, not the text's."""
+    return bool(_PAGE_MARKER.match(stripped) or _RUNNING_PAGE_NUMBER.match(stripped) or _is_letterhead(stripped))
 
 
 def _is_letterhead(stripped: str) -> bool:

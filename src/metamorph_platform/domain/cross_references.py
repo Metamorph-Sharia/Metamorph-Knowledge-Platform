@@ -3,7 +3,8 @@
     Pasal 19 ayat (2)      pasal-19/ayat-2, or pasal-19 when the text has no such paragraph
     ayat (1)               a paragraph of the article the text is in, or of the article just named
                            ("Pasal 19 ayat (2) dan ayat (3)")
-    Pasal 3 huruf a        pasal-3: letters and numbers inside an article aren't provisions
+    Pasal 3 huruf a        pasal-3/huruf-a, or pasal-3 when the text has no such item
+    ayat (2) huruf c       an item of a paragraph: pasal-19/ayat-2/huruf-c, or the nearest provision up that it has
 
 An article followed by another instrument's name ("Pasal 8 dan Pasal 9 Undang-Undang Nomor 21 Tahun 2011") is
 that instrument's, and is left to the citations (domain/citations.py), unless the name is this document's own
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 _REFERENCE = re.compile(
     r"\b(?:Pasal\s+(?P<article>\d+[A-Z]?)(?:\s+ayat\s+\((?P<paragraph>\d+[a-z]?)\))?"
     r"|ayat\s+\((?P<alone>\d+[a-z]?)\))"
+    r"(?:\s+(?P<item>huruf|angka)\s+(?P<name>[a-z]|\d{1,3})\b)?"  # "… huruf a", "… angka 3": an item of it
 )
 # What may sit between the articles of one list: "Pasal 8 dan Pasal 9", "ayat (2), ayat (3)", "huruf a".
 _LIST = re.compile(r"(?:\s*(?:,|dan/atau|dan|atau|serta|sampai\s+dengan|s\.d\.|huruf\s+[a-z]|angka\s+\d+))*\s*")
@@ -61,6 +63,8 @@ def cross_references(text: str, *, within: str | None, addresses: Collection[str
         else:
             last_end = match.end()
             continue
+        if match["item"]:
+            target += f"/{match['item']}-{match['name']}"
         pending.append((match, target))
         last_end = match.end()
     found.extend(_settled(text, pending, addresses))
@@ -73,10 +77,18 @@ def _settled(text: str, pending: list[tuple[re.Match[str], str]], addresses: Col
         return []
     linked = []
     for match, target in pending:
-        address = target if target in addresses else target.split("/ayat-")[0]
-        if address in addresses:
+        address = _nearest(target, addresses)
+        if address is not None:
             linked.append(CrossReference(match.start(), match.end(), address))
     return linked
+
+
+def _nearest(target: str, addresses: Collection[str]) -> str | None:
+    """The provision named, or the nearest one up that the text has: an item it lacks is read in its paragraph,
+    a paragraph it lacks in its article."""
+    while target not in addresses and "/" in target:
+        target = target.rsplit("/", 1)[0]
+    return target if target in addresses else None
 
 
 def _of_another_instrument(text: str, end: int) -> bool:

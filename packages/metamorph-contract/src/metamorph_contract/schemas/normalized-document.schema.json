@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:metamorph:contract:2.0:normalized-document",
-  "title": "Metamorph normalized document (contract v2.0)",
+  "$id": "urn:metamorph:contract:2.1:normalized-document",
+  "title": "Metamorph normalized document (contract v2.1)",
   "description": "One source's view of one regulatory document: identity, status, files, texts, provisions and citations. Files and texts are blobs in the same bundle, referenced by sha256. One JSON object per line of documents.jsonl.",
   "type": "object",
   "additionalProperties": false,
@@ -18,7 +18,11 @@
   ],
   "properties": {
     "contract_version": {
-      "const": "2.0"
+      "description": "2.1 adds texts[].extraction; a 2.0 document reads as it did",
+      "enum": [
+        "2.0",
+        "2.1"
+      ]
     },
     "source": {
       "$ref": "#/$defs/source"
@@ -349,6 +353,44 @@
         }
       }
     },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "engine_version",
+        "tier",
+        "ocr_mode",
+        "pages_ocrd",
+        "pages_fallen_back"
+      ],
+      "description": "How a text was read: the engine and its exact version, its tier and mode, and how many pages are its OCR or fell back to the file's own text layer.",
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "engine_version": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "tier": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "ocr_mode": {
+          "enum": [
+            "txt",
+            "ocr"
+          ]
+        },
+        "pages_ocrd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pages_fallen_back": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "text": {
       "type": "object",
       "additionalProperties": false,
@@ -394,6 +436,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extraction": {
+          "description": "2.1: how the text was read from its file, when an engine read it; null otherwise",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/extraction"
             },
             {
               "type": "null"

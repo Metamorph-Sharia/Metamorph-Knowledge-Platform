@@ -21,6 +21,7 @@ from metamorph_pipeline.jobs import (
     collect_command,
     discard_command,
     ingest_jobs,
+    passed_on,
 )
 
 REGISTRY = Dataset("metamorph://registry")
@@ -47,7 +48,7 @@ for job in ingest_jobs(_setting("METAMORPH_WORKSPACE"), ojk_credentials=_setting
         tags=["ingest", *job.tags],
     ) as dag:
         collect = container(
-            "collect", job.image, collect_command(job, RUN_ID), mounts=job.mounts, secrets=job.secrets,
+            "collect", job.image, collect_command(job, RUN_ID), mounts=job.mounts, secrets=passed_on(job),
             execution_timeout=timedelta(hours=6),
         )  # fmt: skip
         load = platform(

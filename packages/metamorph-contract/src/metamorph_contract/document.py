@@ -1,4 +1,4 @@
-"""The normalized document every connector emits (contract v2).
+"""The normalized document every connector emits (contract v2.1).
 
 Plain frozen dataclasses: they cross repository and process boundaries, so they hold
 values only. Texts and files travel as blobs referenced by sha256, never inline.
@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-CONTRACT_VERSION = "2.0"
+CONTRACT_VERSION = "2.1"
+READABLE_VERSIONS = ("2.0", "2.1")  # 2.1 only adds what 2.0 lacks: a 2.0 bundle reads as it did
 
 
 class Kind(StrEnum):
@@ -143,6 +144,19 @@ class FileRef:
 
 
 @dataclass(frozen=True)
+class Extraction:
+    """How a text was read from its file (contract 2.1): enough to read it again alike, and to tell how much of it
+    the engine read itself. A text read by a connector's own PDF reading, as before 2.1, has none."""
+
+    engine: str  # "mineru"
+    engine_version: str  # exact: another version reads a file differently
+    tier: str  # the engine's quality tier: "basic", "standard"
+    ocr_mode: str  # how the engine read the file: "txt" (its characters) or "ocr" (its page images)
+    pages_ocrd: int  # pages kept as the engine's OCR
+    pages_fallen_back: int  # pages the engine's reading couldn't be trusted on, kept as the PDF's own text layer
+
+
+@dataclass(frozen=True)
 class TextRef:
     """A UTF-8 text blob. When `paged`, pages are separated by page markers (paged_text.py)."""
 
@@ -153,6 +167,7 @@ class TextRef:
     rights: Rights
     paged: bool
     of_file: str | None = None  # sha256 of the file it was extracted from, if any
+    extraction: Extraction | None = None  # 2.1: how it was read from that file, when an engine read it
 
 
 @dataclass(frozen=True)

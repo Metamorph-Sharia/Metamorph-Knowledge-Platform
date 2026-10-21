@@ -1,11 +1,51 @@
 import json
+from dataclasses import replace
 
 import pytest
-from metamorph_contract import ContractViolation, from_dict, from_json, to_json
+from metamorph_contract import ContractViolation, Extraction, from_dict, from_json, to_json
+
+EXTRACTION = Extraction("mineru", "4.0.12+t1", "standard", "txt", pages_ocrd=0, pages_fallen_back=2)
+
+
+def with_extraction(document, extraction=EXTRACTION):
+    (text,) = document.texts
+    return replace(document, texts=(replace(text, extraction=extraction),))
 
 
 def test_a_document_survives_a_json_round_trip(document) -> None:
     assert from_json(to_json(document)) == document
+
+
+def test_how_a_text_was_read_survives_a_round_trip(document) -> None:
+    read = with_extraction(document)
+
+    assert from_json(to_json(read)).texts[0].extraction == EXTRACTION
+
+
+def test_a_text_no_engine_read_has_no_extraction(document) -> None:
+    assert json.loads(to_json(document))["texts"][0]["extraction"] is None
+
+
+def test_a_contract_2_0_document_reads_as_it_did(document) -> None:
+    data = json.loads(to_json(document))
+    data["contract_version"] = "2.0"
+    del data["texts"][0]["extraction"]
+
+    parsed = from_dict(data)
+
+    assert (parsed.contract_version, parsed.texts[0].extraction) == ("2.0", None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("ocr_mode", "auto"), ("pages_ocrd", -1), ("engine", " "), ("tier", None)],
+)
+def test_a_malformed_extraction_is_refused(document, field, value) -> None:
+    data = json.loads(to_json(with_extraction(document)))
+    data["texts"][0]["extraction"][field] = value
+
+    with pytest.raises(ContractViolation, match="extraction"):
+        from_dict(data)
 
 
 def test_optional_sections_may_be_left_out(document) -> None:

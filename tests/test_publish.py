@@ -158,6 +158,92 @@ def test_provisions_are_published_with_their_text_but_containers_without() -> No
     assert bodies == {"bab-i": "", "pasal-1": "Pasal 1\n(1) Satu.\n(2) Dua.\n", "pasal-1/ayat-1": "(1) Satu.\n"}
 
 
+ACT = """\
+BAB II
+KEGIATAN USAHA
+Pasal 5
+(1) Setiap Bank wajib:
+<!-- page 2 -->
+- 2 -
+a. memiliki izin; dan
+b. melapor.
+(2) Kewajiban sebagaimana dimaksud pada ayat (1) huruf a berlaku sejak Pasal 6.
+Pasal 6
+Cukup.
+LAMPIRAN
+BAB I
+DAFTAR BIDANG USAHA
+1. Angkutan sungai.
+PENJELASAN
+Pasal 5
+Ayat (1)
+Cukup jelas.
+"""
+
+
+def located(address, kind, label, start, end=None, parent=None, heading=None):
+    """A provision of ACT from the line `start` opens to the one `end` opens (or the text's end)."""
+    first = ACT.index(start)
+    return ProvisionRecord(
+        TEXT_SHA, address, kind, label, 0, first, ACT.index(end, first + 1) if end else len(ACT), parent, heading
+    )
+
+
+ACT_PROVISIONS = (
+    located("bab-ii", "bab", "BAB II", "BAB II", "LAMPIRAN", heading="KEGIATAN USAHA"),
+    located("pasal-5", "pasal", "Pasal 5", "Pasal 5", "Pasal 6\nCukup", "bab-ii"),
+    located("pasal-5/ayat-1", "ayat", "(1)", "(1)", "(2)", "pasal-5"),
+    located("pasal-5/ayat-1/huruf-a", "huruf", "a.", "a. memiliki", "b. melapor", "pasal-5/ayat-1"),
+    located("pasal-5/ayat-1/huruf-b", "huruf", "b.", "b. melapor", "(2)", "pasal-5/ayat-1"),
+    located("pasal-5/ayat-2", "ayat", "(2)", "(2)", "Pasal 6\nCukup", "pasal-5"),
+    located("pasal-6", "pasal", "Pasal 6", "Pasal 6\nCukup", "LAMPIRAN", "bab-ii"),
+    located("lampiran", "lampiran", "LAMPIRAN", "LAMPIRAN", "PENJELASAN"),
+    located("lampiran/bab-i", "bab", "BAB I", "BAB I\nDAFTAR", "PENJELASAN", "lampiran", "DAFTAR BIDANG USAHA"),
+    located("penjelasan", "penjelasan", "PENJELASAN", "PENJELASAN"),
+    located("penjelasan/pasal-5", "penjelasan", "Pasal 5", "Pasal 5\nAyat", None, "penjelasan"),
+    located("penjelasan/pasal-5/ayat-1", "penjelasan", "Ayat (1)", "Ayat (1)", None, "penjelasan/pasal-5"),
+)
+
+
+def published_act():
+    publication = publication_of(snapshot(provisions=ACT_PROVISIONS), {TEXT_SHA: ACT})
+    return {p.record.address: p for p in publication.provisions}, publication.links
+
+
+def test_each_provision_is_published_under_the_path_it_is_read_under() -> None:
+    provisions, _ = published_act()
+
+    item = provisions["pasal-5/ayat-1/huruf-a"]
+    assert item.heading_path == ("BAB II KEGIATAN USAHA", "Pasal 5", "(1)", "a.")
+    assert (item.depth, provisions["bab-ii"].depth) == (3, 0)
+
+
+def test_the_wording_has_no_heading_line_of_its_own_and_no_page_furniture() -> None:
+    provisions, _ = published_act()
+
+    assert provisions["pasal-6"].wording == "Cukup."
+    assert provisions["pasal-5/ayat-1"].wording == "(1) Setiap Bank wajib:\na. memiliki izin; dan\nb. melapor."
+    assert provisions["penjelasan/pasal-5/ayat-1"].wording == "Cukup jelas."
+    assert provisions["bab-ii"].wording == ""  # its articles carry its text
+
+
+def test_an_annexs_chapter_with_nothing_nested_in_it_carries_its_own_text() -> None:
+    provisions, _ = published_act()
+
+    assert provisions["lampiran/bab-i"].wording == "1. Angkutan sungai."
+    assert provisions["lampiran"].body == ""  # its chapter carries it
+
+
+def test_a_provisions_references_to_the_documents_others_are_published_as_links() -> None:
+    _, links = published_act()
+
+    assert {(link.type, link.from_address, link.to_address) for link in links} == {
+        ("refers_to", "pasal-5/ayat-2", "pasal-5/ayat-1/huruf-a"),
+        ("refers_to", "pasal-5/ayat-2", "pasal-6"),
+    }
+    assert {link.to_document for link in links} == {"ojk:pojk:2014:5"}
+
+
 def test_provisions_of_a_text_that_is_not_published_are_not_either() -> None:
     restricted = StoredContent("b" * 64, "restricted", "blobs/bb/" + "b" * 64)
     hidden = ProvisionRecord("b" * 64, "pasal-1", "pasal", "Pasal 1", 0, 0, 5)

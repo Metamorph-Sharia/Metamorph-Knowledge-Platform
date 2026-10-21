@@ -63,8 +63,8 @@ def test_a_regulation_parses_into_its_preamble_body_and_elucidation():
     structure = parse(POJK, "peraturan")
 
     assert addresses(structure) == [
-        "menimbang", "mengingat", "memutuskan",
-        "bab-i", "pasal-1",
+        "menimbang", "menimbang/huruf-a", "mengingat", "memutuskan",
+        "bab-i", "pasal-1", "pasal-1/angka-1",
         "bab-ii", "bab-ii/bagian-kesatu", "pasal-2", "pasal-2/ayat-1", "pasal-2/ayat-2", "pasal-3",
         "pengesahan",
         "penjelasan", "penjelasan/umum",
@@ -222,7 +222,7 @@ FORMULIR
 def test_a_circular_parses_into_roman_sections():
     structure = parse(CIRCULAR, "surat_edaran")
 
-    assert addresses(structure) == ["romawi-i", "romawi-ii", "romawi-iii", "lampiran"]
+    assert addresses(structure) == ["romawi-i", "romawi-i/angka-1", "romawi-ii", "romawi-iii", "lampiran"]
     assert node(structure, "romawi-ii").heading == "PENGGUNAAN S-INVEST"
     assert node(structure, "romawi-i").heading == "KETENTUAN UMUM"
     assert structure.problems == []
@@ -248,9 +248,41 @@ def test_a_fatwa_parses_into_its_numbered_rulings():
     structure = parse(FATWA, "fatwa")
 
     assert addresses(structure) == [
-        "menimbang", "mengingat", "memutuskan", "diktum-pertama", "diktum-kedua", "diktum-ketiga",
+        "menimbang", "menimbang/huruf-a", "mengingat", "mengingat/angka-1",
+        "memutuskan", "diktum-pertama", "diktum-kedua", "diktum-ketiga",
     ]  # fmt: skip
     assert node(structure, "diktum-kedua").heading == "Ketentuan Hukum"
+
+
+def test_a_ruling_printed_beside_its_title_or_its_first_item_is_still_a_ruling():
+    """A fatwa sets its rulings in a column of their own: read a printed line at a time, "Pertama" shares its
+    line with the ruling's title, or with its first numbered item (dsnmui:fatwa:24)."""
+    beside = FATWA.replace("Pertama : Ketentuan Umum", "Pertama Ketentuan Umum").replace(
+        "Kedua : Ketentuan Hukum\n", "Kedua 1. Layanan pembiayaan dilakukan dengan akad.\n"
+    )
+    structure = parse(beside, "fatwa")
+
+    assert addresses(structure) == [
+        "menimbang", "menimbang/huruf-a", "mengingat", "mengingat/angka-1",
+        "memutuskan", "diktum-pertama", "diktum-kedua", "diktum-kedua/angka-1", "diktum-ketiga",
+    ]  # fmt: skip
+    assert node(structure, "diktum-pertama").heading == "Ketentuan Umum"
+    assert node(structure, "diktum-kedua").heading is None  # its first item is wording, not a title
+
+
+def test_a_sentence_that_opens_with_an_ordinal_is_not_a_ruling():
+    sentences = "Kedua belah pihak sepakat.\nKetiga oleh LKS diatur.\nKetiga, di antara akad itu.\n"
+    text = FATWA.replace("Layanan pembiayaan boleh dilakukan.\n", sentences)
+    structure = parse(text, "fatwa")
+
+    assert node(structure, "diktum-ketiga").char_start == text.index("Ketiga : Ketentuan Penutup")
+
+
+def test_a_decision_printed_beside_menetapkan_is_still_the_decision():
+    """bi:padg:2024:18 prints "Menetapkan :" and "MEMUTUSKAN:" on one line."""
+    text = "Menimbang : a. bahwa perlu;\nMenetapkan  : MEMUTUSKAN:\nPERATURAN ANGGOTA DEWAN GUBERNUR\nPasal 1\nSatu.\n"
+
+    assert addresses(parse(text, "peraturan")) == ["menimbang", "menimbang/huruf-a", "memutuskan", "pasal-1"]
 
 
 def test_the_grammar_follows_the_kind_of_instrument():
@@ -309,6 +341,26 @@ def test_the_next_amending_instruction_ends_the_article_quoted_before_it():
     quoted = node(structure, "pasal-i/pasal-115")
     assert "Pasal 30 dihapus" not in AMENDING[quoted.char_start : quoted.char_end]
     assert "Pasal 30 dihapus" in AMENDING[node(structure, "pasal-i").char_start : node(structure, "pasal-i").char_end]
+
+
+def test_paragraphs_an_instruction_quotes_without_their_articles_heading_count_from_one_again():
+    """bi:pbi:2012:20: "… sehingga Pasal 16 berbunyi sebagai berikut:" and then its paragraphs, no heading."""
+    text = AMENDING.replace(
+        "2. Pasal 30 dihapus.\n",
+        "2. Ketentuan Pasal 16 diubah sehingga berbunyi sebagai berikut:\n(1) Bank mendebet.\n(2) Bank menagih.\n",
+    )
+    structure = parse(text, "peraturan")
+
+    assert [a for a in addresses(structure) if a.startswith("pasal-i/ayat")] == ["pasal-i/ayat-1", "pasal-i/ayat-2"]
+    assert structure.problems == []
+
+
+def test_paragraphs_an_instruction_quotes_from_the_one_it_changes_are_not_missing_the_others():
+    """bi:pbi:2005:29: "… sehingga Pasal 15 ayat (2) berbunyi sebagai berikut:" quotes (2) alone."""
+    instruction = "2. Ketentuan Pasal 15 ayat (2) diubah sehingga berbunyi sebagai berikut:\n(2) Sanksi.\n"
+    text = AMENDING.replace("2. Pasal 30 dihapus.\n", instruction)
+
+    assert parse(text, "peraturan").problems == []
 
 
 def articles(text: str) -> list[str]:
@@ -693,3 +745,90 @@ def test_an_inserted_article_quoted_by_an_omnibus_law_is_never_its_own():
     )
 
     assert "pasal-2/pasal-3a" in articles(inserted)
+
+
+DEFINITIONS = """\
+Menimbang : a. bahwa untuk melaksanakan ketentuan;
+b. bahwa berdasarkan pertimbangan;
+MEMUTUSKAN:
+Pasal 1
+Dalam Peraturan ini yang dimaksud dengan:
+1. Bank adalah badan usaha.
+2. Nasabah adalah pihak yang menggunakan jasa:
+a. perorangan; dan
+b. badan usaha.
+3. Hari adalah hari kerja.
+Pasal 2
+(1) Setiap Bank wajib:
+a. memiliki izin; dan
+b. melapor sebagaimana dimaksud pada huruf
+c. kepada Otoritas Jasa Keuangan.
+(2) Ketentuan lebih lanjut diatur.
+PENJELASAN
+Pasal 1
+Angka 2
+Huruf a
+Cukup jelas.
+Huruf b
+Angka 1
+Cukup jelas.
+Pasal 2
+Ayat (1)
+Huruf a
+Cukup jelas.
+"""
+
+
+def test_each_lettered_and_numbered_item_is_a_provision_of_its_own():
+    structure = parse(DEFINITIONS, "peraturan")
+
+    assert [a for a in addresses(structure) if not a.startswith("penjelasan")] == [
+        "menimbang", "menimbang/huruf-a", "menimbang/huruf-b", "memutuskan",
+        "pasal-1", "pasal-1/angka-1", "pasal-1/angka-2", "pasal-1/angka-2/huruf-a", "pasal-1/angka-2/huruf-b",
+        "pasal-1/angka-3",
+        "pasal-2", "pasal-2/ayat-1", "pasal-2/ayat-1/huruf-a", "pasal-2/ayat-1/huruf-b", "pasal-2/ayat-2",
+    ]  # fmt: skip
+    item = node(structure, "pasal-1/angka-2/huruf-a")
+    assert (item.kind, item.label, item.parent) == ("huruf", "a.", "pasal-1/angka-2")
+    assert DEFINITIONS[item.char_start : item.char_end] == "a. perorangan; dan\n"
+    assert structure.problems == []
+
+
+def test_an_item_on_its_labels_line_starts_where_its_marker_does():
+    structure = parse(DEFINITIONS, "peraturan")
+
+    item = node(structure, "menimbang/huruf-a")
+    assert DEFINITIONS[item.char_start :].startswith("a. bahwa untuk melaksanakan")
+    assert node(structure, "menimbang").char_start == 0
+
+
+def test_a_reference_wrapped_onto_the_next_line_opens_no_item():
+    structure = parse(DEFINITIONS, "peraturan")
+
+    assert "pasal-2/ayat-1/huruf-c" not in addresses(structure)
+    assert "c. kepada Otoritas" in DEFINITIONS[node(structure, "pasal-2/ayat-1/huruf-b").char_start :][:80]
+
+
+def test_a_list_starts_at_its_beginning_and_runs_in_order():
+    text = "Pasal 1\nSatu:\nc. bukan awal daftar;\na. awal;\nb. kedua;\nd. satu hilang;\ne. terus.\n"
+
+    assert [a for a in addresses(parse(text, "peraturan")) if "/" in a] == [
+        "pasal-1/huruf-a", "pasal-1/huruf-b", "pasal-1/huruf-d", "pasal-1/huruf-e",
+    ]  # fmt: skip
+
+
+def test_an_item_too_far_ahead_or_a_number_that_runs_on_opens_nothing():
+    text = "Pasal 1\nSatu:\na. awal;\nh. jauh;\nsebesar Rp\n1.000.000,00 (satu juta).\n"
+
+    assert [a for a in addresses(parse(text, "peraturan")) if "/" in a] == ["pasal-1/huruf-a"]
+
+
+def test_the_elucidation_explains_items_as_the_body_numbers_them():
+    structure = parse(DEFINITIONS, "peraturan")
+
+    assert [a for a in addresses(structure) if a.startswith("penjelasan/")] == [
+        "penjelasan/pasal-1", "penjelasan/pasal-1/angka-2", "penjelasan/pasal-1/huruf-a",
+        "penjelasan/pasal-1/huruf-b", "penjelasan/pasal-1/huruf-b/angka-1",
+        "penjelasan/pasal-2", "penjelasan/pasal-2/ayat-1", "penjelasan/pasal-2/ayat-1/huruf-a",
+    ]  # fmt: skip
+    assert node(structure, "penjelasan/pasal-1/huruf-b/angka-1").label == "Angka 1"

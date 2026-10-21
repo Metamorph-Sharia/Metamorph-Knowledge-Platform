@@ -88,3 +88,13 @@ def test_a_manifest_that_breaks_its_schema_is_refused(tmp_path, document) -> Non
 
     with pytest.raises(UnloadableBundle, match="manifest breaks the contract: contract_version"):
         Bundle(tmp_path / "b")
+
+
+def test_a_contract_2_0_bundle_still_loads(tmp_path, document) -> None:
+    write_bundle(tmp_path / "b", [document])
+    manifest_path = tmp_path / "b" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["contract_version"] = "2.0"
+    manifest_path.write_text(json.dumps(manifest))
+
+    assert Bundle(tmp_path / "b").manifest.contract_version == "2.0"

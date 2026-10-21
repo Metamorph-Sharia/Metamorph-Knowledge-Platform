@@ -24,8 +24,9 @@ from __future__ import annotations
 import re
 
 from metamorph_platform.domain.structure.builder import TreeBuilder
+from metamorph_platform.domain.structure.items import ITEM, Items
 from metamorph_platform.domain.structure.misreadings import article_numbers, paragraph_numbers
-from metamorph_platform.domain.structure.text import Line, is_roman, next_line, roman_value
+from metamorph_platform.domain.structure.text import CATCHWORD, Line, is_roman, next_line, roman_value
 
 SECTION, CHAPTER, PART, GROUP, ARTICLE, PARAGRAPH, QUOTED_PARAGRAPH = range(7)
 MAX_LABEL = 40
@@ -37,7 +38,7 @@ MAX_INSTRUCTION_JUMP = 3  # an amendment's instructions run 1, 2, 3 …; OCR dro
 MAX_SECTION_JUMP = 3  # a circular has a handful of sections: a titled one further ahead is a quoted one
 
 _PREAMBLE = re.compile(r"^(menimbang|mengingat|memperhatikan)\b", re.IGNORECASE)
-_DECISION = re.compile(r"^MEMUTUSKAN\b")
+_DECISION = re.compile(r"^(?:Menetapkan\s*:\s*)?MEMUTUSKAN\b")  # bi:padg:2024:18 prints both on one line
 _SIGNED = re.compile(r"^(ditetapkan|disahkan)\s+di\b", re.IGNORECASE)
 _DOTTED_PASAL = re.compile(r"^(?:Pasal|PASAL)\s+(\d+)\.$")
 _SENTENCE_END = re.compile(r"[.:;]$")
@@ -55,10 +56,10 @@ _ELUCIDATION = re.compile(r"^PENJELASAN(?:\s+ATAS\b.*)?$")
 _ELUCIDATION_GENERAL = re.compile(r"^(?:I\.\s*)?UMUM$")
 _ARTICLE_BY_ARTICLE = re.compile(r"PASAL\s+DEMI\s+PASAL", re.IGNORECASE)
 _ELUCIDATED_AYAT = re.compile(r"^Ayat\s*\((\d+)\)$", re.IGNORECASE)
+_ELUCIDATED_ITEM = re.compile(r"^(Huruf|Angka)\s+([a-z]|\d{1,3})$", re.IGNORECASE)  # "Huruf a" / "Cukup jelas."
 _ANNEX = re.compile(r"^LAMPIRAN(?:\s+([IVXLC]+|\d+))?(?:\s+[A-Z0-9 ,.:/()-]*)?$")
 _TABLE_OF_CONTENTS = re.compile(r"(\.{4,}|…{2,}|\s\d+$)")
 _ROMAN_SECTION = re.compile(r"^([IVX]+)\.\s*(.*)$")
-_CATCHWORD = re.compile(r"(?:\.\s*){3}$|…$")  # "X. PENUTUP . . .": the next page's first words, at this one's foot
 # "1. Ketentuan BAB I angka 5 dihapus", "Ketentuan butir III.A diubah", "Mengubah angka IV sehingga …",
 # "I. Beberapa ketentuan dalam Surat Edaran … diubah": a circular that changes another one
 _AMENDS_A_CIRCULAR = re.compile(
@@ -73,6 +74,14 @@ _RULING = re.compile(
     r"^(pertama|kedua|ketiga|keempat|kelima|keenam|ketujuh|kedelapan|kesembilan|kesepuluh)\s*(?::\s*(.*))?$",
     re.IGNORECASE,
 )
+# "Pertama Ketentuan Umum", "Pertama 1. Berdasarkan …": a ruling set in a column of its own, beside its title or its
+# first item, read a printed line at a time. Capitalised, and followed by a capital, a digit or a bracket, so that a
+# sentence opening with an ordinal ("Kedua belah pihak …", "Ketiga oleh LKS …", "Pertama, di antara …") is text.
+_RULING_BESIDE = re.compile(
+    r"^(Pertama|Kedua|Ketiga|Keempat|Kelima|Keenam|Ketujuh|Kedelapan|Kesembilan|Kesepuluh"
+    r"|PERTAMA|KEDUA|KETIGA|KEEMPAT|KELIMA|KEENAM|KETUJUH|KEDELAPAN|KESEMBILAN|KESEPULUH)\s+(?=[A-Z0-9(])(.+)$"
+)
+_ITEM = re.compile(r"^(?:\d+|[a-z])[.)]\s|^\(\d+\)\s")  # "1. …", "a. …", "(1) …": wording, not a title
 _RULING_ORDER = ("pertama", "kedua", "ketiga", "keempat", "kelima", "keenam", "ketujuh", "kedelapan", "kesembilan",
                  "kesepuluh")  # fmt: skip
 
@@ -94,6 +103,7 @@ class _Grammar:
 
     def __init__(self, builder: TreeBuilder) -> None:
         self.b = builder
+        self.items = Items(builder)
         self.previous = ""  # the last content line
         self.decided = False  # past MEMUTUSKAN
         self.annex: str | None = None
@@ -114,11 +124,22 @@ class _Grammar:
         found = _PREAMBLE.match(line.text)
         if found:
             name = found[1].lower()
-            return self.b.open(CHAPTER, name, name, found[1].capitalize(), line)
+            opened = self.b.open(CHAPTER, name, name, found[1].capitalize(), line)
+            if opened:
+                self.item_beside(line, found.end())
+            return opened
         if _DECISION.match(line.text):
             self.decided = True
             return self.b.open(CHAPTER, "memutuskan", "memutuskan", "MEMUTUSKAN", line)
         return False
+
+    def item_beside(self, line: Line, label_end: int) -> None:
+        """ "Menimbang : a. bahwa …", "Pertama 1. Berdasarkan …": the first item, on its label's line."""
+        rest = line.text[label_end:].lstrip(" \t:")
+        if rest:
+            raw = self.b.text[line.start : line.end]
+            start = line.start + raw.find(line.text) + len(line.text) - len(rest)
+            self.items.feed(Line(start, line.end, rest), previous="")
 
     def annexes(self, line: Line) -> bool:
         found = _ANNEX.match(line.text)
@@ -201,7 +222,13 @@ class Peraturan(_Grammar):
             return False
         if self.amending and self.next_instruction(line):
             return False
-        return self.ayat(line) or self.grouping(line)
+        return self.ayat(line) or self.item(line) or self.grouping(line)
+
+    def item(self, line: Line) -> bool:
+        """A lettered or numbered item of the article, its paragraph or the preamble (items.py). What an amendment
+        quotes may start part-way through a list; the amending article's own instructions are not its items."""
+        quoted = self.amending is not None and self.article != self.amending
+        return self.items.feed(line, previous=self.previous, quoted=quoted)
 
     def dotted_heading(self, text: str) -> list[str]:
         """Older laws write "Pasal 1.". So does a reference wrapped onto its own line ("… dalam\nPasal 3."),
@@ -219,7 +246,8 @@ class Peraturan(_Grammar):
             return False
         self.last_instruction = int(found[1])
         self.b.close(PARAGRAPH)
-        self.article, self.quote_pending = self.amending, not _DELETION.search(line.text)
+        # What it quotes counts its paragraphs afresh, even without a heading ("… Pasal 16 berbunyi …: / (1) …")
+        self.article, self.last_ayat, self.quote_pending = self.amending, 0, not _DELETION.search(line.text)
         return True
 
     def opens_amending_article(self, line: Line) -> bool:
@@ -314,7 +342,7 @@ class Peraturan(_Grammar):
         return key > self.last_article and key[0] - self.last_article[0] <= MAX_ARTICLE_JUMP
 
     def ayat(self, line: Line) -> bool:
-        if self.article is None or _CATCHWORD.search(line.text) or _WRAPPED_REFERENCE.search(self.previous):
+        if self.article is None or CATCHWORD.search(line.text) or _WRAPPED_REFERENCE.search(self.previous):
             return False
         number = min((n for n in paragraph_numbers(line.text) if self.follows_paragraph(n)), default=None)
         if number is None:
@@ -349,7 +377,21 @@ class Peraturan(_Grammar):
             self.last_ayat = int(explained[1])
             address = f"{self.article}/ayat-{explained[1]}"
             return self.b.open(PARAGRAPH, address, "penjelasan", f"Ayat ({explained[1]})", line)
-        return False
+        item = _ELUCIDATED_ITEM.match(line.text)
+        return bool(item and self.article) and self.elucidated_item(item[1].capitalize(), item[2].lower(), line)
+
+    def elucidated_item(self, word: str, name: str, line: Line) -> bool:
+        """ "Huruf a" explains the article's or the paragraph's item a: penjelasan/pasal-5/ayat-1/huruf-a. An
+        "Angka 1" under an explained "Huruf b" explains that item's first one."""
+        holder, explained = self.b.holder(below=ITEM), self.b.holder(below=ITEM + 1)
+        if holder is None or not holder.address.startswith(self.article):
+            return False
+        within_item = (
+            word == "Angka" and explained is not None and explained.address.rsplit("/", 1)[-1].startswith("huruf-")
+        )
+        parent = explained.address if within_item else holder.address
+        address = f"{parent}/{word.lower()}-{name}"
+        return self.b.open(ITEM + within_item, address, "penjelasan", f"{word} {name}", line)
 
 
 class SuratEdaran(_Grammar):
@@ -371,7 +413,7 @@ class SuratEdaran(_Grammar):
         self.is_amendment = self.is_amendment or bool(_AMENDS_A_CIRCULAR.match(line.text))
         section = _ROMAN_SECTION.match(line.text)
         if not section or quoted or not self.opens_section(roman_value(section[1]), section[2]):
-            return False
+            return self.items.feed(line, previous=self.previous, quoted=self.is_amendment)
         self.last_section = roman_value(section[1])
         address = f"romawi-{section[1].lower()}"
         return self.b.open(CHAPTER, address, "romawi", f"{section[1]}.", line, heading=section[2], expects_heading=True)
@@ -379,7 +421,7 @@ class SuratEdaran(_Grammar):
     def opens_section(self, number: int, title: str) -> bool:
         """A section heading comes after the last one. A titled one in capitals may skip a few lost at page
         breaks; a bare one ("II." named on the next line) or a mixed-case one must be the very next."""
-        if number <= self.last_section or _CATCHWORD.search(title) or _is_reference(title):
+        if number <= self.last_section or CATCHWORD.search(title) or _is_reference(title):
             return False
         if self.is_amendment:
             return number == self.last_section + 1
@@ -396,17 +438,27 @@ class Fatwa(_Grammar):
     def step(self, line: Line) -> bool:
         if self.preamble(line):
             return True
-        ruling = _RULING.match(line.text)
+        ruling = _RULING.match(line.text) or _RULING_BESIDE.match(line.text)
         if not ruling or not self.decided:
-            return False
+            return self.items.feed(line, previous=self.previous)
         order = _RULING_ORDER.index(ruling[1].lower()) + 1
         if order <= self.last_ruling:
             return False
         self.last_ruling = order
-        name = ruling[1].lower()
-        return self.b.open(
-            CHAPTER, f"diktum-{name}", "diktum", name.capitalize(), line, heading=ruling[2], expects_heading=True
+        name, beside = ruling[1].lower(), ruling[2]
+        item_beside = bool(beside and _ITEM.match(beside))
+        opened = self.b.open(
+            CHAPTER,
+            f"diktum-{name}",
+            "diktum",
+            name.capitalize(),
+            line,
+            heading=None if item_beside else beside,
+            expects_heading=not beside,
         )
+        if opened and item_beside:
+            self.item_beside(line, ruling.start(2))
+        return opened
 
 
 def _in_capitals(text: str) -> bool:

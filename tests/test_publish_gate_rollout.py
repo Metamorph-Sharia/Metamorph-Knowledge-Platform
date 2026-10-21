@@ -25,6 +25,7 @@ from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.domain.loading import ReviewKind
 from metamorph_platform.domain.publishing import hold_reasons_of, publication_of
+from metamorph_platform.domain.structure import PARSER_VERSION
 
 pytestmark = pytest.mark.database
 ROLLOUT = 10
@@ -85,7 +86,8 @@ def ids(db, sql: str) -> set[str]:
 def test_the_rollout_withdraws_exactly_what_the_gate_would_hold(db, tmp_path) -> None:
     published_before_the_gate(db, tmp_path)
     snapshot = PostgresPublication(db).snapshot
-    would_hold = {d for d in ids(db, "SELECT id FROM published.document") if hold_reasons_of(snapshot(d), "4")}
+    published = ids(db, "SELECT id FROM published.document")
+    would_hold = {d for d in published if hold_reasons_of(snapshot(d), PARSER_VERSION)}
 
     roll_out(db)
 

@@ -3,7 +3,8 @@
 Articles and paragraphs are numbered 1, 2, 3 … in every instrument, so a gap means the text lost a
 heading (usually at a page break) or the parser misread one. An elucidation explains the body's
 articles, so an elucidation of an article the body lacks means the same. An amendment may quote an
-article only from the paragraph it changes, so a quoted article is checked from its first paragraph.
+article only from the paragraph it changes, so a quoted article (and paragraphs an amending article quotes
+without their article's heading) is checked from its first paragraph.
 """
 
 from __future__ import annotations
@@ -60,8 +61,11 @@ def _paragraph_gaps(nodes: tuple[Node, ...]) -> list[str]:
 
 
 def _first_expected(article: str, numbers: list[int]) -> int:
-    """An article an amendment quotes ("pasal-i/pasal-2") may be quoted from the paragraph it changes."""
-    return min(numbers) if "/" in article else 1
+    """An article an amendment quotes ("pasal-i/pasal-2") may be quoted from the paragraph it changes, and so
+    may the paragraphs an instruction quotes without their article's heading, which nest in "pasal-i" itself:
+    an amending article has no paragraphs of its own."""
+    quoted = "/" in article or is_roman(article.removeprefix("pasal-"))
+    return min(numbers) if quoted else 1
 
 
 def _gaps(what: str, numbers: list[int], *, roman_numerals: bool = False) -> list[str]:

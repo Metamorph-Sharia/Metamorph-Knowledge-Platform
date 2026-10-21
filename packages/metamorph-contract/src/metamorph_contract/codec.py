@@ -12,6 +12,7 @@ from metamorph_contract.document import (
     Confidence,
     Dates,
     DocumentInfo,
+    Extraction,
     ExtractionMethod,
     FileRef,
     FileRole,
@@ -89,12 +90,14 @@ def _file(file: Mapping[str, Any]) -> FileRef:
 
 
 def _text(text: Mapping[str, Any]) -> TextRef:
+    extraction = text.get("extraction")
     return TextRef(
         **{
             **text,
             "origin": TextOrigin(text["origin"]),
             "method": ExtractionMethod(text["method"]),
             "rights": Rights(text["rights"]),
+            "extraction": Extraction(**extraction) if extraction else None,
         }
     )
 
