@@ -223,3 +223,33 @@ def test_cleaning_never_changes_a_word_it_keeps() -> None:
     kept = {word for blocks in texts(cleaned) for text in blocks for word in text.split()}
     original = {word for page in pages for block in page.blocks for word in block.text.split()}
     assert kept <= original
+
+
+# Text a vision model wrote about a picture, instead of reading it
+
+
+CHART = (
+    "The chart displays the distribution of data points across different categories, with a notable "
+    "concentration in the lower range and sparse outliers extending towards higher values."
+)
+NO_TEXT = "The image contains no discernible text or characters. Therefore, the correct OCR output is an empty string."
+
+
+def test_a_models_description_of_a_picture_goes_from_a_page_read_from_its_image() -> None:
+    # PERMA 2/2015, page 7: MinerU's OCR of a scan, a speckled region described in English
+    pages = [page(7, block(CHART), block(NO_TEXT), block("Pasal 11"), block("(1) Hakim memeriksa materi gugatan."))]
+
+    cleaned = clean(pages, from_images={7})
+
+    assert texts(cleaned) == [["Pasal 11", "(1) Hakim memeriksa materi gugatan."]]
+    assert removed(cleaned, "generated") == [(7, CHART), (7, NO_TEXT)]
+
+
+def test_english_wording_on_a_page_read_from_its_characters_stays() -> None:
+    assert texts(clean([page(1, block(CHART))])) == [[CHART]]
+
+
+def test_indonesian_wording_with_english_terms_stays() -> None:
+    wording = "Rasio loan to value untuk kredit properti dan uang muka untuk kredit kendaraan bermotor yang berlaku."
+
+    assert texts(clean([page(1, block(wording))], from_images={1})) == [[wording]]

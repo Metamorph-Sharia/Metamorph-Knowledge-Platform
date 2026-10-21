@@ -7,9 +7,10 @@ set -eu
 platform="$(cd "$(dirname "$0")/../.." && pwd)"
 key="$(sed -n 's/^METAMORPH_MINERU_API_KEY=//p' "$platform/.env" 2>/dev/null | tail -n 1)"
 
-# --tier standard serves basic too; one job at a time fits 24 GB; models load before /v1/health says ok.
+# --tier standard serves basic too; one job at a time fits 24 GB; models load before /v1/health says ok;
+# no image analysis: it writes descriptions of pictures ("The chart displays …") as if they were the page's text.
 set -- api-server --host 127.0.0.1 --port "${METAMORPH_MINERU_PORT:-8010}" --tier standard --concurrency 1 \
-  --preload-models
+  --preload-models --disable-image-analysis
 if [ -n "$key" ]; then
   set -- "$@" --api-key "$key"
 fi

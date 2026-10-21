@@ -38,7 +38,7 @@ standard library only.
 | Module | What it does |
 |---|---|
 | `domain/page.py` | `Page`, `Block`, `BlockKind`, `BBox`: a page as a reader laid it out, in reading order |
-| `domain/cleaning.py` | `clean(pages)`: furniture the reader marked, the `SK No …` print serial however misread, printed page numbers that follow the pages, running heads (their first place stays), catchwords, hyphenation, whitespace. Each removal is logged. |
+| `domain/cleaning.py` | `clean(pages, from_images)`: on pages read from their images, English text the vision model wrote about a picture; furniture the reader marked, the `SK No …` print serial however misread, printed page numbers that follow the pages, running heads (their first place stays), catchwords, hyphenation, whitespace. Each removal is logged. |
 | `domain/rendering.py` | `render(pages)`: one plain-text string a page, laid out for the parser |
 | `domain/alignment.py` | `aligned(candidate, reference)`: the words one reading has that the other lacks |
 | `domain/quality.py` | `page_quality(text, vocabulary)`: unknown words, OCR confusions, damaged headings, glyph junk |

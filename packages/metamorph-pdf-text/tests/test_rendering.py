@@ -44,6 +44,28 @@ def test_a_title_keeps_its_lines() -> None:
     assert text == "BAB I\nKETENTUAN UMUM\n\nPasal 1"
 
 
+# Headings a reader set on one line (MinerU's title block for a centred heading stack)
+
+
+def test_a_chapter_and_its_first_article_read_as_one_line_are_set_apart() -> None:
+    # UU 24/1999
+    assert rendered(block("BAB I KETENTUAN UMUM Pasal 1", kind=BlockKind.TITLE)) == "BAB I KETENTUAN UMUM\nPasal 1"
+
+
+def test_a_part_or_section_stands_alone_above_its_name() -> None:
+    # Perka PPATK 2012, PERMA 2/2015: the parser reads "Paragraf 1" and "Bagian Keempat" only on lines of their own
+    assert rendered(block("Paragraf 1 Umum Pasal 2")) == "Paragraf 1\nUmum\nPasal 2"
+    assert rendered(block("Bagian Keempat Pemeriksaan Pendahuluan", kind=BlockKind.TITLE)) == (
+        "Bagian Keempat\nPemeriksaan Pendahuluan"
+    )
+
+
+def test_an_article_cited_in_a_sentence_is_not_a_heading() -> None:
+    sentence = "Pasal 5 diubah dan Pasal 6 dihapus sehingga berbunyi"
+
+    assert rendered(block(sentence)) == sentence
+
+
 def test_the_decision_label_stands_alone() -> None:
     text = rendered(block("MEMUTUSKAN:\nMenetapkan : PERATURAN BANK INDONESIA\nTENTANG SISTEM PEMBAYARAN."))
 

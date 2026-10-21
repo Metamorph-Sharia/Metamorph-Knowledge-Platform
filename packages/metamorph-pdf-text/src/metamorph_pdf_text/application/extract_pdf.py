@@ -9,6 +9,8 @@ text layer, which a page falls back to when the reading can't be trusted.
            reword a born-digital page. A word one reading's cleaning logged as furniture doesn't count;
          it read the page image (ocr) and is no noisier than the layer, and not empty where the layer has text
        and falls back to the text layer otherwise. Every fallback is counted in the extraction.
+       A page with no text layer at all (a born-digital file's scanned signing page) has no wording to hold: the
+       reader OCRs its picture even when it reads the rest from the characters, and it is checked as OCR is.
 
 A reader that can't be reached raises, and nothing falls back: a text read now by one engine and next time by
 the other would change at every run.
@@ -67,20 +69,19 @@ class ExtractPdf:
         layer = _Written.of(self._text_layer.read(pdf, _TEXT_LAYER_REQUEST).pages)
         request = request_for(role, [page_quality(text, self._vocabulary) for text in layer.texts.values()])
         reading = self._read(pdf, request)
-        read = _Written.of(reading.pages)
-        chosen = [
-            (number, read if self._trusted(reading.ocr_mode, number, read, layer) else layer) for number in layer.texts
-        ]
-
-        kept = sum(source is read for _, source in chosen)
-        ocrd = kept if reading.ocr_mode is OcrMode.OCR else 0
+        read = _Written.of(reading.pages, from_images=_from_images(reading.ocr_mode, layer))
+        chosen = {
+            number: read if self._trusted(reading.ocr_mode, number, read, layer) else layer for number in layer.texts
+        }
+        ocrd = sum(source is read and _ocrd(reading.ocr_mode, number, read, layer) for number, source in chosen.items())
+        fallen_back = sum(source is layer for source in chosen.values())
         return ExtractedPdf(
-            pages=tuple(source.texts[number] for number, source in chosen),
+            pages=tuple(source.texts[number] for number, source in chosen.items()),
             method=OCR if ocrd else TEXT_LAYER,
             extraction=Extraction(
-                self._reader.engine, self._reader.version, request.tier, reading.ocr_mode, ocrd, len(chosen) - kept
+                self._reader.engine, self._reader.version, request.tier, reading.ocr_mode, ocrd, fallen_back
             ),
-            removals=tuple(removal for number, source in chosen for removal in source.removals.get(number, [])),
+            removals=tuple(removal for number, source in chosen.items() for removal in source.removals.get(number, [])),
         )
 
     def _read(self, pdf: bytes, request: ReadRequest) -> Reading:
@@ -94,7 +95,7 @@ class ExtractPdf:
     def _trusted(self, mode: OcrMode, number: int, read: _Written, layer: _Written) -> bool:
         if number not in read.texts:
             return False
-        if mode is OcrMode.OCR:
+        if _ocrd(mode, number, read, layer):
             return self._no_noisier(read.texts[number], layer.texts[number])
         return _keeps_wording(number, read, layer)
 
@@ -105,6 +106,16 @@ class ExtractPdf:
         if not ocr.characters:
             return False
         return layer.is_noisy or not ocr.is_noisy
+
+
+def _from_images(mode: OcrMode, layer: _Written) -> set[int]:
+    """The pages the reader read from their images: every page when it OCRs, else those with no text layer."""
+    return {number for number, text in layer.texts.items() if mode is OcrMode.OCR or not text.strip()}
+
+
+def _ocrd(mode: OcrMode, number: int, read: _Written, layer: _Written) -> bool:
+    """Whether the reader's text of a page came from its image: OCR, or text found on a page with no text layer."""
+    return mode is OcrMode.OCR or (not layer.texts[number].strip() and bool(read.texts.get(number, "").strip()))
 
 
 def _keeps_wording(number: int, read: _Written, layer: _Written) -> bool:
@@ -122,8 +133,8 @@ class _Written:
     removals: dict[int, list[Removal]]
 
     @classmethod
-    def of(cls, pages: Sequence[Page]) -> _Written:
-        cleaned = clean(pages)
+    def of(cls, pages: Sequence[Page], from_images: Collection[int] = ()) -> _Written:
+        cleaned = clean(pages, from_images)
         removals: dict[int, list[Removal]] = {}
         for removal in cleaned.removals:
             removals.setdefault(removal.page, []).append(removal)

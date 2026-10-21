@@ -2,6 +2,8 @@
 
 The rules run in order:
 
+    generated    on a page read from its image, a block the vision model wrote instead of reading: an English
+                 description of a picture ("The chart displays …", "The image contains no discernible text …")
     furniture    blocks the reader marked as a header, footer, page number or side note
     serial       the State Secretariat's print serial, "SK No 054949 C" (and OCR's "SK No l19tt6l C")
     repeated     lines at the top or foot of the page that recur on many pages: a running head ("PRESIDEN
@@ -18,14 +20,14 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from metamorph_pdf_text.domain.page import MARKED_FURNITURE, Block, Page
 from metamorph_pdf_text.domain.patterns import shows_structure
 
-FURNITURE, SERIAL, REPEATED, CATCHWORD = "furniture", "serial", "repeated", "catchword"
+GENERATED, FURNITURE, SERIAL, REPEATED, CATCHWORD = "generated", "furniture", "serial", "repeated", "catchword"
 
 BAND = 0.12  # of the page's height: the top and foot where running heads, page numbers and serials sit
 EDGE_LINES = 3  # of a block in a band, how many of its first (top) or last (foot) lines can be furniture
@@ -43,6 +45,19 @@ _PRINTED_PAGE_NUMBER = re.compile(
 _CATCHWORD_END = re.compile(r"(?:\s\.|\.{2,}|(?:\.\s+){2,}\.?|…)$")
 _SENTENCE_END = re.compile(r"[.;:,]$")
 _WORD = re.compile(r"\w+")
+_LETTERS = re.compile(r"[a-z]+")
+# Function words: English ones make most of an English sentence's words, and an Indonesian one's never do
+_ENGLISH = frozenset(
+    {"the", "a", "an", "is", "are", "of", "and", "or", "with", "to", "in", "on", "it", "its", "this", "that"}
+    | {"there", "no", "as", "by", "be", "for"}
+)
+_INDONESIAN = frozenset(
+    {"yang", "dan", "di", "dalam", "dengan", "untuk", "pada", "atau", "dari", "ini", "itu", "adalah", "tidak"}
+    | {"oleh", "ke", "tersebut"}
+)
+_GENERATED_WORDS = 8  # at least, in a sentence told apart by its function words
+_ENGLISH_SHARE = 0.2  # of its words, at least
+_INDONESIAN_SHARE = 0.05  # of its words, under
 _HYPHENATED = re.compile(r"(\w+)-$")
 
 
@@ -59,13 +74,34 @@ class Cleaned:
     removals: tuple[Removal, ...]
 
 
-def clean(pages: Sequence[Page]) -> Cleaned:
+def clean(pages: Sequence[Page], from_images: Collection[int] = ()) -> Cleaned:
+    """`from_images`: the numbers of the pages a reader read from their images, where it may have written text."""
     log: list[Removal] = []
-    kept = [_without_marked_furniture(page, log) for page in pages]
+    kept = [_without_generated(page, log) if page.number in from_images else page for page in pages]
+    kept = [_without_marked_furniture(page, log) for page in kept]
     kept = [_without_lines(page, _is_serial, SERIAL, log) for page in kept]
     kept = _without_recurring_band_lines(kept, log)
     kept = _without_catchwords(kept, log)
     return Cleaned(tuple(_tidied(page) for page in kept), tuple(log))
+
+
+def _without_generated(page: Page, log: list[Removal]) -> Page:
+    kept = []
+    for block in page.blocks:
+        if _is_generated(block.text):
+            log.append(Removal(GENERATED, page.number, block.text))
+        else:
+            kept.append(block)
+    return page.with_blocks(kept)
+
+
+def _is_generated(text: str) -> bool:
+    words = _LETTERS.findall(text.lower())
+    if len(words) < _GENERATED_WORDS:
+        return False
+    english = sum(word in _ENGLISH for word in words) / len(words)
+    indonesian = sum(word in _INDONESIAN for word in words) / len(words)
+    return english >= _ENGLISH_SHARE and indonesian < _INDONESIAN_SHARE
 
 
 def _without_marked_furniture(page: Page, log: list[Removal]) -> Page:

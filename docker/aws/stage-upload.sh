@@ -5,6 +5,7 @@
 #   source-revisions.txt    each repository's commit, and how many files differ from it
 #   data-<repo>.tgz         each connector's data/, without its old bundles (exports/) or MinerU readings
 #   bi.dump                 BI's own database, which its reextract also updates
+#   sagemaker-code.tar.gz   the SageMaker training job's entry point, runner and launcher (docker/sagemaker/)
 # Nothing is fetched from the sources. Run on the Mac, with the compose stack up:
 #   docker/aws/stage-upload.sh [OUT_DIR]        (default: ~/metamorph-step9-upload)
 set -euo pipefail
@@ -30,8 +31,11 @@ done >"$out/source-revisions.txt"
 for repository in $CONNECTORS; do
   echo "data-$repository.tgz"
   tar -czf "$out/data-$repository.tgz" \
-    --exclude="$repository/data/exports" --exclude="$repository/data/mineru-cache" "$repository/data"
+    --exclude="$repository/data/exports" --exclude="$repository/data/mineru-cache*" "$repository/data"
 done
+
+echo "sagemaker-code.tar.gz"
+tar -czf "$out/sagemaker-code.tar.gz" -C "$platform/docker/sagemaker" train_entry.py step9.sh launch_job.py
 
 echo "bi.dump"
 docker compose --project-directory "$platform" exec -T postgres pg_dump -U metamorph -Fc bi >"$out/bi.dump"

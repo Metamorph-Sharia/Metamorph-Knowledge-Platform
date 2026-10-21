@@ -27,4 +27,5 @@ RUN mineru-kit models download --tier standard && mineru-kit models verify --tie
 EXPOSE 8010
 
 # MINERU_API_KEY, when set, is the key every request must carry (METAMORPH_MINERU_API_KEY on the connectors).
-ENTRYPOINT ["/bin/sh", "-c", "exec mineru-kit api-server --host 0.0.0.0 --port 8010 --tier standard --preload-models --upload-dir /uploads --concurrency \"${MINERU_CONCURRENCY:-1}\" ${MINERU_API_KEY:+--api-key \"$MINERU_API_KEY\"}"]
+# No image analysis: it writes descriptions of pictures as if they were the page's text (as docker/mineru/run-dev.sh).
+ENTRYPOINT ["/bin/sh", "-c", "exec mineru-kit api-server --host 0.0.0.0 --port 8010 --tier standard --preload-models --disable-image-analysis --upload-dir /uploads --concurrency \"${MINERU_CONCURRENCY:-1}\" ${MINERU_API_KEY:+--api-key \"$MINERU_API_KEY\"}"]

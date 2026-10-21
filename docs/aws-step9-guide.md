@@ -1,6 +1,6 @@
 # Running step 9 on AWS (Jakarta)
 
-**Date:** 2026-10-21 · **Region:** Asia Pacific (Jakarta), `ap-southeast-3` · **Status:** guide written; nothing created on AWS yet · **Using the web console instead:** [aws-step9-console-guide.md](aws-step9-console-guide.md) · **Plan:** [mineru-extraction-plan.md](mineru-extraction-plan.md), step 9 onward
+**Date:** 2026-10-21 · **Region:** Asia Pacific (Jakarta), `ap-southeast-3` · **Status:** guide written; nothing created on AWS yet · **With SageMaker AI only:** [aws-step9-sagemaker-guide.md](aws-step9-sagemaker-guide.md) · **Using the web console instead:** [aws-step9-console-guide.md](aws-step9-console-guide.md) · **Plan:** [mineru-extraction-plan.md](mineru-extraction-plan.md), step 9 onward
 
 Step 9 re-extracts every PDF the four connectors hold with MinerU. On this Mac that takes 2–3 days, and its vision model is a third party's GGUF conversion with no stated license (README: Running MinerU). This guide runs that work on one rented GPU instance in AWS's Jakarta region, and then hands the results back to the Mac.
 

@@ -55,3 +55,16 @@ def test_dependencies_point_inward_only() -> None:
 
 def test_the_domain_is_there_to_check() -> None:
     assert any((PACKAGE / "domain").glob("*.py"))
+
+
+def test_the_guard_catches_an_outward_import(tmp_path, monkeypatch) -> None:
+    """The rule above is only worth something if it fails on a violation."""
+    domain = tmp_path / "domain"
+    domain.mkdir()
+    (domain / "bad.py").write_text("import httpx\nfrom metamorph_pdf_text.adapters import mineru_reader\n")
+    monkeypatch.setattr(sys.modules[__name__], "PACKAGE", tmp_path)
+
+    assert violations() == [
+        "domain/bad.py (domain) imports third-party httpx",
+        "domain/bad.py (domain) imports metamorph_pdf_text.adapters",
+    ]

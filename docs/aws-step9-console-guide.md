@@ -1,6 +1,6 @@
 # Running step 9 on AWS with the web console (Jakarta)
 
-**Date:** 2026-10-21 · **Region:** Asia Pacific (Jakarta), `ap-southeast-3` · **Status:** guide written; nothing created on AWS yet · **Command-line version, design and costs:** [aws-step9-guide.md](aws-step9-guide.md)
+**Date:** 2026-10-21 · **Region:** Asia Pacific (Jakarta), `ap-southeast-3` · **Status:** guide written; nothing created on AWS yet · **With SageMaker AI only:** [aws-step9-sagemaker-guide.md](aws-step9-sagemaker-guide.md) · **Command-line version, design and costs:** [aws-step9-guide.md](aws-step9-guide.md)
 
 This is the same plan as [aws-step9-guide.md](aws-step9-guide.md), done through the AWS Management Console instead of the AWS CLI:
 - **One rented GPU instance** (g5.8xlarge on Spot, one NVIDIA A10G) runs MinerU and the four connectors' offline re-extraction, export, load and build.

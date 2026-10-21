@@ -129,6 +129,32 @@ def test_ocr_that_lost_a_pages_text_falls_back() -> None:
     assert extracted.extraction.pages_fallen_back == 1
 
 
+# A page with no text layer in a born-digital file
+
+SIGNED = "Ditetapkan di Jakarta pada tanggal 22 Desember 2016"
+
+
+def test_a_page_with_no_text_layer_keeps_what_the_reader_ocrd_from_its_picture() -> None:
+    # PERMA 14/2016: ten born-digital pages, and the signing page a picture with no text layer
+    reader = FakeReader("mineru", page(1, block(WORDING)), page(2, block(SIGNED)))
+
+    extracted = extract(reader, FakeReader("pymupdf", page(1, block(WORDING)), page(2)))
+
+    assert extracted.pages == ("Pasal 5\nSetiap Pelaku Usaha wajib memiliki izin usaha.", SIGNED)
+    assert extracted.method == "ocr"
+    assert (extracted.extraction.ocr_mode, extracted.extraction.pages_ocrd) == (OcrMode.TXT, 1)
+    assert extracted.extraction.pages_fallen_back == 0
+
+
+def test_a_blank_page_stays_blank() -> None:
+    reader = FakeReader("mineru", page(1, block(WORDING)), page(2))
+
+    extracted = extract(reader, FakeReader("pymupdf", page(1, block(WORDING)), page(2)))
+
+    assert extracted.pages[1] == ""
+    assert (extracted.method, extracted.extraction.pages_ocrd) == ("text_layer", 0)
+
+
 # The request, the cache and the record of how a text was read
 
 
