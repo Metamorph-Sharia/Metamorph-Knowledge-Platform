@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from metamorph_pdf_text.application.policy import request_for
 from metamorph_pdf_text.application.ports import CacheKey, LayoutReader, ResultCache
 from metamorph_pdf_text.application.reading import OcrMode, Reading, ReadRequest, Tier
-from metamorph_pdf_text.domain.alignment import aligned, words
+from metamorph_pdf_text.domain.alignment import aligned, respelled, words
 from metamorph_pdf_text.domain.cleaning import Removal, clean
 from metamorph_pdf_text.domain.page import Page
 from metamorph_pdf_text.domain.quality import page_quality
@@ -69,7 +69,8 @@ class ExtractPdf:
         layer = _Written.of(self._text_layer.read(pdf, _TEXT_LAYER_REQUEST).pages)
         request = request_for(role, [page_quality(text, self._vocabulary) for text in layer.texts.values()])
         reading = self._read(pdf, request)
-        read = _Written.of(reading.pages, from_images=_from_images(reading.ocr_mode, layer))
+        from_images = _from_images(reading.ocr_mode, layer)
+        read = _Written.of(reading.pages, from_images).respelled(layer, except_pages=from_images)
         chosen = {
             number: read if self._trusted(reading.ocr_mode, number, read, layer) else layer for number in layer.texts
         }
@@ -140,6 +141,15 @@ class _Written:
             removals.setdefault(removal.page, []).append(removal)
         numbers = (page.number for page in cleaned.pages)
         return cls(dict(zip(numbers, render(cleaned.pages), strict=True)), removals)
+
+    def respelled(self, layer: _Written, except_pages: Collection[int]) -> _Written:
+        """Each page read from the PDF's characters with the words it joined at a hyphen spelled as the text layer
+        has them: the layer is the PDF's own spelling."""
+        texts = {
+            number: text if number in except_pages else respelled(text, layer.texts.get(number, ""))
+            for number, text in self.texts.items()
+        }
+        return _Written(texts, self.removals)
 
     def removed_words(self, number: int) -> Counter[str]:
         return sum((words(removal.text) for removal in self.removals.get(number, [])), Counter())

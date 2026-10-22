@@ -44,20 +44,59 @@ def test_a_title_keeps_its_lines() -> None:
     assert text == "BAB I\nKETENTUAN UMUM\n\nPasal 1"
 
 
-# Headings a reader set on one line (MinerU's title block for a centred heading stack)
+def test_headings_read_onto_one_line_stay_as_read_for_the_parser_to_cut() -> None:
+    # The platform's domain/structure/run_together.py cuts them, knowing the article numbering (plan step 13)
+    assert rendered(block("BAB I KETENTUAN UMUM Pasal 1", kind=BlockKind.TITLE)) == "BAB I KETENTUAN UMUM Pasal 1"
+    assert rendered(block("Pasal 8 Ayat (1) Huruf a Cukup jelas.")) == "Pasal 8 Ayat (1) Huruf a Cukup jelas."
 
 
-def test_a_chapter_and_its_first_article_read_as_one_line_are_set_apart() -> None:
-    # UU 24/1999
-    assert rendered(block("BAB I KETENTUAN UMUM Pasal 1", kind=BlockKind.TITLE)) == "BAB I KETENTUAN UMUM\nPasal 1"
+def test_articles_cited_in_a_list_a_line_ends_in_stay_wording() -> None:
+    # PP 82/2012's Menimbang, as the text layer wraps it: the line starts with one article cited, ends with another
+    lines = "Pasal 11 ayat (2), Pasal 13 ayat (6), Pasal 16 ayat (2), Pasal 17\nayat (3), dan Pasal 24 ayat (4)"
+
+    assert rendered(block(lines)) == lines.replace("\n", " ")
 
 
-def test_a_part_or_section_stands_alone_above_its_name() -> None:
-    # Perka PPATK 2012, PERMA 2/2015: the parser reads "Paragraf 1" and "Bagian Keempat" only on lines of their own
-    assert rendered(block("Paragraf 1 Umum Pasal 2")) == "Paragraf 1\nUmum\nPasal 2"
-    assert rendered(block("Bagian Keempat Pemeriksaan Pendahuluan", kind=BlockKind.TITLE)) == (
-        "Bagian Keempat\nPemeriksaan Pendahuluan"
+def test_an_article_cited_on_a_wrapped_line_stays_wording() -> None:
+    # PERMA 1/2016's Menimbang: "Pasal 154 Reglemen …" names the article of another law
+    lines = "c. bahwa ketentuan hukum acara perdata yang berlaku,\nPasal 154 Reglemen Hukum Acara untuk Daerah Luar"
+
+    assert rendered(block(lines)) == lines.replace("\n", " ")
+
+
+def test_a_sentence_opening_with_an_article_it_amends_or_cites_stays_one_line() -> None:
+    for sentence in (
+        "Pasal 5 Undang-Undang Nomor 10 Tahun 1998 diubah sehingga berbunyi",
+        "Pasal 5 UU Perbankan tetap berlaku.",
+        "Pasal 5 Ayat (1), Pasal 21 Ayat (1), Pasal 27, dan Pasal 33 Undang-Undang Dasar 1945;",  # UU 8/1999, Mengingat
+        "dimaksud pada ayat (1) huruf a. Ayat ini berlaku bagi Bank.",
+    ):
+        assert rendered(block(sentence)) == sentence
+
+
+# A list marker a reader read as a block of its own, in a column apart
+
+
+def test_a_lone_marker_joins_the_paragraph_level_with_it_wherever_it_was_read() -> None:
+    # POJK 37/2019, page 15: "(4)" read before the end of ayat (2), its paragraph read after ayat (3)
+    marker = block("(4)", BBox(0.12, 0.40, 0.15, 0.415), BlockKind.ASIDE)
+    end_of_two = block("Bank sebagaimana dimaksud pada ayat (1) huruf a.", BBox(0.16, 0.10, 0.88, 0.14))
+    three = block("(3) Bank wajib memelihara pengumuman.", BBox(0.12, 0.20, 0.88, 0.30))
+    four = block("Tata cara dan batas waktu penyampaian.", BBox(0.165, 0.4005, 0.88, 0.45))
+
+    text = rendered(marker, end_of_two, three, four)
+
+    assert text == (
+        "Bank sebagaimana dimaksud pada ayat (1) huruf a.\n\n(3) Bank wajib memelihara pengumuman.\n\n"
+        "(4) Tata cara dan batas waktu penyampaian."
     )
+
+
+def test_a_lone_marker_with_nothing_level_with_it_stays_where_it_was_read() -> None:
+    marker = block("(4)", BBox(0.12, 0.40, 0.15, 0.415))
+    text = rendered(marker, block("Tata cara dan batas waktu.", BBox(0.16, 0.50, 0.88, 0.55)))
+
+    assert text == "(4)\n\nTata cara dan batas waktu."
 
 
 def test_an_article_cited_in_a_sentence_is_not_a_heading() -> None:

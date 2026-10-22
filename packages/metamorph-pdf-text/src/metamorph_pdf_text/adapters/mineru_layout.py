@@ -50,7 +50,8 @@ def reading_from_middle_json(document: Mapping[str, Any]) -> Reading:
         if mode is OcrMode.AUTO:
             raise ValueError("parse_mode is the mode asked for, not the one MinerU read with")
         pages = tuple(
-            Page(page["page_idx"] + 1, WHOLE_PAGE.x1, WHOLE_PAGE.y1, tuple(_blocks(page["blocks"], WHOLE_PAGE)))
+            # MinerU leaves out what is default, so a blank page has no "blocks"
+            Page(page["page_idx"] + 1, WHOLE_PAGE.x1, WHOLE_PAGE.y1, tuple(_blocks(page.get("blocks", ()), WHOLE_PAGE)))
             for page in document["pages"]
         )
     except (KeyError, TypeError, ValueError) as error:

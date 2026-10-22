@@ -71,6 +71,15 @@ def test_furniture_one_reading_took_off_does_not_count_as_a_lost_word() -> None:
     assert [(removal.rule, removal.text) for removal in extracted.removals] == [("furniture", "BANK INDONESIA")]
 
 
+def test_a_word_the_reader_joined_at_its_hyphen_is_respelled_and_the_page_kept() -> None:
+    reader = FakeReader("mineru", page(1, block("Setiap Pelaku Usaha wajib memiliki izin usaha masingmasing.")))
+
+    extracted = extract(reader, text_layer("Setiap Pelaku Usaha wajib memiliki\nizin usaha masing-masing."))
+
+    assert extracted.pages == ("Setiap Pelaku Usaha wajib memiliki izin usaha masing-masing.",)
+    assert extracted.extraction.pages_fallen_back == 0
+
+
 def test_a_reworded_page_falls_back_to_the_text_layer() -> None:
     reader = FakeReader("mineru", page(1, block("Pasal 5\nSetiap Pelaku Usaha harus memiliki izin usaha.")))
 

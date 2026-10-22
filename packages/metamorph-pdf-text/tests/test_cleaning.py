@@ -122,6 +122,15 @@ def test_a_printed_page_number_goes_when_it_follows_the_pages() -> None:
     assert texts(cleaned) == [["Wording."]] * 5
 
 
+def test_a_tables_rows_at_the_top_of_its_pages_stay_however_alike() -> None:
+    # Permenko Perekonomian 13/2024: a table continued page after page, a row of it at the top of each, alike but
+    # for its numbers (a number counts as any number when lines are compared)
+    rows = [f"Kecil/Khusus Kredit Modal Kerja\t4 tahun\t5 tahun\t{n} bulan" for n in (6, 9, 12, 3, 8)]
+    pages = [page(number, block(row, TOP, BlockKind.TABLE)) for number, row in enumerate(rows, start=1)]
+
+    assert [blocks[0] for blocks in texts(clean(pages))] == rows
+
+
 def test_numbers_at_the_top_of_a_table_that_dont_follow_the_pages_stay() -> None:
     rows = [21, 34, 35, 52, 60]  # a KBLI table's row numbers, OCR having dropped their full stops
     pages = [page(number, block(f"{row}\nAngkutan sungai dan danau", TOP)) for number, row in enumerate(rows, start=1)]
@@ -202,6 +211,9 @@ def test_a_closing_ellipsis_the_next_page_does_not_continue_stays() -> None:
         ("kegiatan usaha perusa-\nhaan efek", "kegiatan usaha perusahaan efek"),
         ("para badan-\nbadan usaha", "para badan-badan usaha"),
         ("sebagaimana dimaksud dalam Undang-\nUndang Nomor 21", "sebagaimana dimaksud dalam Undang-Undang Nomor 21"),
+        ("ketentuan peraturan perundang-\nundangan", "ketentuan peraturan perundang-undangan"),
+        ("paling lambat atau selambat-\nlambatnya", "paling lambat atau selambat-lambatnya"),
+        ("diumumkan sekurang-\nkurangnya", "diumumkan sekurang-kurangnya"),
         ("Bank Indonesia-\nOtoritas Jasa Keuangan", "Bank Indonesia-\nOtoritas Jasa Keuangan"),
     ],
 )
@@ -243,6 +255,31 @@ def test_a_models_description_of_a_picture_goes_from_a_page_read_from_its_image(
 
     assert texts(cleaned) == [["Pasal 11", "(1) Hakim memeriksa materi gugatan."]]
     assert removed(cleaned, "generated") == [(7, CHART), (7, NO_TEXT)]
+
+
+def test_a_model_saying_it_found_nothing_to_read_goes() -> None:
+    # UU 4/2026, page 33
+    said = (
+        "The image contains a non-textual graphic and does not contain any readable text suitable for OCR processing."
+    )
+
+    assert removed(clean([page(33, block(said))], from_images={33}), "generated") == [(33, said)]
+
+
+@pytest.mark.parametrize(
+    "quoted",
+    [  # the step 9 sample: English a court decision or a report quotes, OCR'd from the scan (BPK)
+        "The limits of acceptable criticism are accordingly wider as regards a politician as such than as regards a "
+        "private individual.",
+        "78. Nevertheless, P.R. can be regarded as a public figure who had voluntarily exposed himself to public "
+        "scrutiny by virtue of his role in society.",
+        "This chart (a work in progress) contrasts the current policy approach with the public pathway alternative:",
+        "The Financial Services Authority (FSA) was an independent non-governmental body that regulated the financial "
+        "services industry in the UK.",
+    ],
+)
+def test_english_wording_a_document_quotes_stays_on_a_page_read_from_its_image(quoted) -> None:
+    assert texts(clean([page(1, block(quoted))], from_images={1})) == [[quoted]]
 
 
 def test_english_wording_on_a_page_read_from_its_characters_stays() -> None:

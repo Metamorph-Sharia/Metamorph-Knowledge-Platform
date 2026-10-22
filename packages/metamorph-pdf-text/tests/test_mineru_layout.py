@@ -62,6 +62,17 @@ def test_a_block_type_unknown_to_the_translation_keeps_its_wording() -> None:
     assert reading_from_middle_json(document).pages[1].blocks[1].text.startswith("Peraturan Presiden ini")
 
 
+def test_a_blank_page_mineru_writes_without_blocks_is_an_empty_page() -> None:
+    # MinerU leaves out a default: a page with nothing on it is {"page_idx": 69} (PADG 19/6/PADG/2017, page 70)
+    document = middle_json()
+    del document["pages"][1]["blocks"]
+
+    reading = reading_from_middle_json(document)
+
+    assert [page.number for page in reading.pages] == [1, 2]
+    assert reading.pages[1].blocks == ()
+
+
 def test_cleaned_and_rendered_the_page_reads_as_the_parser_expects() -> None:
     page = render(clean(reading_from_middle_json(middle_json()).pages).pages)[0]
 

@@ -3,7 +3,8 @@
 The rules run in order:
 
     generated    on a page read from its image, a block the vision model wrote instead of reading: an English
-                 description of a picture ("The chart displays …", "The image contains no discernible text …")
+                 description of a picture ("The chart displays …", "The image contains no discernible text …"),
+                 or of its OCR. English the document quotes (a court's, a treaty's) is wording, and stays
     furniture    blocks the reader marked as a header, footer, page number or side note
     serial       the State Secretariat's print serial, "SK No 054949 C" (and OCR's "SK No l19tt6l C")
     repeated     lines at the top or foot of the page that recur on many pages: a running head ("PRESIDEN
@@ -24,7 +25,7 @@ from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from metamorph_pdf_text.domain.page import MARKED_FURNITURE, Block, Page
+from metamorph_pdf_text.domain.page import MARKED_FURNITURE, Block, BlockKind, Page
 from metamorph_pdf_text.domain.patterns import shows_structure
 
 GENERATED, FURNITURE, SERIAL, REPEATED, CATCHWORD = "generated", "furniture", "serial", "repeated", "catchword"
@@ -58,7 +59,17 @@ _INDONESIAN = frozenset(
 _GENERATED_WORDS = 8  # at least, in a sentence told apart by its function words
 _ENGLISH_SHARE = 0.2  # of its words, at least
 _INDONESIAN_SHARE = 0.05  # of its words, under
+_PICTURE = r"(?:image|picture|chart|graph|figure|diagram|photo(?:graph)?|logo|illustration|emblem|stamp|seal|drawing)s?"
+# What a model writes about a picture instead of reading it: it opens by naming the picture and saying what it shows
+# ("The chart displays …", "The image contains no discernible text …"), or speaks of OCR itself. A document quoting
+# English ("… a public figure who had …", "This chart (a work in progress) contrasts …") does neither.
+_NARRATION = re.compile(
+    rf"^\W*(?:The|This|An?)\s+{_PICTURE}\b.*?\b(?:shows?|displays?|depicts?|contains?|features?|illustrates?|presents?)\b"
+    r"|\bOCR\b",
+    re.DOTALL,
+)
 _HYPHENATED = re.compile(r"(\w+)-$")
+REDUPLICATED_ROOT = 4  # letters the two halves of a reduplicated word share at least: "kurang", "undang", "baik"
 
 
 @dataclass(frozen=True)
@@ -101,7 +112,7 @@ def _is_generated(text: str) -> bool:
         return False
     english = sum(word in _ENGLISH for word in words) / len(words)
     indonesian = sum(word in _INDONESIAN for word in words) / len(words)
-    return english >= _ENGLISH_SHARE and indonesian < _INDONESIAN_SHARE
+    return english >= _ENGLISH_SHARE and indonesian < _INDONESIAN_SHARE and bool(_NARRATION.search(text))
 
 
 def _without_marked_furniture(page: Page, log: list[Removal]) -> Page:
@@ -206,6 +217,8 @@ def _edge_lines(page: Page) -> Iterator[tuple[int, int, str]]:
 
 
 def _edge_indices(page: Page, block: Block) -> list[int]:
+    if block.kind is BlockKind.TABLE:
+        return []  # a table's rows are its wording, however alike: one repeated head row on each page does no harm
     count = len(block.lines)
     indices = set()
     if _in_top_band(page, block):
@@ -342,19 +355,27 @@ def _tidied(page: Page) -> Page:
 
 def _dehyphenated(lines: list[str]) -> list[str]:
     """A word split across two lines ("perusa-" / "haan") joined. A repeated word keeps its hyphen
-    ("badan-" / "badan", "Undang-" / "Undang"); before a capital that isn't one, the lines stay apart."""
+    ("badan-" / "badan", "Undang-" / "Undang", "perundang-" / "undangan"); before a capital that isn't one, the
+    lines stay apart."""
     joined: list[str] = []
     for line in lines:
         previous = joined[-1].rstrip() if joined else ""
         hyphenated = _HYPHENATED.search(previous)
         following = line.lstrip()
-        if hyphenated and _first_word(following).casefold() == hyphenated[1].casefold():
+        if hyphenated and _reduplicated(hyphenated[1], _first_word(following)):
             joined[-1] = previous + following
         elif hyphenated and following[:1].islower():
             joined[-1] = previous[:-1] + following
         else:
             joined.append(line)
     return joined
+
+
+def _reduplicated(before: str, after: str) -> bool:
+    """A word repeated around its hyphen, affixes and all: "badan-badan", "sekurang-kurangnya", "perundang-undangan"."""
+    before, after = before.casefold(), after.casefold()
+    match = SequenceMatcher(None, before, after, autojunk=False).find_longest_match(0, len(before), 0, len(after))
+    return before == after or match.size >= REDUPLICATED_ROOT
 
 
 def _first_word(text: str) -> str:

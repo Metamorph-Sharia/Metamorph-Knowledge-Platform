@@ -12,7 +12,7 @@ from metamorph_pdf_text.application.reading import (
     Tier,
 )
 from metamorph_pdf_text.contract import text_extraction, text_method
-from metamorph_pdf_text.domain.alignment import Alignment, aligned
+from metamorph_pdf_text.domain.alignment import Alignment, aligned, respelled
 from metamorph_pdf_text.domain.cleaning import Cleaned, Removal, clean
 from metamorph_pdf_text.domain.page import BBox, Block, BlockKind, Page
 from metamorph_pdf_text.domain.quality import PageQuality, page_quality
@@ -44,6 +44,7 @@ __all__ = [
     "ResultCache",
     "Tier",
     "aligned",
+    "respelled",
     "clean",
     "from_environment",
     "page_quality",

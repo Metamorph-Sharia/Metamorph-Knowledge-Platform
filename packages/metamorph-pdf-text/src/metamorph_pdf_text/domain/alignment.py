@@ -11,6 +11,8 @@ from collections import Counter
 from dataclasses import dataclass
 
 _WORD = re.compile(r"\w+")
+# "masing-masing", and broken at its hyphen: "perundang-\nundangan"
+_HYPHENATED_WORD = re.compile(r"\b(\w+)-\s*(\w+)\b")
 
 
 @dataclass(frozen=True)
@@ -31,3 +33,16 @@ def aligned(candidate: str, reference: str) -> Alignment:
 def words(text: str) -> Counter[str]:
     """The words of `text`, as an alignment counts them."""
     return Counter(_WORD.findall(text))
+
+
+def respelled(candidate: str, reference: str) -> str:
+    """`candidate` with each word it joined at a hyphen spelled as `reference` has it: a reader that runs a
+    paragraph's lines together drops the hyphen a line ended with ("perundangundangan", "masingmasing"). Only a
+    joined word `reference` doesn't hold itself is respelled."""
+    held = words(reference)
+    spellings = {
+        match[1] + match[2]: f"{match[1]}-{match[2]}"
+        for match in _HYPHENATED_WORD.finditer(reference)
+        if match[1] + match[2] not in held
+    }
+    return _WORD.sub(lambda word: spellings.get(word[0], word[0]), candidate) if spellings else candidate
