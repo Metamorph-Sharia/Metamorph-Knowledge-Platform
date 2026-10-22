@@ -46,8 +46,8 @@ def settings(database_url):
     blobs.client.delete_bucket(Bucket=blobs.bucket)
 
 
-def held_document(settings, tmp_path) -> str:
-    """The sample document, its text missing Pasal 2: loaded, parsed, and held by the publish gate."""
+def gappy_document(settings, tmp_path) -> str:
+    """The sample document, its text missing Pasal 2: loaded, parsed, and published with the gap to review."""
     sample = document()
     text_ref = replace(sample.texts[0], sha256=hashlib.sha256(GAPPY.encode()).hexdigest(), paged=False)
     with BundleWriter(tmp_path / "b", connector="ojk", connector_version="0.1.0", run_id="run-1") as bundle:
@@ -58,7 +58,7 @@ def held_document(settings, tmp_path) -> str:
         migrate(connection)
         wiring.load_bundle(connection, settings).run(Bundle(tmp_path / "b"), uri="x")
         wiring.parse_texts(connection, settings).run()
-        assert wiring.publish(connection, settings).run().held == 1
+        assert wiring.publish(connection, settings).run().held == 0
     return text_ref.sha256
 
 
@@ -68,10 +68,14 @@ def session(settings) -> tuple[TestClient, dict[str, str]]:
     return client, {"Authorization": f"Bearer {token}"}
 
 
-def test_a_curator_corrects_a_held_text_and_it_is_published_within_the_request(settings, tmp_path) -> None:
-    text_sha = held_document(settings, tmp_path)
+def test_a_curator_corrects_a_gap_and_the_text_leaves_the_gaps_list_within_the_request(settings, tmp_path) -> None:
+    text_sha = gappy_document(settings, tmp_path)
     client, auth = session(settings)
-    assert [row["document_id"] for row in client.get("/api/v1/held", headers=auth).json()["rows"]] == [DOC]
+    gaps = client.get("/api/v1/gaps", headers=auth).json()
+    assert [(row["document_id"], row["notes"]) for row in gaps["rows"]] == [
+        (DOC, [{"address": None, "note": "Pasal 2 missing"}])
+    ]
+    assert client.get("/api/v1/overview", headers=auth).json()["gaps"] == 1
     editable = client.get(f"/api/v1/documents/{DOC}/texts/{text_sha}/editable", headers=auth).json()
 
     response = client.post(
@@ -82,6 +86,7 @@ def test_a_curator_corrects_a_held_text_and_it_is_published_within_the_request(s
 
     assert response.status_code == 200
     assert response.json()["hold"] == [] and response.json()["published_at"] is not None
+    assert client.get("/api/v1/gaps", headers=auth).json()["rows"] == []
     with psycopg.connect(settings.database_url) as connection:
         published = connection.execute("SELECT sha256 FROM published.text").fetchall()
         assert published == [(hashlib.sha256(FIXED.encode()).hexdigest(),)]
@@ -91,7 +96,7 @@ def test_a_curator_corrects_a_held_text_and_it_is_published_within_the_request(s
 
 
 def test_a_curator_uploads_a_file_straight_to_the_store_and_adds_a_document(settings, tmp_path) -> None:
-    held_document(settings, tmp_path)
+    gappy_document(settings, tmp_path)
     client, auth = session(settings)
     link = client.post("/api/v1/uploads", headers=auth, json={"file_name": "f.pdf", "media_type": "application/pdf"})
 

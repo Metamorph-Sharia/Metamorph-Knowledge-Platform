@@ -30,6 +30,8 @@ from metamorph_platform.application.views import (
     EditableText,
     Facet,
     FieldRow,
+    GapPage,
+    GapRow,
     HeldPage,
     HeldRow,
     LinkRow,
@@ -51,6 +53,7 @@ from metamorph_platform.application.views import (
 )
 from metamorph_platform.domain.gate import Check, HoldReason
 from metamorph_platform.domain.loading import TEXT_MEDIA_TYPE
+from metamorph_platform.domain.publishing import ReviewNote
 
 PROVISIONS_SHOWN = 400
 PROBLEMS_SHOWN = 3
@@ -142,6 +145,19 @@ LEFT JOIN published.document p ON p.id = h.document_id
 WHERE %(check)s::text IS NULL OR h.reasons @> jsonb_build_array(jsonb_build_object('check', %(check)s::text))
 """
 
+# Published documents with gaps left to review, each with its notes in the text's reading order.
+_GAP_ROWS = """
+SELECT r.document_id, d.title, array_agg(ARRAY[r.address, r.note] ORDER BY r.ordinal)
+FROM published.review r JOIN published.document d ON d.id = r.document_id
+GROUP BY r.document_id, d.title ORDER BY r.document_id LIMIT %s OFFSET %s
+"""
+
+
+def _paged(page: int, total: int) -> tuple[int, int]:
+    """The page asked for, kept within the pages `total` rows fill; and how many there are (one, when empty)."""
+    pages = max(1, -(-total // PAGE_SIZE))
+    return min(max(page, 1), pages), pages
+
 
 class PostgresCurationViews:
     def __init__(self, connection: psycopg.Connection) -> None:
@@ -171,6 +187,7 @@ class PostgresCurationViews:
                 "SELECT count(*), count(p.id) FROM registry.hold h "
                 "LEFT JOIN published.document p ON p.id = h.document_id"
             ).fetchone()
+            (gaps,) = self.connection.execute("SELECT count(DISTINCT document_id) FROM published.review").fetchone()
         return Dashboard(
             health_status=health["status"] if health else None,
             health_taken_at=health["taken_at"] if health else None,
@@ -181,6 +198,7 @@ class PostgresCurationViews:
             recent_bundles=tuple(BundleRow(**row) for row in bundles),
             held=held,
             held_published=held_published,
+            gaps=gaps,
         )
 
     def held_page(self, check: str | None, page: int) -> HeldPage:
@@ -191,8 +209,7 @@ class PostgresCurationViews:
             ).fetchall()
         )
         (total,) = self.connection.execute(f"SELECT count(*) FROM ({_HELD_ROWS}) held", {"check": check}).fetchone()
-        pages = max(1, -(-total // PAGE_SIZE))
-        page = min(max(page, 1), pages)
+        page, pages = _paged(page, total)
         rows = self.connection.execute(
             _HELD_ROWS + " ORDER BY p.id IS NULL, h.held_since, h.document_id LIMIT %(limit)s OFFSET %(offset)s",
             {"check": check, "limit": PAGE_SIZE, "offset": (page - 1) * PAGE_SIZE},
@@ -209,12 +226,25 @@ class PostgresCurationViews:
             pages=pages,
         )
 
+    def gap_page(self, page: int) -> GapPage:
+        (total,) = self.connection.execute("SELECT count(DISTINCT document_id) FROM published.review").fetchone()
+        page, pages = _paged(page, total)
+        rows = self.connection.execute(_GAP_ROWS, (PAGE_SIZE, (page - 1) * PAGE_SIZE))
+        return GapPage(
+            rows=tuple(
+                GapRow(document_id, title, tuple(ReviewNote(address, note) for address, note in notes))
+                for document_id, title, notes in rows
+            ),
+            total=total,
+            page=page,
+            pages=pages,
+        )
+
     def review_page(self, kind: str, page: int) -> ReviewPage:
         (total,) = self.connection.execute(
             "SELECT count(*) FROM curation.review_item WHERE kind = %s AND state = 'open'", (kind,)
         ).fetchone()
-        pages = max(1, -(-total // PAGE_SIZE))
-        page = min(max(page, 1), pages)
+        page, pages = _paged(page, total)
         with self.connection.cursor(row_factory=dict_row) as cursor:
             rows = cursor.execute(
                 _REVIEW_ROWS + " WHERE r.kind = %s AND r.state = 'open' ORDER BY r.created_at, r.id LIMIT %s OFFSET %s",

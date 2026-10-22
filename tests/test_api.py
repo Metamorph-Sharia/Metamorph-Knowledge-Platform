@@ -139,12 +139,26 @@ def get(client: TestClient, path: str, **params: str):
 def test_the_overview_and_the_held_list_are_the_curation_read_models(world) -> None:
     client = world[0]
 
-    assert get(client, "/overview").json()["held"] == 95
+    overview = get(client, "/overview").json()
+    assert (overview["held"], overview["gaps"]) == (95, 7)
     held = get(client, "/held").json()
     assert held["rows"][0]["document_id"] == DOC
-    assert held["rows"][0]["reasons"] == [{"check": "structure", "detail": "Pasal 3 missing"}]
+    assert held["rows"][0]["reasons"] == [{"check": "structure", "detail": "no Pasal found"}]
     assert get(client, "/held?check=text").json()["rows"] == []
     assert get(client, "/held?check=nonsense").json() == {"error": "not_found", "message": "no check nonsense"}
+
+
+def test_the_gaps_list_names_each_published_document_left_to_review_and_where_its_gaps_are(world) -> None:
+    client = world[0]
+
+    gaps = get(client, "/gaps", page="1").json()
+
+    assert gaps["total"] == 1
+    assert gaps["rows"][0]["document_id"] == DOC
+    assert gaps["rows"][0]["notes"] == [
+        {"address": "pasal-4", "note": "pasal-4: ayat (2) missing"},
+        {"address": None, "note": "Pasal 9 missing"},
+    ]
 
 
 def test_the_review_queues_and_search(world) -> None:

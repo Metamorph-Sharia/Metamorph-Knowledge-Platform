@@ -30,7 +30,7 @@ from metamorph_platform.domain.structure import PARSER_VERSION
 pytestmark = pytest.mark.database
 ROLLOUT = 10
 CLEAN = "PERATURAN OTORITAS JASA KEUANGAN\nMEMUTUSKAN:\nPasal 1\nSatu.\nPasal 2\nDua.\n"
-GAPPY = CLEAN.replace("Pasal 2\nDua.", "Pasal 3\nTiga.")
+UNSTRUCTURED = "PERATURAN OTORITAS JASA KEUANGAN\nMEMUTUSKAN:\nSatu.\n"  # a problem both the rollout and the gate hold
 
 
 def with_text(sample, text: str):
@@ -51,19 +51,19 @@ def roll_out(db) -> None:
 
 
 def published_before_the_gate(db, tmp_path) -> None:
-    """A clean, a gappy, a text-less and an unidentified document, all published as the platform did before
+    """A clean, an unstructured, a text-less and an unidentified document, all published as the platform did before
     the gate: whatever the registry held."""
     blobs = MemoryBlobStore()
     documents = [
         with_text(document("regalert:clean", id="ojk:pojk:2014:1", number="1"), CLEAN),
-        with_text(document("regalert:gappy", id="ojk:pojk:2014:2", number="2"), GAPPY),
+        with_text(document("regalert:unstructured", id="ojk:pojk:2014:2", number="2"), UNSTRUCTURED),
         replace(document("regalert:faq", id="ojk:pojk:2014:3", number="3"), texts=(), provisions=()),
         with_text(unresolved("regalert:unknown"), CLEAN),
     ]
     with BundleWriter(tmp_path / "b", connector="ojk", connector_version="0.1.0", run_id="r1") as bundle:
         bundle.put_blob(PDF)
         bundle.put_text(CLEAN)
-        bundle.put_text(GAPPY)
+        bundle.put_text(UNSTRUCTURED)
         for each in documents:
             bundle.add(each)
     reviews = PostgresReviewQueue(db)

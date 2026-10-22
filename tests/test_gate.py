@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from metamorph_platform.domain.gate import MAX_PROBLEMS_SHOWN, Approval, Check, MainText, hold_reasons
+from metamorph_platform.domain.gate import Approval, Check, MainText, hold_reasons
 
 PARSER = "4"
 DOCUMENT = "ojk:pojk:2019:10"
 CLEAN = MainText("a" * 64, parsed_sha256="a" * 64, parsed_with=PARSER, problems=())
 GAPPY = MainText("b" * 64, parsed_sha256="b" * 64, parsed_with=PARSER, problems=("Pasal 3 missing",))
+UNSTRUCTURED = MainText("d" * 64, parsed_sha256="d" * 64, parsed_with=PARSER, problems=("no Pasal found",))
 
 
 def reasons(document_id=DOCUMENT, main_texts=(CLEAN,), approvals=(), roles=("main",)):
@@ -48,34 +49,42 @@ def test_a_main_text_whose_correction_is_not_parsed_yet_is_held():
     assert checks(main_texts=(corrected,)) == [Check.PARSED]
 
 
-def test_a_main_text_with_structure_problems_is_held_showing_them():
-    (reason,) = reasons(main_texts=(GAPPY,))
+def test_a_gap_in_a_main_texts_numbering_does_not_hold_it():
+    """A missing "Pasal 3" or "ayat (2)" is a warning, published for review (domain/publishing.py review_notes)."""
+    gaps = ("Pasal 3 missing", "pasal-4: ayat (2) missing", "penjelasan/pasal-9 explains an article the body lacks")
 
-    assert reason.check is Check.STRUCTURE and "Pasal 3 missing" in reason.detail
-
-
-def test_a_long_list_of_problems_is_shown_as_the_first_ones_and_how_many_more():
-    many = tuple(f"Pasal {n} missing" for n in range(1, MAX_PROBLEMS_SHOWN + 6))
-
-    (reason,) = reasons(main_texts=(MainText("b" * 64, parsed_sha256="b" * 64, parsed_with=PARSER, problems=many),))
-
-    assert f"Pasal {MAX_PROBLEMS_SHOWN} missing" in reason.detail
-    assert f"Pasal {MAX_PROBLEMS_SHOWN + 1} missing" not in reason.detail
-    assert "5 more" in reason.detail
+    assert reasons(main_texts=(MainText("b" * 64, parsed_sha256="b" * 64, parsed_with=PARSER, problems=gaps),)) == ()
 
 
-def test_problems_a_curator_approved_for_that_text_pass():
-    assert reasons(main_texts=(GAPPY,), approvals=(Approval(GAPPY.sha256, GAPPY.problems),)) == ()
+def test_a_regulation_parsed_without_any_article_is_held_showing_why():
+    """Material: the text has no provision to retrieve or cite."""
+    (reason,) = reasons(main_texts=(UNSTRUCTURED,))
+
+    assert reason.check is Check.STRUCTURE and reason.detail == "no Pasal found"
+
+
+def test_a_held_texts_gaps_are_not_shown_as_why_it_is_held():
+    both = MainText(
+        "d" * 64, parsed_sha256="d" * 64, parsed_with=PARSER, problems=("no Pasal found", "romawi 2 missing")
+    )
+
+    (reason,) = reasons(main_texts=(both,))
+
+    assert reason.detail == "no Pasal found"
+
+
+def test_a_material_problem_a_curator_approved_for_that_text_passes():
+    assert reasons(main_texts=(UNSTRUCTURED,), approvals=(Approval(UNSTRUCTURED.sha256, UNSTRUCTURED.problems),)) == ()
 
 
 def test_an_approval_covers_only_the_text_and_the_problems_it_was_given_for():
-    other_problems = Approval(GAPPY.sha256, ("Pasal 9 missing",))
-    other_text = Approval("c" * 64, GAPPY.problems)
+    other_problems = Approval(UNSTRUCTURED.sha256, ("Pasal 9 missing",))
+    other_text = Approval("c" * 64, UNSTRUCTURED.problems)
 
-    assert checks(main_texts=(GAPPY,), approvals=(other_problems, other_text)) == [Check.STRUCTURE]
+    assert checks(main_texts=(UNSTRUCTURED,), approvals=(other_problems, other_text)) == [Check.STRUCTURE]
 
 
 def test_every_failing_check_is_given_in_a_stable_order():
-    held = checks(document_id="unresolved:ojk:495b15adf6842288", main_texts=(CLEAN, GAPPY))
+    held = checks(document_id="unresolved:ojk:495b15adf6842288", main_texts=(CLEAN, UNSTRUCTURED))
 
     assert held == [Check.IDENTITY, Check.STRUCTURE]

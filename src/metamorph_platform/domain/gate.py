@@ -3,8 +3,9 @@
     identity   its ID is canonical, not a connector's placeholder
     text       it has a main text: the Indonesian text of its main file (or one with no file)
     parsed     today's parser has read each main text, as it is now (a curator's correction included)
-    structure  each main text's structure passed the quality checks, or a curator approved the problems
-               it has as they are (an approval holds for exactly that text and those problems)
+    structure  no main text has a material structure problem (a regulation with no article found), or a
+               curator approved the problems it has as they are (an approval holds for exactly that text and
+               those problems). A gap in the numbering is a warning, not a hold: it is published for review.
 
 A held document keeps the version last published, if any: only a version that passed is ever written.
 """
@@ -17,7 +18,7 @@ from enum import StrEnum
 
 from metamorph_contract import is_unresolved
 
-MAX_PROBLEMS_SHOWN = 20  # a text's first problems, not a cascade's thousands
+from metamorph_platform.domain.structure.quality import is_material
 
 
 class Check(StrEnum):
@@ -39,7 +40,7 @@ class MainText:
 
 @dataclass(frozen=True)
 class Approval:
-    """A curator's "publish as it is" for one text with exactly these problems."""
+    """A curator's "publish as it is" for one text with exactly these problems: its warnings are reviewed too."""
 
     text_sha256: str
     problems: tuple[str, ...]
@@ -69,15 +70,14 @@ def hold_reasons(
     for text in main_texts:
         if text.parsed_with != parser_version or text.parsed_sha256 != text.sha256:
             held.append(HoldReason(Check.PARSED, f"Not parsed with parser {parser_version} yet"))
-        elif text.problems and Approval(text.sha256, text.problems) not in approved:
-            held.append(HoldReason(Check.STRUCTURE, shown_problems(text.problems)))
+        elif unapproved := _material_problems_unapproved(text, approved):
+            held.append(HoldReason(Check.STRUCTURE, "; ".join(unapproved)))
     return tuple(held)
 
 
-def shown_problems(problems: Sequence[str]) -> str:
-    shown = "; ".join(problems[:MAX_PROBLEMS_SHOWN])
-    hidden = len(problems) - MAX_PROBLEMS_SHOWN
-    return f"{shown} (and {hidden} more)" if hidden > 0 else shown
+def _material_problems_unapproved(text: MainText, approved: set[Approval]) -> list[str]:
+    material = [problem for problem in text.problems if is_material(problem)]
+    return [] if Approval(text.sha256, text.problems) in approved else material
 
 
 def _no_main_text(acquired_roles: Iterable[str]) -> str:

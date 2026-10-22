@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 
 from metamorph_platform.domain.gate import Check, HoldReason
+from metamorph_platform.domain.publishing import ReviewNote
 
 REVIEW_KINDS = ("conflict", "unresolved_citation", "quarantine")  # structure and identity: the held list
 PAGE_SIZE = 50
@@ -50,6 +51,7 @@ class Dashboard:
     recent_bundles: tuple[BundleRow, ...]
     held: int = 0  # documents the publish gate holds back
     held_published: int = 0  # of those, the ones whose last good version is still published
+    gaps: int = 0  # documents published with gaps in their numbering left to review
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,23 @@ class HeldPage:
 
 
 HELD_CHECKS = tuple(check.value for check in Check)
+
+
+@dataclass(frozen=True)
+class GapRow:
+    """A published document whose main text has gaps in its numbering, left to review (domain/publishing.py)."""
+
+    document_id: str
+    title: str
+    notes: tuple[ReviewNote, ...]  # in the text's reading order
+
+
+@dataclass(frozen=True)
+class GapPage:
+    rows: tuple[GapRow, ...]
+    total: int
+    page: int
+    pages: int
 
 
 @dataclass(frozen=True)
@@ -473,6 +492,9 @@ class CurationViews(Protocol):
 
     def held_page(self, check: str | None, page: int) -> HeldPage:
         """Held documents, those whose last good version is still published first."""
+
+    def gap_page(self, page: int) -> GapPage:
+        """Published documents with gaps left to review, by ID."""
 
     def search(self, query: str, filters: SearchFilters, kind: str, page: int) -> SearchPage:
         """Documents whose metadata or published wording matches `query` (every document when it is empty),

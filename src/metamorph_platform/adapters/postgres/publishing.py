@@ -257,6 +257,10 @@ class PostgresPublication:
                 "VALUES (%s, %s, %s, %s, %s)",
                 [(document.id, e.address, e.status, e.effective_from, e.source) for e in document.status_events],
             )
+            cursor.executemany(
+                "INSERT INTO published.review (document_id, ordinal, address, note) VALUES (%s, %s, %s, %s)",
+                [(document.id, n, review.address, review.note) for n, review in enumerate(document.reviews)],
+            )
 
     def _log(self, document_id: str, change: str) -> None:
         self.connection.execute(

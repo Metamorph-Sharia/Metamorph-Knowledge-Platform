@@ -10,6 +10,7 @@ from typing import Any
 from metamorph_platform.domain.cross_references import cross_references
 from metamorph_platform.domain.gate import Approval, HoldReason, MainText, hold_reasons
 from metamorph_platform.domain.reading import passages, wording
+from metamorph_platform.domain.structure.quality import affected_address, is_material
 from metamorph_platform.domain.validity import SOURCE as LINKS
 
 PUBLISHABLE_RIGHTS = frozenset({"public", "licensed"})
@@ -142,6 +143,15 @@ class DocumentSnapshot:
 
 
 @dataclass(frozen=True)
+class ReviewNote:
+    """A structure warning published with the document, for review: on the provision it names, or on the document
+    when it names none. The document is published all the same (domain/gate.py)."""
+
+    address: str | None
+    note: str
+
+
+@dataclass(frozen=True)
 class PublishedDocument:
     id: str
     values: Mapping[str, Any]
@@ -153,6 +163,7 @@ class PublishedDocument:
     provisions: tuple[PublishedProvision, ...] = ()
     links: tuple[LinkRecord, ...] = ()
     status_events: tuple[StatusEventRecord, ...] = ()
+    reviews: tuple[ReviewNote, ...] = ()
 
 
 def must_be_removed(snapshot: DocumentSnapshot) -> bool:
@@ -166,10 +177,9 @@ def must_be_removed(snapshot: DocumentSnapshot) -> bool:
 
 def hold_reasons_of(snapshot: DocumentSnapshot, parser_version: str) -> tuple[HoldReason, ...]:
     """Why the publish gate holds the document back; empty when it may be published."""
-    corrected = {correction.corrects_sha256: correction.sha256 for correction in snapshot.corrections}
     return hold_reasons(
         snapshot.id,
-        tuple(replace(text, sha256=corrected.get(text.sha256, text.sha256)) for text in snapshot.main_texts),
+        _effective_main_texts(snapshot),
         snapshot.approvals,
         acquired_roles=(file.details.get("role", "file") for file in snapshot.files),
         parser_version=parser_version,
@@ -195,6 +205,25 @@ def publication_of(snapshot: DocumentSnapshot, texts: Mapping[str, str] | None =
         provisions=provisions,
         links=snapshot.links + _references_within(snapshot.id, provisions, texts or {}),
         status_events=snapshot.status_events,
+        reviews=_review_notes(snapshot),
+    )
+
+
+def _effective_main_texts(snapshot: DocumentSnapshot) -> tuple[MainText, ...]:
+    """The main texts as the parser read them: a curator's correction in place of the source's wording."""
+    corrected = {correction.corrects_sha256: correction.sha256 for correction in snapshot.corrections}
+    return tuple(replace(text, sha256=corrected.get(text.sha256, text.sha256)) for text in snapshot.main_texts)
+
+
+def _review_notes(snapshot: DocumentSnapshot) -> tuple[ReviewNote, ...]:
+    """The warnings left to review: a curator who approved a text's problems as they are has reviewed them."""
+    approved = set(snapshot.approvals)
+    return tuple(
+        ReviewNote(affected_address(problem), problem)
+        for text in _effective_main_texts(snapshot)
+        if Approval(text.sha256, text.problems) not in approved
+        for problem in text.problems
+        if not is_material(problem)
     )
 
 

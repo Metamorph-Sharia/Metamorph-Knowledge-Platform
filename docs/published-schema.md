@@ -28,8 +28,9 @@ ORDER BY document_id, changed_at DESC;
 | `text` | text of the document | `sha256`, `language`, `origin`, `method` (text_layer, ocr, source), `paged`, `of_file`, `storage_key`, `extraction` (how an engine read it: `engine`, `engine_version`, `tier`, `ocr_mode`, `pages_ocrd`, `pages_fallen_back`; null when the connector read it itself) |
 | `provision` | addressable unit of a text | `text_sha256`, `address`, `parent_address`, `kind`, `label`, `heading`, `ordinal`, `body`, `char_start`/`char_end`, `page_start`/`page_end`, `valid_to`, `search` (the body's `tsvector`, `simple` configuration, GIN-indexed), `heading_path` (each provision from the root down to this one: `{"BAB II KEGIATAN USAHA", "Pasal 5", "(1)"}`), `depth` (how many provisions hold it), `wording` (the body without its own heading lines and page furniture: what to read or embed) |
 | `link` | relation from this document to another | `type`, `from_address`, `to_document`, `to_address`, `effective_on`, `confidence` |
-| `provision_unit` (view) | **what to embed**: the smallest provisions with wording of their own | `document_id`, `address`, `kind`, `label`, `heading`, `heading_path`, `wording`, `text_sha256`, `page_start`/`page_end`, `valid_from`/`valid_to`; the document's `issuer`, `family`, `number`, `year`, `citation`, `title`, `status`, `effective_on`; `elucidation_address` (its `penjelasan/…`, if published) |
+| `provision_unit` (view) | **what to embed**: the smallest provisions with wording of their own | `document_id`, `address`, `kind`, `label`, `heading`, `heading_path`, `wording`, `text_sha256`, `page_start`/`page_end`, `valid_from`/`valid_to`; the document's `issuer`, `family`, `number`, `year`, `citation`, `title`, `status`, `effective_on`; `elucidation_address` (its `penjelasan/…`, if published); `under_review` (a review note is on it or on a provision holding it) |
 | `edge` (view) | **the graph**: every link and the structure, in one place | `type`, `from_document`, `from_address`, `to_document`, `to_address`, `effective_on`, `confidence` |
+| `review` | structure warning to review | `ordinal` (the text's reading order), `address` (the provision it names; null: the document), `note` ("pasal-4: ayat (2) missing", "Pasal 9 missing") |
 | `status_event` | status change in the document's history | `address` (null: the whole document), `status`, `effective_from`, `source` |
 | `change_log` | write to the schema | `document_id`, `change`, `changed_at` |
 
@@ -65,7 +66,7 @@ ORDER BY document_id, changed_at DESC;
 | `diktum-kedua` | A fatwa's second ruling |
 
 - A text can have several provision trees: BI sometimes publishes a regulation's body and its elucidation as separate PDFs. Group provisions by `text_sha256`.
-- Some texts' structure failed the platform's quality checks: a gap in the article numbers, missing paragraphs, or no articles at all (a captured web page instead of the regulation). They are still published, and queued for the Metamorph team to review.
+- Some texts' structure failed the platform's quality checks: a gap in the article numbers, or missing paragraphs. They are still published, with each gap in `review` until the Metamorph team corrects the text or approves the gap as genuine. A regulation with no articles at all (a captured web page instead of the regulation) is held back.
 
 ## Retrieval units and the graph
 
@@ -79,6 +80,8 @@ ORDER BY document_id, changed_at DESC;
 A grouping heading (`bab`, `bagian`, `paragraf`) and an article whose ayat carry its wording are context, not units. A unit's items (`huruf`, `angka`) stay addressable in `provision`, so a long unit, such as a Ketentuan Umum's definitions, can be split by them.
 
 **Embedding input.** We recommend `"{citation}, {heading_path joined by ' › '}\n{wording}"`, e.g. `POJK 10/POJK.05/2019, BAB II KEGIATAN USAHA › Pasal 5 › (1)` followed by the words. Re-embed a document when `change_log` says it changed.
+
+**Units under review.** A gap in a text's numbering, such as an article or ayat missing, or an elucidation of an article the body lacks, doesn't hold the document back. It is published, and the gap is a note in `review`, so retrieval can still use the text. The gap costs a unit's boundary, not its words: a lost heading's wording usually runs on in the unit before it. `under_review` marks the units a note is on. Only a regulation with no article found is held, since it has no provision to retrieve or cite.
 
 **Edges** (`edge`) are `link`'s rows plus three kinds of edge between one document's own provisions:
 

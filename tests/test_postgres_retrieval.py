@@ -117,3 +117,45 @@ def test_every_edge_is_in_one_place_links_and_structure_alike(db, tmp_path) -> N
         ("elucidates", "penjelasan/pasal-6", "pasal-6"),
         ("refers_to", "pasal-5", "pasal-6"),
     ]
+
+
+def test_a_gap_is_published_for_review_on_the_unit_it_names_and_the_document_stays_published(db, tmp_path) -> None:
+    published(db, tmp_path)
+    db.execute(
+        'UPDATE registry.text_version SET structure_problems = \'["pasal-1: ayat (2) missing", "Pasal 3 missing"]\''
+    )
+    publication = PostgresPublication(db)
+
+    report = Publish(publication, publication, BLOBS, holds=publication).run(everything=True)
+
+    assert report.held == 0
+    assert db.execute("SELECT address, note FROM published.review ORDER BY ordinal").fetchall() == [
+        ("pasal-1", "pasal-1: ayat (2) missing"),
+        (None, "Pasal 3 missing"),
+    ]
+    assert db.execute("SELECT address, under_review FROM published.provision_unit").fetchall() == [("pasal-1", True)]
+
+
+def test_a_unit_no_note_names_is_not_under_review(db, tmp_path) -> None:
+    published(db, tmp_path)
+
+    assert db.execute("SELECT under_review FROM published.provision_unit").fetchall() == [(False,)]
+
+
+def test_a_note_marks_the_provision_it_names_and_its_own_parts_not_what_it_quotes(db, tmp_path) -> None:
+    # an omnibus law's amending article quotes whole articles of other laws; "pasal-87: ayat (3) missing" is about
+    # pasal-87's own paragraphs, not the hundreds of provisions it quotes
+    published(db, tmp_path)
+    db.execute("DELETE FROM published.provision WHERE document_id = %s", (DOCUMENT,))
+    provisions(
+        db,
+        ("pasal-87", None, "pasal", ""),
+        ("pasal-87/ayat-2", "pasal-87", "ayat", "(2) Dua."),
+        ("pasal-87/pasal-5", "pasal-87", "pasal", ""),
+        ("pasal-87/pasal-5/ayat-1", "pasal-87/pasal-5", "ayat", "(1) Kutipan."),
+    )
+    db.execute("INSERT INTO published.review VALUES (%s, 0, 'pasal-87', 'pasal-87: ayat (3) missing')", (DOCUMENT,))
+
+    rows = db.execute("SELECT address, under_review FROM published.provision_unit ORDER BY address").fetchall()
+
+    assert rows == [("pasal-87/ayat-2", True), ("pasal-87/pasal-5/ayat-1", False)]

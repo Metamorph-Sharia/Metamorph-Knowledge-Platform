@@ -488,6 +488,11 @@
             "title": "Documents By Issuer",
             "type": "array"
           },
+          "gaps": {
+            "default": 0,
+            "title": "Gaps",
+            "type": "integer"
+          },
           "health_status": {
             "anyOf": [
               {
@@ -972,6 +977,64 @@
           "correction"
         ],
         "title": "FieldRow",
+        "type": "object"
+      },
+      "GapPage": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/GapRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "total",
+          "page",
+          "pages"
+        ],
+        "title": "GapPage",
+        "type": "object"
+      },
+      "GapRow": {
+        "description": "A published document whose main text has gaps in its numbering, left to review (domain/publishing.py).",
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewNote"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "notes"
+        ],
+        "title": "GapRow",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1726,6 +1789,32 @@
           "state"
         ],
         "title": "ReviewDecision",
+        "type": "object"
+      },
+      "ReviewNote": {
+        "description": "A structure warning published with the document, for review: on the provision it names, or on the document\nwhen it names none. The document is published all the same (domain/gate.py).",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "note"
+        ],
+        "title": "ReviewNote",
         "type": "object"
       },
       "ReviewPage": {
@@ -3671,6 +3760,54 @@
           }
         ],
         "summary": "Editable",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/gaps": {
+      "get": {
+        "operationId": "gaps_api_v1_gaps_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GapPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Gaps",
         "tags": [
           "reads"
         ]

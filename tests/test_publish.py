@@ -14,6 +14,7 @@ from metamorph_platform.domain.publishing import (
     LinkRecord,
     Override,
     ProvisionRecord,
+    ReviewNote,
     SourceRecord,
     StatusEventRecord,
     StoredContent,
@@ -28,7 +29,7 @@ from metamorph_platform.domain.publishing import (
 SOURCE = SourceRecord("ojk", "regalert:a", "https://regalert.today/document/a", "2026-10-13T02:34:23+00:00")
 PARSER = "4"
 PARSED_CLEAN = (MainText("a" * 64, "a" * 64, PARSER, ()),)
-GAPPY = (MainText("a" * 64, "a" * 64, PARSER, ("Pasal 3 missing",)),)
+UNSTRUCTURED = (MainText("a" * 64, "a" * 64, PARSER, ("no Pasal found",)),)  # material: it is held
 
 
 def snapshot(**changes) -> DocumentSnapshot:
@@ -100,7 +101,7 @@ def test_a_document_that_starts_failing_keeps_its_last_good_version() -> None:
     publication = MemoryPublication({"ojk:pojk:2014:5": snapshot()})
     publish(publication).run()
     good = publication.published["ojk:pojk:2014:5"]
-    publication.snapshots["ojk:pojk:2014:5"] = snapshot(main_texts=GAPPY, values={"title": "RELOADED"})
+    publication.snapshots["ojk:pojk:2014:5"] = snapshot(main_texts=UNSTRUCTURED, values={"title": "RELOADED"})
 
     report = publish(publication).run()
 
@@ -119,19 +120,50 @@ def test_a_failing_document_never_published_stays_out() -> None:
 
 
 def test_a_held_document_is_published_once_it_passes_and_its_hold_is_cleared() -> None:
-    publication = MemoryPublication({"ojk:pojk:2014:5": snapshot(main_texts=GAPPY)})
+    publication = MemoryPublication({"ojk:pojk:2014:5": snapshot(main_texts=UNSTRUCTURED)})
     publish(publication).run()
-    approved = (Approval("a" * 64, ("Pasal 3 missing",)),)
-    publication.snapshots["ojk:pojk:2014:5"] = snapshot(main_texts=GAPPY, approvals=approved)
+    approved = (Approval("a" * 64, ("no Pasal found",)),)
+    publication.snapshots["ojk:pojk:2014:5"] = snapshot(main_texts=UNSTRUCTURED, approvals=approved)
 
     assert publish(publication).run().counts()["added"] == 1
     assert publication.holds == {}
 
 
+def test_a_gap_in_a_main_text_is_published_as_a_note_to_review_on_what_it_names() -> None:
+    gaps = ("pasal-4: ayat (2) missing", "Pasal 9 missing", "penjelasan/pasal-12 explains an article the body lacks")
+
+    published = publication_of(snapshot(main_texts=(MainText("a" * 64, "a" * 64, PARSER, gaps),)))
+
+    assert published.reviews == (
+        ReviewNote("pasal-4", "pasal-4: ayat (2) missing"),
+        ReviewNote(None, "Pasal 9 missing"),  # an article lost has no provision to note it on: the document
+        ReviewNote("penjelasan/pasal-12", "penjelasan/pasal-12 explains an article the body lacks"),
+    )
+
+
+def test_a_clean_main_text_has_nothing_to_review() -> None:
+    assert publication_of(snapshot()).reviews == ()
+
+
+def test_gaps_a_curator_approved_as_they_are_are_reviewed_already() -> None:
+    gaps = ("Pasal 3 missing",)
+    approved = Approval("b" * 64, gaps)  # of the curator's correction, the text the parser read
+
+    published = publication_of(
+        snapshot(
+            main_texts=(MainText("a" * 64, "b" * 64, PARSER, gaps),),
+            corrections=(TextCorrection("a" * 64, "b" * 64, "blobs/bb/b"),),
+            approvals=(approved,),
+        )
+    )
+
+    assert published.reviews == ()
+
+
 def test_a_suppressed_document_is_removed_even_while_it_fails() -> None:
     publication = MemoryPublication({"ojk:pojk:2014:5": snapshot()})
     publish(publication).run()
-    publication.snapshots["ojk:pojk:2014:5"] = snapshot(main_texts=GAPPY, suppressed=True)
+    publication.snapshots["ojk:pojk:2014:5"] = snapshot(main_texts=UNSTRUCTURED, suppressed=True)
 
     assert publish(publication).run().counts()["removed"] == 1
     assert publication.holds == {}
