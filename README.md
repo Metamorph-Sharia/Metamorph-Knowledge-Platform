@@ -141,7 +141,7 @@ Measured on this Mac (M5, 24 GB) on 2026-10-21, with BPK files of 43 and 50 page
 Scans and noisy text layers, which `request_for` forces to OCR, are the slow case. The rates include the reader's 5-second poll, so they are what a connector gets.
 
 **Licenses:**
-- **MinerU** is under the MinerU Open Source License (Apache 2.0 with conditions). A service offered to third parties must say visibly that it uses MinerU.
+- **MinerU** is under the MinerU Open Source License (Apache 2.0 with conditions). A service offered to third parties must say visibly that it uses MinerU. The curation console's footer does ("Text extraction by MinerU").
 - **Its models** are Apache 2.0: `opendatalab/MinerU-4_models_torch` and `opendatalab/MinerU2.5-Pro-2605-1.2B`, which production runs.
 - **The Mac's VLM** comes from `jinzhenj/MinerU2.5-Pro-2605-1.2B-GGUF`, a third party's GGUF conversion of that model. Its card states no license, so it is for development only.
 

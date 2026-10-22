@@ -152,7 +152,7 @@ Deploying it is configuration. No code changes.
 **What keeps the hand-over valid.** The cache key is the PDF's SHA-256, the engine, MinerU's version plus the translation's revision (`4.0.12+t1`), the tier and the OCR mode. Until the deployed MinerU has taken over, keep these the same:
 - MinerU's version, and `TRANSLATION` in `adapters/mineru_reader.py`. A change to either makes every cached reading a miss.
 - The policy `request_for` and its 20% rule, which choose the tier and the OCR mode.
-- The server's options, which the key doesn't record: the `standard` tier and `--disable-image-analysis`. The production Dockerfile and `step9.sh` set the same ones.
+- The server's options, which the key doesn't record: the `standard` tier, `--disable-image-analysis`, and vLLM's PyTorch sampler (`VLLM_USE_FLASHINFER_SAMPLER=0`). The production Dockerfile and `step9.sh` set the same ones.
 
 Cleaning, rendering and the parser are **not** in the key. A fix to any of them after step 9 is applied by re-running the connectors' re-extraction against the cache, with no GPU.
 

@@ -27,6 +27,9 @@ MINERU_VERSION=4.0.12
 CUDA_13_DRIVER=580  # the default build (vLLM 0.28, torch for CUDA 13.0) needs it; older drivers get CUDA 12.8
 CONNECTORS="OJK-Source-Connector BPK-Source-Connector BI-Source-Connector DSN-MUI-Source-Connector"
 export PATH="$HOME/.local/bin:$PATH"
+# A training job's image points PYTHONPATH at its own Python 3.13, whose standard library then shadows the 3.12
+# and 3.11 of MinerU and the connectors ("cannot import name 'NoDefault' from '_typing'"): each brings its own
+unset PYTHONPATH PYTHONHOME
 logs="${LOGS:-$OUT/logs}"
 mkdir -p "$WORK" "$CACHE" "$OUT" "$logs"
 
@@ -34,13 +37,22 @@ log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$logs/step9.log"; }
 fail() { log "FAILED: $*"; exit 1; }
 
 unpack() {
-  workspace="$WORK/$(tar -tzf "$INPUTS/source.tgz" | head -n 1 | cut -d/ -f1)"
+  local quiet=()
+  tar --version | grep -q GNU && quiet=(--warning=no-unknown-keyword)  # macOS's extended-attribute headers
+  # an upload staged before stage-upload.sh left out macOS's metadata holds "._name" entries: the first may be one
+  workspace="$WORK/$(tar "${quiet[@]+"${quiet[@]}"}" -tzf "$INPUTS/source.tgz" | cut -d/ -f1 | grep -v '^\._' | head -n 1)"
   [ -f "$WORK/.unpacked" ] && return
   log "unpacking the source and the connectors' data"
-  tar -xzf "$INPUTS/source.tgz" -C "$WORK" || fail "source.tgz"
+  if [ -f "$INPUTS/checksums.sha256" ]; then  # a browser upload that stopped short leaves a truncated file
+    (cd "$INPUTS" && sha256sum --check --quiet checksums.sha256) \
+      || fail "an input differs from the Mac's (above): upload it again"
+  fi
+  rm -f "$WORK"/._*
+  tar "${quiet[@]+"${quiet[@]}"}" -xzf "$INPUTS/source.tgz" -C "$WORK" || fail "source.tgz"
   for repository in $CONNECTORS; do
-    tar -xzf "$INPUTS/data-$repository.tgz" -C "$workspace" || fail "data-$repository.tgz"
+    tar "${quiet[@]+"${quiet[@]}"}" -xzf "$INPUTS/data-$repository.tgz" -C "$workspace" || fail "data-$repository.tgz"
   done
+  find "$WORK" -name '._*' -type f -delete  # Finder metadata, unpacked as files beside the real ones
   touch "$WORK/.unpacked"
 }
 
@@ -72,17 +84,29 @@ start_mineru() {
     return
   fi
   url=http://127.0.0.1:8010
-  if ! curl -sf "$url/v1/health" >/dev/null; then
-    install_mineru
-    log "starting MinerU"
-    # no image analysis, as everywhere: it writes descriptions of pictures as if they were the page's text
-    nohup "$venv/bin/mineru-kit" api-server --host 127.0.0.1 --port 8010 --tier standard --preload-models \
-      --disable-image-analysis --concurrency "${MINERU_CONCURRENCY:-1}" >>"$logs/mineru.log" 2>&1 &
-  fi
+  curl -sf "$url/v1/health" >/dev/null && { log "MinerU is up: $(curl -s "$url/v1/health")"; return; }
+  # a server whose models failed to load keeps answering 503, and holds its upload directory: stop it first
+  pkill -f "mineru-kit api-server" && sleep 5
+  install_mineru
+  log "starting MinerU"
+  [ -f "$logs/mineru.log" ] && mv "$logs/mineru.log" "$logs/mineru.previous.log"
+  # No image analysis, as everywhere: it writes descriptions of pictures as if they were the page's text. vLLM's
+  # FlashInfer sampler compiles itself on first use, with build tools SageMaker's images lack: PyTorch's sampler
+  # needs none (and docker/mineru/Dockerfile sets the same).
+  VLLM_USE_FLASHINFER_SAMPLER=0 nohup "$venv/bin/mineru-kit" api-server --host 127.0.0.1 --port 8010 \
+    --tier standard --preload-models --disable-image-analysis --upload-dir "$WORK/mineru-uploads" \
+    --concurrency "${MINERU_CONCURRENCY:-1}" >"$logs/mineru.log" 2>&1 &
+  local server=$!
   for _ in $(seq 1 240); do
     curl -sf "$url/v1/health" >/dev/null && { log "MinerU is up: $(curl -s "$url/v1/health")"; return; }
+    kill -0 "$server" 2>/dev/null || fail "MinerU stopped: see $logs/mineru.log"
+    if grep -q "Model initialization failed" "$logs/mineru.log"; then
+      kill "$server"
+      fail "MinerU couldn't load its models: see $logs/mineru.log"
+    fi
     sleep 5
   done
+  kill "$server"
   fail "MinerU didn't start in 20 minutes: see $logs/mineru.log"
 }
 

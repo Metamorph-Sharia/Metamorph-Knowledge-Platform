@@ -134,14 +134,14 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
         ConnectorJob(
             dag_id="ingest_dsn_fatwa",
             schedule="0 4 * * 1",  # weekly: DSN-MUI publishes a few fatwas a year
-            collect="dsn sync --quiet; status=$?; python scripts/ocr_arabic.py; exit $status",
-            description="DSN-MUI fatwas: new or moved files, Arabic OCR, export",
+            collect="dsn sync --quiet",
+            description="DSN-MUI fatwas: new or moved files (MinerU reads their Arabic too), export",
             **dsn,
         ),
         ConnectorJob(
             dag_id="ingest_dsn_fatwa_full",
             schedule="0 16 1 * *",  # monthly, away from the weekly run
-            collect="dsn sync --all --refresh-index --quiet; status=$?; python scripts/ocr_arabic.py; exit $status",
+            collect="dsn sync --all --refresh-index --quiet",
             description="DSN-MUI fatwas, full pass: re-download everything to catch silent re-uploads",
             **dsn,
         ),

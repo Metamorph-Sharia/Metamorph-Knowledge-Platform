@@ -5,11 +5,14 @@
 FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.9.27 /uv /usr/local/bin/uv
 
-# The engines the models are fetched for and served with: vLLM for the VLM, torch for the small models.
+# The engines the models are fetched for and served with: vLLM for the VLM, torch for the small models. vLLM's
+# FlashInfer sampler compiles itself on first use, which needs ninja and nvcc: PyTorch's sampler needs neither, and
+# step 9 on SageMaker AI (docker/sagemaker/step9.sh) uses it too, so every reading is sampled the same way.
 ENV MINERU_HOME=/opt/mineru \
     MINERU_MODEL_SOURCE=huggingface \
     MINERU_MODEL_SMALL_BACKEND=torch \
     MINERU_MODEL_VLM_ENGINE=vllm \
+    VLLM_USE_FLASHINFER_SAMPLER=0 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 

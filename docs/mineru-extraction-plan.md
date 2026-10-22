@@ -1,6 +1,6 @@
 # Plan: MinerU extraction, clean text and full legal structure
 
-**Date:** 2026-10-20 · **Status:** steps 1–7 built (`packages/metamorph-pdf-text`; contract 2.1; migrations 0013 and 0014; parser 6; the retrieval units and edges; the four connectors wired behind `METAMORPH_PDF_ENGINE`; the MinerU service and its check); steps 9–12 to do · **Branch to start from:** `pdf-printed-lines`
+**Date:** 2026-10-20 · **Status:** steps 1–7 built (`packages/metamorph-pdf-text`; contract 2.1; migrations 0013 to 0015; parser 11; the retrieval units and edges; the four connectors wired behind `METAMORPH_PDF_ENGINE`; the MinerU service and its check). Step 9 measured 2026-10-22 ([report](../../Metamorph-EDA/2026-10-22-mineru-extraction/reports/report.md)): every gate passes but two, neither in a regulation's body, which the user accepted. **Live rollout done 2026-10-22** (Phase 7 of the SageMaker guide, run id `mineru-rollout`; backups in `Metamorph-Sharia/backups/2026-10-22-before-mineru-rollout/`): migration 15, parser 8, every PDF text read by MinerU from SageMaker's readings, and Fatwa 149 read on the Mac at the user's request. `METAMORPH_PDF_ENGINE=mineru` in `.env` and the DAGs unpaused are the user's. Steps 10–13 done and live (parser 11) on 2026-10-22. · **Branch to start from:** `pdf-printed-lines`
 
 ## Context
 
@@ -21,7 +21,7 @@ The text that results is still noisy where it matters:
 The figures are from `Metamorph-EDA/2026-10-20-pdf-printed-lines` (main texts only). Repeated page furniture adds to the noise. For example, the State Secretariat's print serial **`SK No 123456 A`** appears on about 16,000 lines across 30 BPK texts, and OCR mangles it as `SK No llN C` and `SK No IN C`.
 
 **Decisions (user, 2026-10-20):**
-1. Adopt MinerU in every connector that reads PDFs: BPK, BI, OJK and DSN-MUI, **without a pilot**. The first full re-extraction is the validation run, judged against the criteria in [Validation](#validation).
+1. Adopt MinerU in every connector that reads PDFs: BPK, BI, OJK and DSN-MUI, **without a pilot**. The first full re-extraction is the validation run, judged against the gates in [Validation](#validation).
 2. The goal is clean, readable text. It must keep every *Bab*, *Bagian*, *Paragraf*, *Pasal*, *Ayat* and each lettered or numbered item apart, for the knowledge graph, the embeddings and RAG retrieval.
 
 **Out of scope:**
@@ -215,13 +215,13 @@ The platform's own furniture rules (`domain/structure/text.py::is_page_furniture
 `render()` writes each page so that structure is visible from the lines alone. This is added to the "Text from a PDF" section of `CONTRACT_V2.md`:
 
 1. **One block, one paragraph.** A block's lines are joined into one line. A blank line separates blocks.
-2. **Headings on their own lines.** Each of these keeps its own line, with nothing joined onto it:
+2. **Headings keep the reader's lines.** A line the reader gave as a heading on its own keeps its line, and no wording is joined onto it:
    - `BAB IV` and its title on the next line;
    - `Bagian Kesatu`, `Paragraf 2`, `Pasal 5`;
    - `MEMUTUSKAN:`, `Menetapkan:`, `Menimbang`, `Mengingat`, `Memperhatikan`;
    - a fatwa's `Pertama` / `Kedua`.
 
-   A MinerU `title` block always renders as its own line. A text block that opens with one of these labels is split after the label.
+   A MinerU `title` block keeps its lines. Headings the reader ran onto one line with other text ("BAB I KETENTUAN UMUM Pasal 1", "Pasal 8 Ayat (1) Huruf a Cukup jelas.", "… Syariah; Mengingat : 1. …") stay as read: since step 13 the parser cuts them (`domain/structure/run_together.py`), and a title before an article's heading only when it is the next article.
 3. **Items start lines.** These open a new line, with the marker kept at its start:
    - an ayat `(1)`;
    - a letter `a.`;
@@ -233,7 +233,7 @@ The platform's own furniture rules (`domain/structure/text.py::is_page_furniture
 5. **Reading order** is MinerU's. Two-column pages and side notes come out as single columns.
 6. **Page markers.** `<!-- page N -->` opens each page, as now. Page numbers are one-based, from `page_idx + 1`.
 
-This layout is what grammar parser 5 already expects. With it, the parser no longer depends on heuristics such as `_RULING_BESIDE` or the lone-marker joins for MinerU texts, but they remain for `pymupdf` texts.
+This layout is what grammar parser 5 already expects. The parser's own rules for text read a line at a time (`_RULING_BESIDE`, the lone-marker joins, the run-together cuts) apply to every text, whichever engine read it.
 
 ## Preserving the full legal structure (platform, parser 6)
 
@@ -368,74 +368,55 @@ Each step is small, keeps all tests green, and ends in a state that can be commi
   - **Production:** `docker/mineru/Dockerfile` (`mineru[full]==4.0.12`, vLLM, the models in the image) and the compose service `mineru` (profile `mineru`, an NVIDIA reservation, a health check on `/v1/health`). They are written, not built here: there is no NVIDIA GPU to run them on.
   - **The measured rates** are in [Throughput](#deployment-and-dependencies). The model licenses are in the README.
   - **Fixed on the way:** MinerU marks the preamble's labels ("Mengingat", in a column of their own) as `aside_text`, which cleaning dropped as furniture. `shows_structure` now also keeps opening labels and rulings (`HEADING_LINE`). |
-| 9 | **Full re-extraction into a scratch database** (the validation run, replacing a pilot; run on AWS per [aws-step9-guide.md](aws-step9-guide.md), since this Mac needs 2–3 days): each connector re-extracts every file it holds with `mineru`; bundles are exported and loaded into a scratch Postgres, then parsed with parser 6. EDA harness `Metamorph-EDA/2026-10-2x-mineru-extraction/` (snapshot → re-extract → parse → compare, as in the printed-lines study). | EDA | every criterion in [Validation](#validation) is met, or a failing case is fixed in steps 1–7 and the run repeated. The user then runs the live re-extraction and load. |
-| 10 | **Reader check:** the curation web reader on a sample of each connector's texts; `domain/layout.py`'s coverage invariant holds (every kept word is in a block). | platform, web | e2e suite passes |
-| 11 | **Retire the old OCR paths** once the live run has passed: `OcrTextExtractor`, BI's Tesseract call, `ocr_arabic.py`, and `ocrmypdf` and Tesseract in the images. `pymupdf` stays as the rollback engine. | connectors | images rebuild smaller; the suites pass |
-| 12 | **Attribution and records:** "Text extraction by MinerU" in the curation web app's footer and in the README, as the license requires if the service is offered to third parties; the EDA report linked from the EDA index; this plan's status updated. | web, platform, EDA | done |
+| 9 | **Full re-extraction into a scratch database** (the validation run, replacing a pilot; run on AWS per [aws-step9-guide.md](aws-step9-guide.md), since this Mac needs 2–3 days): each connector re-extracts every file it holds with `mineru`; bundles are exported and loaded into a scratch Postgres, then parsed (parser 8). EDA harness `Metamorph-EDA/2026-10-22-mineru-extraction/` (snapshot → re-extract → parse → compare, as in the printed-lines study). | EDA | every gate in [Validation](#validation) is met; a gate that fails is fixed by a general rule in steps 1–7 and the run repeated, and the monitored measures are reported. The user then runs the live re-extraction and load. **Measured 2026-10-22** (`local-7`, from SageMaker's readings, parser 8): two gates miss, BI's noisy texts (31 → 33, appendix tables and attachments) and DSN-MUI's coverage (Fatwa 149 not read, today's text kept). Preamble labels read into the line before were fixed in the parser (parser 8). |
+| 10 | **Reader check:** the curation web reader on a sample of each connector's texts; `domain/layout.py`'s coverage invariant holds (every kept word is in a block). | platform, web | e2e suite passes. **Done 2026-10-22:** on the live corpus, every part of the 2,364 texts with provisions read through `ReadText`, and no passage loses or adds a word (629,552 passages; `09_reader_check.py`). Ten documents across the four connectors opened in the browser: each under a second, no error, no sideways scroll at phone width. Fixed on the way: a chapter's label repeated by a page's catchword ("BAB VI", then "BAB VI KETENTUAN …") became its title in 186 chapters (parser 10: 1 left); the reader takes a label and title on one line off the text; its problem notice names the first three and counts the rest. e2e: 29 passed. |
+| 11 | **Retire the old OCR paths** once the live run has passed: `OcrTextExtractor`, BI's Tesseract call, `ocr_arabic.py`, and `ocrmypdf` and Tesseract in the images. `pymupdf` stays as the rollback engine. | connectors | images rebuild smaller; the suites pass. **Done 2026-10-22:** BPK's `OcrTextExtractor` (ocrmypdf, Tesseract, Ghostscript, its `[extraction]` settings and machine check), BI's Tesseract fallback in `read_pages`, and DSN-MUI's `scripts/ocr_arabic.py` (and its call in the platform's DSN DAGs) are gone. `pymupdf` reads the text layer only, and pages without one need MinerU. DSN-MUI's export still reads Tesseract's earlier Arabic files for a fatwa MinerU hasn't read. Images: BPK 1.1 GB → 485 MB, BI 841 → 693 MB, DSN-MUI 642 → 491 MB. Suites: BPK 273, BI 103, DSN-MUI 41. |
+| 12 | **Attribution and records:** "Text extraction by MinerU" in the curation web app's footer and in the README, as the license requires if the service is offered to third parties; the EDA report linked from the EDA index; this plan's status updated. | web, platform, EDA | done. **Done 2026-10-22:** the console's footer reads "Text extraction by MinerU" (linked, checked in the e2e sign-in test); the web and platform READMEs say so; the EDA report is in the EDA index. |
+| 13 | **Legal structure in one owner, after this rollout** (decided 2026-10-22). `domain/rendering.py`'s legal-label splitting is frozen for this rollout: it re-splits "Pasal N", "Ayat (n)" and BAB headings run into other text, with exception lists, which puts regulation grammar inside extraction. It moves into the parser's grammars as a separate, tested change. Extraction then keeps to layout (a block a line, titles and list items on their own lines). The parser's own furniture handling (`structure/text.py`: running page numbers, the presidential letterhead) is retired too, once every PDF text comes through cleaning. It also takes the defect step 9 found most often: a section title and the next article's heading read as one line ("Hasil Uji Kemampuan dan Kepatutan Pasal 28", "Pasal 2 Persyaratan Bank"), which loses the article in 26 BI regulations. The grammar can accept such a heading when its number is the next in sequence, which tells it from "… sebagaimana dimaksud dalam Pasal 47". | pdf-text, platform | rendering has no legal-label rule; the step 9 measures are no worse; the suites pass. **Done 2026-10-22, live (parser 11):** rendering no longer re-splits a line: it joins a block's lines, keeps titles' lines, and starts a line at an item's marker or after a line the reader gave as a heading alone (the shared heading pattern cleaning protects; it keeps the reader's line break, and splits nothing). Its splitting moved to `domain/structure/run_together.py`, applied to every text, whichever engine read it, with three refinements that texts read a printed line at a time needed: a sentence ends in a word, number or bracket, not an item's one-letter marker; a label chain descends ("Ayat (7) Ayat (6)" isn't one); a sub-label isn't cut before an article ("Angka 58 Pasal 88", an omnibus law's change). A title before the next article's heading ("Hasil Uji Kemampuan dan Kepatutan Pasal 28", "Pasal 2 Persyaratan Bank") is cut only for the very next article (`Peraturan.article_beside`). On the live texts (`10_parse_diff.py`): BI's suspect texts 17 → 4, problems 81 → 12, OJK's 4 → 1, nothing lost but misplaced paragraphs. On the corpus rebuilt from the cache (`local-9`): every gate as in `local-7`; no text newly suspect, 13 fixed; review notes 467 (76 documents) → 395 (62). The parser's own furniture handling stays: curator-added texts and the `pymupdf` rollback don't come through cleaning. |
 
 ## Validation
 
-These criteria are measured over the **whole corpus** in step 9, against the `pymupdf` + printed-lines baseline (EDA 2026-10-20). They replace the pilot's go/no-go: if one fails, the rollout of that connector waits.
+These are measured over the **whole corpus** in step 9, against the `pymupdf` + printed-lines baseline (EDA 2026-10-20).
 
-### Fidelity: wording is not rewritten
+**The guiding principle (the user, 2026-10-22): build the simplest pipeline that keeps the legal information clean enough for vector retrieval.** The goal is clean enough text for RAG, not a perfect document conversion. Regulations and their formats keep changing, so a rule written for one document's quirk doesn't scale. Extraction quality is prioritised by its impact on retrieval and on answer accuracy:
+- **The body of a regulation matters most.** Its articles, paragraphs, items and elucidation, with their markers and legal references. Tables in the body count too.
+- **Appendix (lampiran) tables matter little.** They are rarely retrieved.
+- **A failed check need not fall back, or hold.** Fall back only on strong evidence that a reading is unreliable. A gap in the parser's numbering (an article or ayat missing) publishes the document and notes the gap for review on the unit it names (`published.review`, `provision_unit.under_review`). Only material corruption is held back: a regulation with no article found. See [engineering-principles.md](engineering-principles.md).
 
-| Check | Criterion |
-|---|---|
-| Born-digital pages (`ocr_mode` resolved `txt`): words missing or changed against PyMuPDF, excluding logged removals | **0** on pages kept. A failing page falls back; the fallback rate is reported per connector and must be **≤ 2%** of pages. |
-| Words removed by cleaning: each removal rule's sample of 50 removals, read by hand | **0** removals of wording |
-| Numbers (`\d+` tokens) per born-digital text, before and after, outside removed furniture | identical |
+### Gates: a connector's rollout waits only on these
 
-### Noise: what was asked to go
+| Gate | Why it matters for RAG | Criterion |
+|---|---|---|
+| Born-digital wording kept | answers quote the regulation's own words | **0** words missing or changed against the PDF's characters on pages kept (excluding logged removals). A failing page falls back, so this holds by construction. |
+| OCR good enough to embed and quote | misread words break both retrieval and quotes | on the gold set's prose pages, Latin character error rate below today's text and **≤ 1%** per connector, or the excess explained by marks outside the body (a signature, a stamp, a picture) |
+| Retrieval units intact | a provision is the unit that is embedded and cited | documents held for material corruption (a regulation with no article found) not above the baseline, per connector; texts with numbering gaps are monitored, as they are published for review. Every `provision_unit` has non-empty `wording` and a `heading_path` to its root. |
+| Retrieval units free of page noise | running heads, page numbers and serials dilute embeddings | no `provision_unit` holds a page marker, a print serial or a furniture line; noisy texts not above the baseline |
+| Operations | | every held PDF processed or its failure listed; a second extraction from the cache is byte-identical; `METAMORPH_PDF_ENGINE=pymupdf` reproduces the baseline byte for byte |
 
-| Check | Criterion |
-|---|---|
-| `SK No …` lines left | **0** |
-| Lines repeated in the top or bottom band on ≥ 30% of a document's pages | **0** outside the guard list |
-| Catchwords left at page ends | **0** |
-| Noisy texts (out-of-vocabulary rate > 8%, confusions > 10 per 1k tokens, or > 2 damaged headings), DSN-MUI measured on its Latin text with a fatwa vocabulary | DSN-MUI **≤ 8 of 164**; BPK **≤ 3 of 92**; OJK **≤ 1**; BI **≤ 8** (not worse) |
-| Glyph junk (CJK, Greek, or private-use characters in Latin text) | **0** characters in any connector's contract text |
+### Monitored: reported and triaged, never blocking on their own
 
-### OCR accuracy: a hand-checked gold set
+- the fallback rate per connector (most fallbacks are appendix form tables, and a fallback keeps the PDF's own words);
+- the review notes (numbering gaps) per connector, and the units under review;
+- catchwords, glyph junk and repeated band lines left;
+- born-digital numbers missing beyond removed furniture;
+- texts that turn suspect, or whose `pasal`/`ayat` counts change (read a sample, by retrieval impact, not each one);
+- resolved and unresolved citations;
+- table pages' error rates;
+- the Arabic error rate against Tesseract;
+- `huruf`/`angka` units, and headings on their own line;
+- throughput per tier.
 
-There are 100 pages, transcribed by hand from the official PDFs and kept in `Metamorph-EDA/2026-10-2x-mineru-extraction/gold/`:
+**Triage.** A defect is fixed when it loses or corrupts legal content in a regulation's body that retrieval or a quoted answer would use, and the fix is a general rule, not one document's quirk. Otherwise it is recorded. A marker the OCR lost shows up as a numbering gap, which is published with a review note.
+
+### The gold set
+
+100 pages, transcribed by hand from the official PDFs, are kept in `Metamorph-EDA/2026-10-22-mineru-extraction/gold/`:
 - 40 BPK pages (scans and publisher OCR);
 - 30 DSN-MUI pages (Latin and Arabic);
 - 15 OJK pages;
 - 15 BI pages.
 
-| Check | Criterion |
-|---|---|
-| Latin character error rate | **≤ 1%** per connector, and below today's text on the same pages |
-| Arabic character error rate (DSN-MUI `.ara.txt`) | below today's Tesseract output on the same pages |
-| Heading and marker accuracy (`Pasal N`, `(n)`, `a.`) on the gold pages | **100%** |
-
-### Structure: every unit kept apart
-
-| Check | Criterion |
-|---|---|
-| Suspect texts (structure problems) | not above the baseline of **52**, and no connector worse |
-| Clean texts that become suspect | **0** unexplained (each is read and classified) |
-| Pasal and ayat counts per clean text, parser 5 on baseline vs parser 6 on MinerU | identical, or the difference explained (a heading the old text lost) |
-| New `huruf`/`angka` units | Present in every Ketentuan Umum and Menimbang of the gold documents. Letter and number sequences have no gaps outside quoted amendments. |
-| Headings on their own line (`BAB`, `Bagian`, `Paragraf`, `Pasal`) | **100%** of parsed headings |
-
-### Links and readiness for downstream use
-
-| Check | Criterion |
-|---|---|
-| Resolved citations | not fewer than the baseline; unresolved not more |
-| In-document references | linked to items where the item exists |
-| `provision_unit` | every unit has a non-empty `wording` and a `heading_path` reaching its root; no unit body contains a page marker or a furniture line |
-| Reader | coverage invariant holds on all texts; e2e suite passes |
-
-### Operations
-
-| Check | Criterion |
-|---|---|
-| Files processed | 100% of held PDFs, or each failure listed with its MinerU error |
-| Reproducibility | a second re-extraction from the cache gives byte-identical texts |
-| Rollback | `METAMORPH_PDF_ENGINE=pymupdf` re-extraction gives byte-identical texts to the baseline |
-| Throughput | measured per tier and recorded in the EDA report |
+`08_gold_score.py` scores each page's character error rate, its order-free word error, and its markers kept, for today's text and for MinerU's, with prose pages and table pages apart.
 
 ## Rollback
 
@@ -456,16 +437,17 @@ There are 100 pages, transcribed by hand from the official PDFs and kept in `Met
 
 | Risk | Mitigation |
 |---|---|
-| The VLM rewrites or drops wording on born-digital pages | Page-level word alignment against PyMuPDF with fallback (pipeline step 4); the fidelity criteria |
+| The VLM rewrites or drops wording on born-digital pages | Page-level word alignment against PyMuPDF with fallback (pipeline step 4); the born-digital wording gate |
 | Furniture rules remove real text | Position plus repetition, heading guards, the removal log and a hand-read sample per rule |
-| Arabic quality is unknown | Gold pages and a criterion against today's Tesseract output. If it fails, DSN-MUI keeps `ocr_arabic.py` for the side file while MinerU still reads the Latin. |
+| Arabic quality is unknown | Gold pages, monitored against today's Tesseract output. If it is worse, DSN-MUI keeps `ocr_arabic.py` for the side file while MinerU still reads the Latin. |
 | MinerU changes fast (8 releases in 3 weeks; breaking CLI changes) | Exact pin; the version in every text's provenance; the cache keyed by version; the adapter is the only code touching its JSON |
 | Throughput on this Mac | `basic` for non-main files; resumable runs through the cache; production on a GPU host |
 | Model weight licenses | **Checked 2026-10-21:** `opendatalab/MinerU-4_models_torch` and `opendatalab/MinerU2.5-Pro-2605-1.2B`, which production runs, are Apache 2.0. The Mac's VLM is `jinzhenj/MinerU2.5-Pro-2605-1.2B-GGUF`, a third party's conversion whose card states no license, so it is used for development only. Recorded in the README. |
 | The VLM drops list markers on born-digital pages | Seen in step 8: on PADG 19/2024 the standard tier lost "c." and "1.", and both pages fell back to the text layer, as the wording check is meant to do. Step 9 measures how often pages fall back, by connector and tier. |
 | **Found in the 20-document BPK sample (2026-10-21), fixed before step 9** | Read on the Mac with MinerU, through BPK's own ExtractTexts, loaded and built live for review:<br>• **A page with no text layer in a born-digital file** (PERMA 14/2016's scanned signing page) fell back to the empty layer: MinerU OCRs a picture even when it reads the rest from the characters, and every word it found counted as "added". Such a page is now checked as OCR is (no noisier, not empty).<br>• **A heading stack read as one line** ("BAB I KETENTUAN UMUM Pasal 1", "Paragraf 1 Umum Pasal 2") hid the article from the parser: rendering now splits it, a heading a line.<br>• **The vision model narrating a picture** ("The chart displays …", "The image contains no discernible text …") made an OCR'd page noisier than its text layer, which had the articles out of order. Cleaning drops such English blocks on pages read from images (rule `generated`), and MinerU runs with `--disable-image-analysis` everywhere.<br>The main requests are unchanged, so the cache key and the frozen files are too. |
+| **Found in step 9 (2026-10-22)** | See the [report](../../Metamorph-EDA/2026-10-22-mineru-extraction/reports/report.md):<br>• **A preamble label read into the line before** ("… Unit Usaha Syariah; Mengingat : 1. …") lost the Mengingat section, and the legal basis, of 76 documents. Fixed in the parser (parser 8): a preamble label after a semicolon starts its own line. 3 are left, each for its own reason.<br>• **A section title and the next article's heading on one line**: 26 BI regulations lose an article boundary. Published with review notes; the parser fix is step 13.<br>• **Words run together in OCR'd tables and attachments** (PP 28/2025's KBLI tables, BI appendix tables and PADG attachments). Not in retrieval units; recorded.<br>• **Fatwa 149** has no SageMaker reading and keeps today's text. |
 | Text-layer artifacts make good pages fall back | The same PDF's text layer has an invisible "2" at the top of page 1, which MinerU rightly omits, and that alone sends the page back to the layer. The output is no worse than today's; step 9 counts such cases before any rule is loosened. |
-| No pilot: the first run is the evidence | Step 9 runs into a scratch database, and live data is touched only after every criterion passes |
+| No pilot: the first run is the evidence | Step 9 runs into a scratch database, and live data is touched only after every gate passes |
 | MinerU service down during an ingest | Tasks fail and retry (principle 4); Airflow's retries; no half-switched texts |
 
 ## Critical files

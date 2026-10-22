@@ -223,7 +223,7 @@ If it says it can't read your role from IAM, add `--role` with the ARN the conso
 
 | What | Where |
 |---|---|
-| **Status** | **Training → Training jobs → metamorph-step9-1**: **InProgress**, then **Completed**. The secondary status shows *Downloading*, *Training* and *Uploading*. |
+| **Status** | **Training → Training jobs →** your job (`metamorph-step9-1`, or the name you gave a restarted one): **InProgress**, then **Completed**. The secondary status shows *Downloading*, *Training* and *Uploading*. |
 | **Readings made so far** | In a terminal of `metamorph-files`: `aws s3 ls --recursive "s3://$BUCKET/metamorph-step9/checkpoints/" \| grep -c '\.json$'`. It grows towards 3,000 (one reading per PDF and request). |
 | **Logs, as they're written** | `aws s3 cp "s3://$BUCKET/metamorph-step9/checkpoints/logs/step9.log" -`. Swap `step9.log` for `bpk.log`, `ojk.log`, `bi-website.log`, `dsn-fatwa.log` or `mineru.log`. The job page's **View logs** opens the same output in CloudWatch, if your access includes it. |
 | **What it cost** | The job page shows **Billable time**: on demand, the whole training time. × $2.12 an hour is the job's cost. |
@@ -234,10 +234,12 @@ If it says it can't read your role from IAM, add `--role` with the ARN the conso
 
 ## Phase 6: the results, back to the Mac
 
-1. **Find the output.** When the job is **Completed**, its output is `s3://<bucket>/metamorph-step9/output/metamorph-step9-1/output/model.tar.gz`. It holds `step9-bundles.tgz` (the four connectors' bundles), `step9-mineru-cache.tgz` (every reading) and `logs/`.
+1. **Find the output.** When the job is **Completed**, its output is `s3://<bucket>/metamorph-step9/output/<job name>/output/model.tar.gz`, in a folder named after **the job that completed**: `metamorph-step9-2` if the first one failed and you started another. `aws s3 ls --recursive "s3://$BUCKET/metamorph-step9/output/" | grep model.tar.gz` lists them. It holds `step9-bundles.tgz` (the four connectors' bundles), `step9-mineru-cache.tgz` (every reading) and `logs/`.
 2. **Bring it to your browser's downloads.** In `metamorph-files` (start it again):
    ```bash
-   mkdir -p ~/results && aws s3 cp "s3://$BUCKET/metamorph-step9/output/metamorph-step9-1/output/model.tar.gz" - | tar -xzf - -C ~/results
+   JOB=metamorph-step9-1                         # the job that completed
+   mkdir -p ~/results && aws s3 cp "s3://$BUCKET/metamorph-step9/output/$JOB/output/model.tar.gz" - | tar -xzf - -C ~/results
+   grep "exit" ~/results/logs/step9.log          # each of the four connectors: exit 0
    ls -lh ~/results
    ```
    In JupyterLab's file browser, open `results`, right-click each of `step9-bundles.tgz` and `step9-mineru-cache.tgz`, and choose **Download**. Then stop the space.
@@ -288,6 +290,11 @@ Only after every validation criterion passes. The rollout reads SageMaker's read
 | NVIDIA driver older than 580 | The default build can't use the GPU | Nothing: `step9.sh` installs vLLM 0.19.1 (CUDA 12.8) then. Note which in the log: readings from different builds shouldn't mix in one corpus. |
 | No capacity for ml.g5.2xlarge | The job fails with `CapacityError` or `InsufficientInstanceCapacity` | Start it again later, with a new name; it resumes from `checkpoints/` |
 | The job hits its 2-day maximum | It stops as failed | A new job, same checkpoint location: it resumes |
+| `tar: …/._Metamorph-Sharia: Cannot open: Not a directory` | An upload staged before 2026-10-21 12:36 holds macOS's hidden `._` entries | Fixed in `stage-upload.sh` (it leaves them out) and `step9.sh` (it skips and deletes them). Upload the new `sagemaker-code.tar.gz`; the old data archives work as they are |
+| `gzip: stdin: unexpected end of file` while unpacking | A browser upload stopped short, so S3 holds a truncated file | `cd ~/inputs && sha256sum -c checksums.sha256` names it. Upload it again in 200 MB parts (`split -b 200m` on the Mac, `cat` in the space), check its sum, and copy it to S3. `step9.sh` now checks the sums before unpacking |
+| `No such file or directory: 'ninja'` in `mineru.log`, then `MinerU didn't start in 20 minutes` | vLLM 0.28's FlashInfer sampler compiles itself on first use, and SageMaker's image has no build tools | Fixed: `step9.sh` (and the production Dockerfile) set `VLLM_USE_FLASHINFER_SAMPLER=0`, PyTorch's own sampler. It also stops a server left answering 503, gives MinerU its own upload folder, and fails at once when the models don't load |
+| The training job fails at once: `ImportError: cannot import name 'NoDefault' from '_typing'` while building `jieba` | The training image's `PYTHONPATH` points at its Python 3.13, which leaks into MinerU's 3.12 | Fixed: `step9.sh` unsets `PYTHONPATH` and `PYTHONHOME`. Upload the new `sagemaker-code.tar.gz` to `code/` and start a job with a new name |
+| A connector's log ends in `ExtractionFailed: MinerU job … failed: Unsupported warp settings` (DSN-MUI's fatwa 149, the first run), or `unexpected Middle JSON: KeyError('blocks')` (BI, a blank page) | MinerU's GPU kernels fail on some input; MinerU leaves out a blank page's empty `blocks` | The translation reads a page without blocks as empty. BI and DSN-MUI now skip a file MinerU can't read, as BPK and OJK did, keep its text, and log it (`Tak terbaca` / `unreadable by MinerU`): the report lists each one with its error |
 | The space's disk fills | The go / no-go stops | Storage of 40 GB, or ask for a larger maximum |
 | Studio's idle shutdown stops the GPU space mid-check | The check stops | Run it again: it skips what it has done |
 | A connector fails in the job | Its bundle is missing from `step9-bundles.tgz` | Its log in `checkpoints/logs/`. Fix, then a new job with a new `RUN_ID`: the readings are reused. |
