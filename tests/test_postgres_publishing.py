@@ -35,7 +35,7 @@ Satu.
 Pasal 2
 Dua.
 """
-GAPPY = CLEAN.replace("Pasal 2\nDua.\n", "Pasal 3\nTiga.\n")
+UNSTRUCTURED = "PERATURAN OTORITAS JASA KEUANGAN\nMEMUTUSKAN:\nSatu.\nDua.\n"  # no Pasal found: material, held
 
 
 def sha(text: str) -> str:
@@ -79,19 +79,21 @@ def load_and_parse(db, blobs, tmp_path, text: str, run: str) -> None:
 
 
 def test_a_snapshot_carries_each_main_text_as_parsed_and_the_active_approvals(db, blobs, tmp_path) -> None:
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r1")
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r1")
     db.execute("INSERT INTO curation.curator (username, display_name) VALUES ('ana', 'Ana')")
     db.execute(
         "INSERT INTO curation.approval (document_id, text_sha256, problems, reason, author) "
-        "VALUES (%s, %s, '[\"Pasal 2 missing\"]', 'deleted by an amendment', 'ana')",
-        (DOCUMENT, sha(GAPPY)),
+        "VALUES (%s, %s, '[\"no Pasal found\"]', 'a decision without articles', 'ana')",
+        (DOCUMENT, sha(UNSTRUCTURED)),
     )
 
     snapshot = PostgresPublication(db).snapshot(DOCUMENT)
 
-    parsed = MainText(sha(GAPPY), parsed_sha256=sha(GAPPY), parsed_with=PARSER_VERSION, problems=("Pasal 2 missing",))
+    parsed = MainText(
+        sha(UNSTRUCTURED), parsed_sha256=sha(UNSTRUCTURED), parsed_with=PARSER_VERSION, problems=("no Pasal found",)
+    )
     assert snapshot.main_texts == (parsed,)
-    assert snapshot.approvals == (Approval(sha(GAPPY), ("Pasal 2 missing",)),)
+    assert snapshot.approvals == (Approval(sha(UNSTRUCTURED), ("no Pasal found",)),)
 
 
 def publish(db, blobs) -> dict[str, int]:
@@ -118,16 +120,16 @@ def test_a_document_that_starts_failing_keeps_its_last_good_version(db, blobs, t
     good = published_rows(db)
     logged = db.execute("SELECT count(*) FROM published.change_log").fetchone()
 
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r2")  # the source replaced its text with a damaged one
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r2")  # the source replaced its text with a damaged one
 
     assert publish(db, blobs)["held"] == 1
     assert published_rows(db) == good
     assert db.execute("SELECT count(*) FROM published.change_log").fetchone() == logged
-    assert holds(db) == [(DOCUMENT, [{"check": "structure", "detail": "Pasal 2 missing"}])]
+    assert holds(db) == [(DOCUMENT, [{"check": "structure", "detail": "no Pasal found"}])]
 
 
 def test_a_document_never_published_stays_out_until_it_passes(db, blobs, tmp_path) -> None:
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r1")
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r1")
     assert publish(db, blobs)["held"] == 1
     assert published_rows(db) == []
 
@@ -141,40 +143,40 @@ ANA = Curator("ana", "Ana")
 
 
 def test_a_curator_approves_the_problems_of_a_held_text_and_it_is_published(db, blobs, tmp_path) -> None:
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r1")
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r1")
     actions = PostgresCurationActions(db)
 
-    actions.approve(ANA, DOCUMENT, sha(GAPPY), "Pasal 2 was deleted by an amendment")
+    actions.approve(ANA, DOCUMENT, sha(UNSTRUCTURED), "a decision without articles")
 
     assert publish(db, blobs)["added"] == 1
     approved = db.execute("SELECT problems, author FROM curation.approval WHERE active").fetchall()
-    assert approved == [(["Pasal 2 missing"], "ana")]
+    assert approved == [(["no Pasal found"], "ana")]
     audited = db.execute("SELECT action, target, after FROM curation.audit_log").fetchall()
     assert audited == [
-        ("approve", {"document_id": DOCUMENT, "text_sha256": sha(GAPPY)}, {"problems": ["Pasal 2 missing"]})
+        ("approve", {"document_id": DOCUMENT, "text_sha256": sha(UNSTRUCTURED)}, {"problems": ["no Pasal found"]})
     ]
 
 
 def test_a_withdrawn_approval_holds_the_document_again_at_its_last_good_version(db, blobs, tmp_path) -> None:
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r1")
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r1")
     actions = PostgresCurationActions(db)
-    actions.approve(ANA, DOCUMENT, sha(GAPPY), "deleted by an amendment")
+    actions.approve(ANA, DOCUMENT, sha(UNSTRUCTURED), "a decision without articles")
     publish(db, blobs)
     good = published_rows(db)
 
-    actions.withdraw_approval(ANA, DOCUMENT, sha(GAPPY), "Pasal 2 is in the PDF after all")
+    actions.withdraw_approval(ANA, DOCUMENT, sha(UNSTRUCTURED), "its articles are in the PDF after all")
 
     assert publish(db, blobs)["held"] == 1
     assert published_rows(db) == good
     with pytest.raises(CurationRefused, match="no approval"):
-        actions.withdraw_approval(ANA, DOCUMENT, sha(GAPPY), "again")
+        actions.withdraw_approval(ANA, DOCUMENT, sha(UNSTRUCTURED), "again")
 
 
 def test_an_approval_lapses_when_the_texts_problems_change(db, blobs, tmp_path) -> None:
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r1")
-    PostgresCurationActions(db).approve(ANA, DOCUMENT, sha(GAPPY), "deleted by an amendment")
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r1")
+    PostgresCurationActions(db).approve(ANA, DOCUMENT, sha(UNSTRUCTURED), "a decision without articles")
     db.execute(  # a newer parser reads the same text differently
-        "UPDATE registry.text_version SET structure_problems = '[\"Pasal 4 missing\"]'"
+        'UPDATE registry.text_version SET structure_problems = \'["no Pasal found", "Pasal 9 missing"]\''
     )
     db.execute("UPDATE registry.document SET updated_at = now()")
 
@@ -188,36 +190,36 @@ def test_only_a_current_main_text_with_problems_can_be_approved(db, blobs, tmp_p
     with pytest.raises(CurationRefused, match="no structure problems"):
         actions.approve(ANA, DOCUMENT, sha(CLEAN), "x")
     with pytest.raises(CurationRefused, match="isn't a current main text"):
-        actions.approve(ANA, DOCUMENT, sha(GAPPY), "x")
+        actions.approve(ANA, DOCUMENT, sha(UNSTRUCTURED), "x")
 
 
 def test_the_held_list_and_the_document_page_show_why_and_what_is_still_published(db, blobs, tmp_path) -> None:
     load_and_parse(db, blobs, tmp_path, CLEAN, "r1")
     publish(db, blobs)
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r2")
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r2")
     publish(db, blobs)
     views = PostgresCurationViews(db)
 
     held = views.held_page(None, 1)
     (row,) = held.rows
-    assert (row.document_id, row.reasons) == (DOCUMENT, (HoldReason(Check.STRUCTURE, "Pasal 2 missing"),))
+    assert (row.document_id, row.reasons) == (DOCUMENT, (HoldReason(Check.STRUCTURE, "no Pasal found"),))
     assert row.published_at is not None
     assert dict(held.counts) == {"identity": 0, "text": 0, "parsed": 0, "structure": 1}
     assert views.held_page("text", 1).rows == ()
     assert (views.dashboard().held, views.dashboard().held_published) == (1, 1)
 
     page = views.document(DOCUMENT)
-    assert page.hold == (HoldReason(Check.STRUCTURE, "Pasal 2 missing"),) and page.published_at is not None
+    assert page.hold == (HoldReason(Check.STRUCTURE, "no Pasal found"),) and page.published_at is not None
 
 
 def test_the_document_page_shows_an_approval_only_while_it_covers_the_texts_problems(db, blobs, tmp_path) -> None:
-    load_and_parse(db, blobs, tmp_path, GAPPY, "r1")
-    PostgresCurationActions(db).approve(ANA, DOCUMENT, sha(GAPPY), "deleted by an amendment")
+    load_and_parse(db, blobs, tmp_path, UNSTRUCTURED, "r1")
+    PostgresCurationActions(db).approve(ANA, DOCUMENT, sha(UNSTRUCTURED), "a decision without articles")
     views = PostgresCurationViews(db)
 
     (text,) = views.document(DOCUMENT).texts
-    assert (text.approval.reason, text.approval.author) == ("deleted by an amendment", "ana")
+    assert (text.approval.reason, text.approval.author) == ("a decision without articles", "ana")
 
-    db.execute("UPDATE registry.text_version SET structure_problems = '[\"Pasal 4 missing\"]'")
+    db.execute('UPDATE registry.text_version SET structure_problems = \'["no Pasal found", "Pasal 9 missing"]\'')
     (text,) = views.document(DOCUMENT).texts
     assert text.approval is None

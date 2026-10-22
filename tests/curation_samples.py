@@ -18,6 +18,8 @@ from metamorph_platform.application.views import (
     EditableText,
     Facet,
     FieldRow,
+    GapPage,
+    GapRow,
     HeldPage,
     HeldRow,
     ReadableText,
@@ -33,6 +35,7 @@ from metamorph_platform.application.views import (
     StoredBytes,
 )
 from metamorph_platform.domain.gate import Check, HoldReason
+from metamorph_platform.domain.publishing import ReviewNote
 
 NOW = datetime(2026, 10, 15, 4, 36, tzinfo=UTC)
 DOC = "ojk:pojk:2019:10"
@@ -48,7 +51,7 @@ ROW = DocumentRow(
 HIT = DocumentHit(DOC, ROW.citation, ROW.title, "ojk", "pojk", "10", 2019, "regulation", "in_force", "held")
 TEXT_SHA = "a" * 64
 GAPPY_SHA = "b" * 64
-GAP = HoldReason(Check.STRUCTURE, "Pasal 3 missing")
+NO_ARTICLES = HoldReason(Check.STRUCTURE, "no Pasal found")  # material: held (a gap is published)
 GAPPY_TEXT = "Pasal 1\nSatu.\nPasal 3\nTiga.\n"
 FIXED_TEXT = "Pasal 1\nSatu.\nPasal 2\nDua.\nPasal 3\nTiga.\n"
 
@@ -65,13 +68,18 @@ class MemoryViews:
             (),
             held=95,
             held_published=4,
+            gaps=7,
         )
 
     def held_page(self, check: str | None, page: int) -> HeldPage:
-        rows = (HeldRow(DOC, ROW.title, (GAP,), published_at=NOW, held_since=NOW),)
+        rows = (HeldRow(DOC, ROW.title, (NO_ARTICLES,), published_at=NOW, held_since=NOW),)
         counts = tuple((c.value, 1 if c is Check.STRUCTURE else 0) for c in Check)
         shown = rows if check in (None, "structure") else ()
         return HeldPage(check, shown, counts, len(shown), 1, 1)
+
+    def gap_page(self, page: int) -> GapPage:
+        notes = (ReviewNote("pasal-4", "pasal-4: ayat (2) missing"), ReviewNote(None, "Pasal 9 missing"))
+        return GapPage((GapRow(DOC, ROW.title, notes),), total=1, page=page, pages=1)
 
     def review_page(self, kind: str, page: int) -> ReviewPage:
         summary = "Keputusan Presiden Nomor 84/P"
@@ -129,7 +137,7 @@ class MemoryViews:
             (),
             (),
             (),
-            hold=(GAP,),
+            hold=(NO_ARTICLES,),
             published_at=NOW,
             lapsed_corrections=("d" * 64,),
         )

@@ -2,7 +2,8 @@
 
     parse(text, grammar_for("ojk", "pojk"))  →  Structure(nodes=(Node("pasal-5/ayat-1", …), …), problems=[…])
 
-Addresses: pasal-115/ayat-1, bab-ii/bagian-kesatu, penjelasan/pasal-115, lampiran-i/bab-ii,
+Addresses: pasal-115/ayat-1, pasal-1/angka-3, pasal-5/ayat-1/huruf-a (items.py), bab-ii/bagian-kesatu,
+penjelasan/pasal-115, lampiran-i/bab-ii,
 pasal-i/pasal-115 (an article an amending regulation quotes), romawi-ii (a circular's section),
 diktum-kedua (a fatwa's ruling).
 """
@@ -12,7 +13,6 @@ from __future__ import annotations
 from metamorph_platform.domain.structure.builder import TreeBuilder
 from metamorph_platform.domain.structure.grammars import GRAMMARS
 from metamorph_platform.domain.structure.model import PARSER_VERSION, Node, Structure
-from metamorph_platform.domain.structure.quality import problems
 from metamorph_platform.domain.structure.text import lines
 
 CIRCULARS = {("ojk", "seojk"), ("bi", "sebi")}
@@ -31,6 +31,5 @@ def parse(text: str, grammar: str) -> Structure:
     recogniser = GRAMMARS[grammar](builder)
     for line in lines(text):
         recogniser.feed(line)
-        builder.passed(line)
     nodes = builder.nodes()
-    return Structure(grammar=grammar, nodes=nodes, problems=problems(grammar, nodes))
+    return Structure(grammar=grammar, nodes=nodes, problems=GRAMMARS[grammar].problems(nodes))

@@ -1,6 +1,7 @@
 """Turns "a heading at this level starts here" into a tree with spans: the grammars only recognise headings.
 
-Levels go down the hierarchy: 0 a section (penjelasan, lampiran), 1 a chapter, … 6 a quoted paragraph.
+Levels go down the hierarchy: 0 a section (penjelasan, lampiran), 1 a chapter, … 6 a quoted paragraph, 7 and
+deeper an item ("a.", "1.") and the items nested in it.
 Opening a node closes every open node at the same or a deeper level. A node ends with its last line of
 content, so the page break and running page number before the next heading stay out of it.
 """
@@ -13,6 +14,12 @@ from metamorph_platform.domain.structure.model import Node
 from metamorph_platform.domain.structure.text import Line, Pages
 
 MAX_HEADING_LENGTH = 150
+
+
+@dataclass(frozen=True)
+class OpenProvision:
+    address: str
+    kind: str
 
 
 @dataclass
@@ -38,7 +45,7 @@ class TreeBuilder:
         self._content_end = 0
 
     def passed(self, line: Line) -> None:
-        """Called for every content line, after the grammar has seen it."""
+        """Called for every content line (or piece of one: grammars.py `parts`), after the grammar has seen it."""
         self._content_end = line.end
 
     def empty(self) -> bool:
@@ -73,12 +80,24 @@ class TreeBuilder:
         self._addresses.add(address)
 
     def take_heading(self, line: Line) -> bool:
-        """The line after a bare heading ("BAB II" / "KEGIATAN USAHA") names it. True if it was used so."""
+        """The line after a bare heading ("BAB II" / "KEGIATAN USAHA") names it. True if it was used so. A page may
+        print its first words at the foot of the page before ("BAB II"), so the label can come again: alone, the title
+        is still to come; before the title ("BAB II KEGIATAN USAHA"), the title names it."""
         node, self._awaiting_heading = self._awaiting_heading, None
         if node is None or len(line.text) > MAX_HEADING_LENGTH:
             return False
-        node.heading = line.text
+        if line.text == node.label:
+            self._awaiting_heading = node
+            return True
+        repeated = line.text.startswith(node.label + " ")
+        node.heading = line.text[len(node.label) :].strip() if repeated else line.text
         return True
+
+    def holder(self, below: int) -> OpenProvision | None:
+        """The innermost open provision above `below` in the hierarchy: what a line at that level belongs to."""
+        return next(
+            (OpenProvision(node.address, node.kind) for node in reversed(self._open) if node.level < below), None
+        )
 
     def close(self, level: int) -> None:
         self._awaiting_heading = None

@@ -118,6 +118,7 @@ All routes are under `/api/v1` and need a bearer token, except `auth/session` an
 |---|---|---|
 | `GET /overview` | `Dashboard` | `GET /` |
 | `GET /held?check=&page=` | `HeldPage` | `GET /held` |
+| `GET /gaps?page=` | `GapPage`: published documents with numbering gaps to review, and where each is | (new, 2026-10-22) |
 | `GET /reviews?kind=&page=` | `ReviewPage` | `GET /review` |
 | `GET /documents?q=` | `DocumentRow[]` | `GET /documents` |
 | `GET /documents/{id}` | `DocumentView` | `GET /documents/{id}` |

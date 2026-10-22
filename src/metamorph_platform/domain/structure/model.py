@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-PARSER_VERSION = "4"  # bump when a grammar or the reading of references changes, so every text is parsed again
+PARSER_VERSION = "11"  # bump when a grammar or the reading of references changes, so every text is parsed again
 
 
 @dataclass(frozen=True)
@@ -12,7 +12,9 @@ class Node:
     """One provision: e.g. address "pasal-5/ayat-1", kind "ayat", label "(1)", text[char_start:char_end]."""
 
     address: str
-    kind: str  # menimbang | mengingat | bab | bagian | paragraf | pasal | ayat | penjelasan | lampiran | romawi …
+    kind: (
+        str  # menimbang | mengingat | bab | bagian | paragraf | pasal | ayat | huruf | angka | penjelasan | lampiran …
+    )
     label: str
     char_start: int
     char_end: int

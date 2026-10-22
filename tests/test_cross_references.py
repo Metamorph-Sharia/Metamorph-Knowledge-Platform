@@ -8,8 +8,9 @@ ADDRESSES = {"pasal-3", "pasal-3/ayat-1", "pasal-3/ayat-2", "pasal-4", "pasal-19
              "pasal-20", "pasal-22", "penjelasan/pasal-3"}  # fmt: skip
 
 
-def found(text: str, within: str | None = "pasal-4") -> list[tuple[str, str]]:
-    return [(text[r.start : r.end], r.address) for r in cross_references(text, within=within, addresses=ADDRESSES)]
+def found(text: str, within: str | None = "pasal-4", extra: set[str] = frozenset()) -> list[tuple[str, str]]:
+    references = cross_references(text, within=within, addresses=ADDRESSES | extra)
+    return [(text[r.start : r.end], r.address) for r in references]
 
 
 def test_an_article_and_its_paragraph_are_found_where_the_text_names_them() -> None:
@@ -29,9 +30,17 @@ def test_a_paragraph_named_alone_is_one_of_the_article_it_is_in_or_of_the_articl
     assert found("Pasal 19 ayat (2) dan/atau ayat (3)")[1] == ("ayat (3)", "pasal-19/ayat-3")
 
 
-def test_a_range_links_both_ends_and_a_letter_or_number_inside_an_article_links_the_article() -> None:
+def test_a_range_links_both_ends() -> None:
     assert found("Pasal 19 sampai dengan Pasal 22") == [("Pasal 19", "pasal-19"), ("Pasal 22", "pasal-22")]
-    assert found("Pasal 3 huruf a") == [("Pasal 3", "pasal-3")]
+
+
+def test_an_item_links_the_item_or_the_nearest_provision_up_the_text_has() -> None:
+    assert found("Pasal 3 huruf a") == [("Pasal 3 huruf a", "pasal-3")]  # the text has no such item
+    assert found("Pasal 3 huruf a", extra={"pasal-3/huruf-a"}) == [("Pasal 3 huruf a", "pasal-3/huruf-a")]
+    assert found("Pasal 1 angka 2", extra={"pasal-1", "pasal-1/angka-2"}) == [("Pasal 1 angka 2", "pasal-1/angka-2")]
+    assert found("ayat (2) huruf c", within="pasal-19/ayat-1", extra={"pasal-19/ayat-2/huruf-c"}) == [
+        ("ayat (2) huruf c", "pasal-19/ayat-2/huruf-c")
+    ]
 
 
 def test_an_article_of_another_instrument_is_not_this_documents() -> None:

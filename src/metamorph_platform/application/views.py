@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 
 from metamorph_platform.domain.gate import Check, HoldReason
+from metamorph_platform.domain.publishing import ReviewNote
 
 REVIEW_KINDS = ("conflict", "unresolved_citation", "quarantine")  # structure and identity: the held list
 PAGE_SIZE = 50
@@ -50,6 +51,7 @@ class Dashboard:
     recent_bundles: tuple[BundleRow, ...]
     held: int = 0  # documents the publish gate holds back
     held_published: int = 0  # of those, the ones whose last good version is still published
+    gaps: int = 0  # documents published with gaps in their numbering left to review
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,23 @@ class HeldPage:
 
 
 HELD_CHECKS = tuple(check.value for check in Check)
+
+
+@dataclass(frozen=True)
+class GapRow:
+    """A published document whose main text has gaps in its numbering, left to review (domain/publishing.py)."""
+
+    document_id: str
+    title: str
+    notes: tuple[ReviewNote, ...]  # in the text's reading order
+
+
+@dataclass(frozen=True)
+class GapPage:
+    rows: tuple[GapRow, ...]
+    total: int
+    page: int
+    pages: int
 
 
 @dataclass(frozen=True)
@@ -408,20 +427,36 @@ class ReadingProvision:
 
 @dataclass(frozen=True)
 class PassageReference:
-    """A reference in a passage to another provision of the same text ("Pasal 19 ayat (2)")."""
+    """A reference in a block to another provision of the same text ("Pasal 19 ayat (2)")."""
 
-    start: int  # where it is in the passage's text, in UTF-16 units (as the browser counts)
+    start: int  # where it is in the block's text, in UTF-16 units (as the browser counts)
     end: int
     address: str
 
 
 @dataclass(frozen=True)
+class PageStart:
+    at: int  # where in the block's text the page's first word is, in UTF-16 units
+    page: int  # of the official file
+
+
+@dataclass(frozen=True)
+class ReadingBlock:
+    """A paragraph or a list item of a passage, its printed lines joined (domain/layout.py)."""
+
+    text: str
+    marker: str | None = None  # a list item's number: "(1)", "a.", "16."
+    depth: int = 0  # a list item's nesting, from 0
+    pages: tuple[PageStart, ...] = ()
+    references: tuple[PassageReference, ...] = ()
+
+
+@dataclass(frozen=True)
 class ReadingPassage:
     address: str | None  # None: text outside every provision (a title, a closing)
-    text: str
     opens: bool  # the provision's first passage: where its heading goes
     titled: bool  # its heading lines were taken off the text: show the label and heading instead
-    references: tuple[PassageReference, ...] = ()
+    blocks: tuple[ReadingBlock, ...] = ()  # its wording, laid out for reading
 
 
 @dataclass(frozen=True)
@@ -457,6 +492,9 @@ class CurationViews(Protocol):
 
     def held_page(self, check: str | None, page: int) -> HeldPage:
         """Held documents, those whose last good version is still published first."""
+
+    def gap_page(self, page: int) -> GapPage:
+        """Published documents with gaps left to review, by ID."""
 
     def search(self, query: str, filters: SearchFilters, kind: str, page: int) -> SearchPage:
         """Documents whose metadata or published wording matches `query` (every document when it is empty),

@@ -201,7 +201,7 @@ def test_a_new_source_text_lapses_the_correction_and_the_corrected_version_stays
     publish(db, blobs)
     good = db.execute("SELECT sha256 FROM published.text").fetchall()
 
-    load(db, blobs, tmp_path, DAMAGED.replace("Tiga.", "Tiga, again."), "r2")  # still without Pasal 2
+    load(db, blobs, tmp_path, "PERATURAN OTORITAS JASA KEUANGAN\nMEMUTUSKAN:\nSatu.\n", "r2")  # no Pasal left: held
     parse(db, blobs)
 
     assert publish(db, blobs)["held"] == 1

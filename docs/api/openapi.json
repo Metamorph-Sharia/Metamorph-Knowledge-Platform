@@ -488,6 +488,11 @@
             "title": "Documents By Issuer",
             "type": "array"
           },
+          "gaps": {
+            "default": 0,
+            "title": "Gaps",
+            "type": "integer"
+          },
           "health_status": {
             "anyOf": [
               {
@@ -974,6 +979,64 @@
         "title": "FieldRow",
         "type": "object"
       },
+      "GapPage": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/GapRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "total",
+          "page",
+          "pages"
+        ],
+        "title": "GapPage",
+        "type": "object"
+      },
+      "GapRow": {
+        "description": "A published document whose main text has gaps in its numbering, left to review (domain/publishing.py).",
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewNote"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "notes"
+        ],
+        "title": "GapRow",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1312,8 +1375,26 @@
         "title": "NewId",
         "type": "object"
       },
+      "PageStart": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "at",
+          "page"
+        ],
+        "title": "PageStart",
+        "type": "object"
+      },
       "PassageReference": {
-        "description": "A reference in a passage to another provision of the same text (\"Pasal 19 ayat (2)\").",
+        "description": "A reference in a block to another provision of the same text (\"Pasal 19 ayat (2)\").",
         "properties": {
           "address": {
             "title": "Address",
@@ -1485,6 +1566,52 @@
         "title": "ReadableText",
         "type": "object"
       },
+      "ReadingBlock": {
+        "description": "A paragraph or a list item of a passage, its printed lines joined (domain/layout.py).",
+        "properties": {
+          "depth": {
+            "default": 0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "marker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marker"
+          },
+          "pages": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PageStart"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "references": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PassageReference"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ReadingBlock",
+        "type": "object"
+      },
       "ReadingPassage": {
         "properties": {
           "address": {
@@ -1498,21 +1625,17 @@
             ],
             "title": "Address"
           },
+          "blocks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ReadingBlock"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
           "opens": {
             "title": "Opens",
             "type": "boolean"
-          },
-          "references": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/PassageReference"
-            },
-            "title": "References",
-            "type": "array"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
           },
           "titled": {
             "title": "Titled",
@@ -1521,7 +1644,6 @@
         },
         "required": [
           "address",
-          "text",
           "opens",
           "titled"
         ],
@@ -1667,6 +1789,32 @@
           "state"
         ],
         "title": "ReviewDecision",
+        "type": "object"
+      },
+      "ReviewNote": {
+        "description": "A structure warning published with the document, for review: on the provision it names, or on the document\nwhen it names none. The document is published all the same (domain/gate.py).",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "note"
+        ],
+        "title": "ReviewNote",
         "type": "object"
       },
       "ReviewPage": {
@@ -3612,6 +3760,54 @@
           }
         ],
         "summary": "Editable",
+        "tags": [
+          "reads"
+        ]
+      }
+    },
+    "/api/v1/gaps": {
+      "get": {
+        "operationId": "gaps_api_v1_gaps_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GapPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Gaps",
         "tags": [
           "reads"
         ]

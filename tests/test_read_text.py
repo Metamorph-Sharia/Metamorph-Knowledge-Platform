@@ -8,9 +8,11 @@ from fakes import MemoryBlobReader
 
 from metamorph_platform.application.reading import ReadText
 from metamorph_platform.application.views import (
+    PageStart,
     PassageReference,
     ProvisionChange,
     ReadableText,
+    ReadingBlock,
     ReadingPassage,
     ReadingSource,
     SourceProvision,
@@ -66,16 +68,21 @@ def test_a_text_is_read_whole_when_it_is_short_with_its_outline_and_what_changed
     assert texts.asked == [(DOC, None)]  # the document's main text, unless another is asked for
     assert (reading.part, reading.parts) == (0, 1)
     assert reading.passages == (
-        ReadingPassage(None, "PERATURAN\n", opens=False, titled=False),
-        ReadingPassage("pasal-1", "Satu 😀.\n", opens=True, titled=True),
-        ReadingPassage("pasal-2", "", opens=True, titled=True),
-        ReadingPassage("pasal-2/ayat-1", "(1) Dua.\n", opens=True, titled=False),
+        ReadingPassage(None, opens=False, titled=False, blocks=(ReadingBlock("PERATURAN"),)),
+        ReadingPassage("pasal-1", opens=True, titled=True, blocks=(ReadingBlock("Satu 😀."),)),
+        ReadingPassage("pasal-2", opens=True, titled=True),
+        ReadingPassage("pasal-2/ayat-1", opens=True, titled=False, blocks=(ReadingBlock("Dua.", "(1)"),)),
         ReadingPassage(
             "pasal-2/ayat-2",
-            "(2) Tiga 😀 menurut ayat (1).\n",
             opens=True,
             titled=False,
-            references=(PassageReference(20, 28, "pasal-2/ayat-1"),),  # 😀 counts twice
+            blocks=(
+                ReadingBlock(
+                    "Tiga 😀 menurut ayat (1).",
+                    "(2)",
+                    references=(PassageReference(16, 24, "pasal-2/ayat-1"),),  # in its block; 😀 counts twice
+                ),
+            ),
         ),
     )
     assert [(p.address, p.depth, p.part) for p in reading.provisions] == [
@@ -102,10 +109,20 @@ def test_a_long_text_is_read_a_part_at_a_time_and_an_address_finds_its_part() ->
     first, last = reader.read(DOC), reader.read(DOC, at="pasal-2/ayat-2")
 
     assert first.parts == last.parts > 1
-    assert first.part == 0 and first.passages[0].text == "PERATURAN\n"
+    assert first.part == 0 and first.passages[0].blocks == (ReadingBlock("PERATURAN"),)
     assert last.part == last.parts - 1
     assert last.passages[-1].address == "pasal-2/ayat-2" and last.passages[-1].opens
     assert {p.address: p.part for p in last.provisions}["pasal-2/ayat-2"] == last.part
+
+
+def test_a_page_of_the_official_file_starts_where_its_first_word_is_counting_as_the_browser_does() -> None:
+    text = "Pasal 1\n😀 Satu dan\n<!-- page 2 -->\n2\ndua.\n"
+    reader = ReadText(Texts([SourceProvision("pasal-1", None, "pasal", "Pasal 1", None, 0, len(text), 1, 2, None, ())]),
+                      MemoryBlobReader({"blobs/aa/text": text.encode()}))  # fmt: skip
+
+    [block] = reader.read(DOC).passages[0].blocks
+
+    assert block == ReadingBlock("😀 Satu dan dua.", pages=(PageStart(12, 2),))  # 😀 counts twice
 
 
 def test_a_part_beyond_the_last_reads_the_last() -> None:

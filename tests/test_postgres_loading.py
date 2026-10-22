@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import psycopg
 import pytest
 from fakes import MemoryBlobStore
-from metamorph_contract import Bundle
+from metamorph_contract import Bundle, Extraction
 from platform_samples import document, unresolved, write_bundle
 
 from metamorph_platform.adapters.postgres.curation import PostgresOverrides
@@ -67,6 +69,27 @@ def test_a_bundle_becomes_registry_rows_and_then_published_rows(db, tmp_path) ->
     )
     assert one(db, "SELECT count(*) FROM published.text") == (1,)
     assert one(db, "SELECT change FROM published.change_log") == ("added",)
+
+
+def test_how_a_text_was_read_is_kept_and_published(db, tmp_path) -> None:
+    extraction = Extraction("mineru", "4.0.12+t1", "standard", "ocr", pages_ocrd=3, pages_fallen_back=1)
+    sample = document()
+    read = replace(sample, texts=tuple(replace(text, extraction=extraction) for text in sample.texts))
+
+    load(db, write_bundle(tmp_path / "b1", [read]))
+    publish(db)
+
+    expected = {**vars(extraction)}
+    assert one(db, "SELECT extraction FROM registry.text_version") == (expected,)
+    assert one(db, "SELECT extraction FROM published.text") == (expected,)
+
+
+def test_a_text_read_before_contract_2_1_has_no_extraction(db, tmp_path) -> None:
+    load(db, write_bundle(tmp_path / "b1", [document()]))
+    publish(db)
+
+    assert one(db, "SELECT extraction FROM registry.text_version") == (None,)
+    assert one(db, "SELECT extraction FROM published.text") == (None,)
 
 
 def test_reloading_and_republishing_an_unchanged_snapshot_is_a_no_op(db, tmp_path) -> None:

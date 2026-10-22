@@ -73,6 +73,11 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
       DATABASE_URL: postgresql+psycopg://bi:${BI_DB_PASSWORD:-bi-dev}@postgres:5432/bi   # BI connector's own store
       METAMORPH_ALERT_WEBHOOK_URL: ${METAMORPH_ALERT_WEBHOOK_URL:-}
+      METAMORPH_PDF_LINES: ${METAMORPH_PDF_LINES:-printed}   # connectors' PDF text: printed lines; "extracted" rolls back
+      METAMORPH_PDF_ENGINE: ${METAMORPH_PDF_ENGINE:-pymupdf}   # "mineru": MinerU reads connectors' PDFs; "pymupdf" rolls back
+      METAMORPH_MINERU_URL: ${METAMORPH_MINERU_URL:-http://host.docker.internal:8010}   # the MinerU service
+      METAMORPH_MINERU_API_KEY: ${METAMORPH_MINERU_API_KEY:-}
+      METAMORPH_MINERU_CACHE: ${METAMORPH_MINERU_CACHE:-data/mineru-cache}   # in each connector's mounted data/
     ports: ["${AIRFLOW_PORT:-8080}:8080"]
     volumes:
       - ./dags:/opt/airflow/dags
@@ -123,6 +128,28 @@ services:
       interval: 15s
       retries: 5
 
+  # Production only, on Linux with an NVIDIA GPU: `docker compose --profile mineru up -d mineru`, and the connectors
+  # are given METAMORPH_MINERU_URL=http://mineru:8010. On a Mac MinerU runs natively (README: Running MinerU).
+  mineru:
+    profiles: ["mineru"]
+    build: {context: docker/mineru}
+    image: metamorph/mineru:4.0.12
+    environment:
+      MINERU_API_KEY: ${METAMORPH_MINERU_API_KEY:-}
+    ports: ["127.0.0.1:8010:8010"]          # the server's loopback only: for an SSM tunnel and mineru_check
+    volumes:
+      - mineru-uploads:/uploads
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+    restart: unless-stopped
+    healthcheck:                            # ok once the models are loaded (--preload-models)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/v1/health')"]
+      interval: 30s
+      retries: 5
+      start_period: 300s
+
   ojk-connector:
     <<: *connector
     build: {context: .., dockerfile: OJK-Source-Connector/Dockerfile}
@@ -149,3 +176,4 @@ volumes:
   objectstore-data:
   bundles:
     name: metamorph-bundles                 # connectors write bundles here; `metamorph load` reads them
+  mineru-uploads:                           # the files MinerU was sent, kept a day (its --retention-seconds)

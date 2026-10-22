@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 from metamorph_pipeline.alerts import failure_message
-from metamorph_pipeline.jobs import BUNDLES, ConnectorJob, bundle_path, collect_command, ingest_jobs
+from metamorph_pipeline.jobs import BUNDLES, ConnectorJob, bundle_path, collect_command, ingest_jobs, passed_on
 
 WORKSPACE = "/Users/someone/Metamorph-Sharia"
 CREDENTIALS = "/Users/someone/.config/ojk-connector/credentials"
@@ -30,6 +30,19 @@ def test_each_connector_keeps_its_own_data_directory_and_ojk_its_token(jobs) -> 
         (CREDENTIALS, "/home/connector/.config/ojk-connector/credentials"),
         ("metamorph-bundles", BUNDLES),
     ]
+
+
+def test_every_connector_is_told_how_to_read_pdf_text_so_one_setting_rolls_it_back(jobs) -> None:
+    assert all("METAMORPH_PDF_LINES" in passed_on(job) for job in jobs.values())
+    assert all("METAMORPH_PDF_ENGINE" in passed_on(job) for job in jobs.values())
+    assert passed_on(jobs["ingest_bi"])[:1] == ("DATABASE_URL",)
+
+
+def test_every_setting_the_pdf_text_package_reads_is_passed_on() -> None:
+    from metamorph_pdf_text import SETTINGS
+    from metamorph_pipeline.jobs import CONNECTOR_SETTINGS
+
+    assert set(SETTINGS) <= set(CONNECTOR_SETTINGS)
 
 
 def test_bundles_are_kept_per_connector_and_run() -> None:

@@ -139,12 +139,26 @@ def get(client: TestClient, path: str, **params: str):
 def test_the_overview_and_the_held_list_are_the_curation_read_models(world) -> None:
     client = world[0]
 
-    assert get(client, "/overview").json()["held"] == 95
+    overview = get(client, "/overview").json()
+    assert (overview["held"], overview["gaps"]) == (95, 7)
     held = get(client, "/held").json()
     assert held["rows"][0]["document_id"] == DOC
-    assert held["rows"][0]["reasons"] == [{"check": "structure", "detail": "Pasal 3 missing"}]
+    assert held["rows"][0]["reasons"] == [{"check": "structure", "detail": "no Pasal found"}]
     assert get(client, "/held?check=text").json()["rows"] == []
     assert get(client, "/held?check=nonsense").json() == {"error": "not_found", "message": "no check nonsense"}
+
+
+def test_the_gaps_list_names_each_published_document_left_to_review_and_where_its_gaps_are(world) -> None:
+    client = world[0]
+
+    gaps = get(client, "/gaps", page="1").json()
+
+    assert gaps["total"] == 1
+    assert gaps["rows"][0]["document_id"] == DOC
+    assert gaps["rows"][0]["notes"] == [
+        {"address": "pasal-4", "note": "pasal-4: ayat (2) missing"},
+        {"address": None, "note": "Pasal 9 missing"},
+    ]
 
 
 def test_the_review_queues_and_search(world) -> None:
@@ -215,9 +229,10 @@ def test_a_text_reads_as_the_parser_cut_it_with_its_outline_and_a_missing_one_is
 
     assert (body["sha256"], body["part"], body["parts"]) == (GAPPY_SHA, 0, 1)
     assert [p["address"] for p in body["provisions"]] == ["pasal-1", "pasal-3"]
+    block = {"marker": None, "depth": 0, "pages": [], "references": []}
     assert body["passages"] == [
-        {"address": "pasal-1", "text": "Satu.\n", "opens": True, "titled": True, "references": []},
-        {"address": "pasal-3", "text": "Tiga.\n", "opens": True, "titled": True, "references": []},
+        {"address": "pasal-1", "opens": True, "titled": True, "blocks": [{**block, "text": "Satu."}]},
+        {"address": "pasal-3", "opens": True, "titled": True, "blocks": [{**block, "text": "Tiga."}]},
     ]
     assert get(client, f"/documents/{DOC}/reading", text="f" * 64).status_code == 404
     assert get(client, "/documents/ojk:pojk:1999:1/reading").status_code == 404

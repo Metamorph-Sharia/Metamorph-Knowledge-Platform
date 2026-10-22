@@ -1,6 +1,6 @@
-"""Reading a document's text as the parser cut it (domain/reading.py), a part at a time: a query, no rule decides
-anything here. The text's effective wording is read from the object store, so the reading is what the publish
-gate checked and what the assistant cites."""
+"""Reading a document's text as the parser cut it (domain/reading.py), a part at a time, laid out for reading
+(domain/layout.py): a query, no rule decides anything here. The text's effective wording is read from the object
+store, so the reading is what the publish gate checked and what the assistant cites."""
 
 from __future__ import annotations
 
@@ -8,14 +8,17 @@ from typing import Protocol
 
 from metamorph_platform.application.ports import BlobReader
 from metamorph_platform.application.views import (
+    PageStart,
     PassageReference,
+    ReadingBlock,
     ReadingPassage,
     ReadingProvision,
     ReadingSource,
     TextReading,
 )
 from metamorph_platform.domain.cross_references import cross_references
-from metamorph_platform.domain.reading import Passage, parts, passages, split_long, utf16_offsets
+from metamorph_platform.domain.layout import Block, layout
+from metamorph_platform.domain.reading import Passage, list_depth, parts, passages, split_long, utf16_offsets
 
 PART_BUDGET = 200_000  # characters a part: nine texts in ten are read whole (the median is 35,000)
 
@@ -56,22 +59,41 @@ class ReadText:
             part=shown,
             parts=last + 1,
             provisions=_outline(source, text, opened_in),
-            passages=_with_references(
+            passages=_laid_out(
                 [p for p, n in zip(read, numbers, strict=True) if n == shown],
                 {p.address for p in source.provisions},
             ),
         )
 
 
-def _with_references(shown: list[Passage], addresses: set[str]) -> tuple[ReadingPassage, ...]:
-    """Each passage, with its references to the text's other provisions (domain/cross_references.py)."""
-    read = []
-    for passage in shown:
-        found = cross_references(passage.text, within=passage.address, addresses=addresses)
-        units = utf16_offsets(passage.text, {offset for each in found for offset in (each.start, each.end)})
-        references = tuple(PassageReference(units[each.start], units[each.end], each.address) for each in found)
-        read.append(ReadingPassage(passage.address, passage.text, passage.opens, passage.titled, references))
-    return tuple(read)
+def _laid_out(shown: list[Passage], addresses: set[str]) -> tuple[ReadingPassage, ...]:
+    """Each passage laid out for reading (domain/layout.py), each block with its references to the text's other
+    provisions (domain/cross_references.py)."""
+    return tuple(
+        ReadingPassage(
+            passage.address,
+            passage.opens,
+            passage.titled,
+            tuple(
+                _block(block, passage.address, addresses, list_depth(passage.address)) for block in layout(passage.text)
+            ),
+        )
+        for passage in shown
+    )
+
+
+def _block(block: Block, within: str | None, addresses: set[str], nested: int) -> ReadingBlock:
+    """`nested`: how deep the passage's own list sits; a list in its wording sits deeper still."""
+    found = cross_references(block.text, within=within, addresses=addresses)
+    offsets = {at for at, _ in block.pages} | {offset for each in found for offset in (each.start, each.end)}
+    units = utf16_offsets(block.text, offsets)
+    return ReadingBlock(
+        block.text,
+        block.marker,
+        block.depth + nested if block.marker else block.depth,
+        tuple(PageStart(units[at], page) for at, page in block.pages),
+        tuple(PassageReference(units[each.start], units[each.end], each.address) for each in found),
+    )
 
 
 def _outline(source: ReadingSource, text: str, opened_in: dict[str | None, int]) -> tuple[ReadingProvision, ...]:

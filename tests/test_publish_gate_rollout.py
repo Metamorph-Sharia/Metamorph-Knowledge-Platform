@@ -25,11 +25,12 @@ from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.domain.loading import ReviewKind
 from metamorph_platform.domain.publishing import hold_reasons_of, publication_of
+from metamorph_platform.domain.structure import PARSER_VERSION
 
 pytestmark = pytest.mark.database
 ROLLOUT = 10
 CLEAN = "PERATURAN OTORITAS JASA KEUANGAN\nMEMUTUSKAN:\nPasal 1\nSatu.\nPasal 2\nDua.\n"
-GAPPY = CLEAN.replace("Pasal 2\nDua.", "Pasal 3\nTiga.")
+UNSTRUCTURED = "PERATURAN OTORITAS JASA KEUANGAN\nMEMUTUSKAN:\nSatu.\n"  # a problem both the rollout and the gate hold
 
 
 def with_text(sample, text: str):
@@ -50,19 +51,19 @@ def roll_out(db) -> None:
 
 
 def published_before_the_gate(db, tmp_path) -> None:
-    """A clean, a gappy, a text-less and an unidentified document, all published as the platform did before
+    """A clean, an unstructured, a text-less and an unidentified document, all published as the platform did before
     the gate: whatever the registry held."""
     blobs = MemoryBlobStore()
     documents = [
         with_text(document("regalert:clean", id="ojk:pojk:2014:1", number="1"), CLEAN),
-        with_text(document("regalert:gappy", id="ojk:pojk:2014:2", number="2"), GAPPY),
+        with_text(document("regalert:unstructured", id="ojk:pojk:2014:2", number="2"), UNSTRUCTURED),
         replace(document("regalert:faq", id="ojk:pojk:2014:3", number="3"), texts=(), provisions=()),
         with_text(unresolved("regalert:unknown"), CLEAN),
     ]
     with BundleWriter(tmp_path / "b", connector="ojk", connector_version="0.1.0", run_id="r1") as bundle:
         bundle.put_blob(PDF)
         bundle.put_text(CLEAN)
-        bundle.put_text(GAPPY)
+        bundle.put_text(UNSTRUCTURED)
         for each in documents:
             bundle.add(each)
     reviews = PostgresReviewQueue(db)
@@ -85,7 +86,8 @@ def ids(db, sql: str) -> set[str]:
 def test_the_rollout_withdraws_exactly_what_the_gate_would_hold(db, tmp_path) -> None:
     published_before_the_gate(db, tmp_path)
     snapshot = PostgresPublication(db).snapshot
-    would_hold = {d for d in ids(db, "SELECT id FROM published.document") if hold_reasons_of(snapshot(d), "4")}
+    published = ids(db, "SELECT id FROM published.document")
+    would_hold = {d for d in published if hold_reasons_of(snapshot(d), PARSER_VERSION)}
 
     roll_out(db)
 

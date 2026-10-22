@@ -248,9 +248,9 @@ class PostgresRegistry:
             (version_id,) = self.connection.execute(
                 """
                 INSERT INTO registry.text_version (document_id, sha256, of_file, connector, language, origin, method,
-                    rights, paged)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (document_id, sha256) DO UPDATE SET is_current = true
+                    rights, paged, extraction)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (document_id, sha256) DO UPDATE SET is_current = true, extraction = EXCLUDED.extraction
                 RETURNING id
                 """,
                 (
@@ -263,6 +263,7 @@ class PostgresRegistry:
                     text.method.value,
                     text.rights.value,
                     text.paged,
+                    Jsonb(asdict(text.extraction)) if text.extraction else None,
                 ),
             ).fetchone()
             versions[text.sha256] = version_id

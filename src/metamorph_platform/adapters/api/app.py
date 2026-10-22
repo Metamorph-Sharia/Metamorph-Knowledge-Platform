@@ -45,6 +45,7 @@ from metamorph_platform.application.views import (
     Dashboard,
     DocumentView,
     EditableText,
+    GapPage,
     HeldPage,
     ReviewPage,
     SearchFilters,
@@ -241,6 +242,10 @@ def create_api(
         if check and check not in HELD_CHECKS:
             raise NotFound(f"no check {check}")
         return svc.views.held_page(check or None, page)
+
+    @router.get("/gaps", tags=["reads"])
+    def gaps(who: Who, svc: Services, page: int = 1) -> GapPage:
+        return svc.views.gap_page(page)
 
     @router.get("/reviews", tags=["reads"])
     def reviews(who: Who, svc: Services, kind: str = REVIEW_KINDS[0], page: int = 1) -> ReviewPage:

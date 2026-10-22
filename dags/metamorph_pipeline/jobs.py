@@ -18,6 +18,17 @@ BUNDLES = "/bundles"
 BUNDLES_VOLUME = "metamorph-bundles"
 EXPORT_FAILED = 3  # the collect task's exit code when no bundle could be written
 CONTAINER_HOME = "/home/connector"
+# What every connector reads from its environment: how it reads a PDF's text. METAMORPH_PDF_LINES
+# (metamorph_contract.printed_lines), and the engine with MinerU's settings (metamorph_pdf_text.SETTINGS). In
+# Airflow's environment (compose.yaml), METAMORPH_PDF_LINES=extracted or METAMORPH_PDF_ENGINE=pymupdf rolls every
+# connector back at once.
+CONNECTOR_SETTINGS = (
+    "METAMORPH_PDF_LINES",
+    "METAMORPH_PDF_ENGINE",
+    "METAMORPH_MINERU_URL",
+    "METAMORPH_MINERU_API_KEY",
+    "METAMORPH_MINERU_CACHE",
+)
 OJK_CREDENTIALS = f"{CONTAINER_HOME}/.config/ojk-connector/credentials"
 
 
@@ -41,6 +52,11 @@ class ConnectorJob:
     secrets: tuple[str, ...] = ()  # environment variables passed through, never logged
     description: str = ""
     tags: tuple[str, ...] = ()
+
+
+def passed_on(job: ConnectorJob) -> tuple[str, ...]:
+    """The environment variables a job's container gets from Airflow's: its secrets, and every connector's settings."""
+    return (*job.secrets, *CONNECTOR_SETTINGS)
 
 
 def bundle_path(connector: str, run_id: str) -> str:
@@ -118,14 +134,14 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
         ConnectorJob(
             dag_id="ingest_dsn_fatwa",
             schedule="0 4 * * 1",  # weekly: DSN-MUI publishes a few fatwas a year
-            collect="dsn sync --quiet; status=$?; python scripts/ocr_arabic.py; exit $status",
-            description="DSN-MUI fatwas: new or moved files, Arabic OCR, export",
+            collect="dsn sync --quiet",
+            description="DSN-MUI fatwas: new or moved files (MinerU reads their Arabic too), export",
             **dsn,
         ),
         ConnectorJob(
             dag_id="ingest_dsn_fatwa_full",
             schedule="0 16 1 * *",  # monthly, away from the weekly run
-            collect="dsn sync --all --refresh-index --quiet; status=$?; python scripts/ocr_arabic.py; exit $status",
+            collect="dsn sync --all --refresh-index --quiet",
             description="DSN-MUI fatwas, full pass: re-download everything to catch silent re-uploads",
             **dsn,
         ),
