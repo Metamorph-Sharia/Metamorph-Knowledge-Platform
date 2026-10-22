@@ -84,6 +84,14 @@ def test_a_heading_split_by_a_page_break_is_still_taken_off_and_the_page_break_k
     assert passages(text, [chapter]) == [Passage("bab-i", "<!-- page 2 -->\n2\n", opens=True, titled=True)]
 
 
+def test_a_heading_printed_with_its_label_on_one_line_is_taken_off_and_so_is_a_catchword_repeating_it() -> None:
+    """BI: "BAB VI" at a page's foot (the next page's first words), then the page's "BAB VI KETENTUAN PENUTUP"."""
+    text = "BAB VI\n<!-- page 16 -->\nBAB VI KETENTUAN PENUTUP\n"
+    chapter = Unit("bab-vi", None, "BAB VI", "KETENTUAN PENUTUP", 0, len(text))
+
+    assert passages(text, [chapter]) == [Passage("bab-vi", "<!-- page 16 -->\n", opens=True, titled=True)]
+
+
 def test_a_paragraphs_number_stays_in_its_wording_where_it_hangs() -> None:
     text = "(1) Perusahaan wajib melapor.\n"
 

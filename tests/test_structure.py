@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from metamorph_platform.domain.structure import grammar_for, parse
+from metamorph_platform.domain.structure import grammar_for, parse, run_together
 
 POJK = """\
 PERATURAN OTORITAS JASA KEUANGAN
@@ -285,6 +285,50 @@ def test_a_decision_printed_beside_menetapkan_is_still_the_decision():
     assert addresses(parse(text, "peraturan")) == ["menimbang", "menimbang/huruf-a", "memutuskan", "pasal-1"]
 
 
+def test_a_preamble_label_read_into_the_line_before_still_opens_its_section():
+    """Read as one paragraph, the preamble's two columns put "Mengingat :" after the last consideration."""
+    text = (
+        "Menimbang : a. bahwa perlu menetapkan Peraturan tentang Rasio Pendanaan; Mengingat : 1. Undang-Undang "
+        "Nomor 23 Tahun 1999 tentang Bank Indonesia;\nMEMUTUSKAN:\nPasal 1\nSatu.\n"
+    )
+    bracketed = text.replace("Rasio Pendanaan;", "Sistem Elektronik (Online Single Submission);")  # Permeninves 5/2025
+    assert "mengingat/angka-1" in addresses(parse(bracketed, "peraturan"))
+
+    structure = parse(text, "peraturan")
+
+    assert addresses(structure) == [
+        "menimbang", "menimbang/huruf-a", "mengingat", "mengingat/angka-1", "memutuskan", "pasal-1"
+    ]  # fmt: skip
+    assert node(structure, "mengingat").char_start == text.index("Mengingat")
+    assert text[node(structure, "menimbang/huruf-a").char_end - 1] == ";"
+
+
+def test_a_chapters_title_line_repeating_its_label_names_it_by_the_title_alone():
+    """BI prints the next page's first words at a page's foot: "BAB II", then the page's "BAB II KETENTUAN PENUTUP"."""
+    text = (
+        "MEMUTUSKAN:\nBAB I\nKETENTUAN UMUM\nPasal 1\nSatu.\n"
+        "BAB II\n<!-- page 2 -->\nBAB II KETENTUAN PENUTUP\nPasal 2\nDua.\n"
+    )
+
+    structure = parse(text, "peraturan")
+
+    assert node(structure, "bab-ii").heading == "KETENTUAN PENUTUP"
+    assert node(structure, "bab-i").heading == "KETENTUAN UMUM"
+
+
+def test_a_chapters_label_repeated_alone_waits_for_its_title():
+    """A page's foot prints "BAB II", the page its own "BAB II", and the title follows on the line after."""
+    text = "MEMUTUSKAN:\nPasal 1\nSatu.\nBAB II\n<!-- page 2 -->\nBAB II\nKETENTUAN PENUTUP\nPasal 2\nDua.\n"
+
+    assert node(parse(text, "peraturan"), "bab-ii").heading == "KETENTUAN PENUTUP"
+
+
+def test_the_word_mengingat_in_a_sentence_is_not_a_label():
+    text = "Menimbang : a. bahwa perlu; mengingat bahwa pasar berubah;\nMEMUTUSKAN:\nPasal 1\nSatu.\n"
+
+    assert addresses(parse(text, "peraturan")) == ["menimbang", "menimbang/huruf-a", "memutuskan", "pasal-1"]
+
+
 def test_the_grammar_follows_the_kind_of_instrument():
     assert grammar_for("ojk", "pojk") == "peraturan"
     assert grammar_for("bi", "padg") == "peraturan"
@@ -413,6 +457,13 @@ def test_ocr_damaged_paragraph_markers_are_read_as_the_next_paragraph():
 
     assert paragraphs(damaged) == [
         "pasal-4/ayat-1", "pasal-4/ayat-2", "pasal-4/ayat-3", "pasal-4/ayat-4", "pasal-4/ayat-5",
+    ]  # fmt: skip
+
+
+def test_a_paragraph_marker_ocr_read_with_a_full_stop_is_the_paragraph():
+    # UU 27/2022 (Data Pribadi), Pasal 22 as MinerU OCR'd it: "(4). Dalam hal …"
+    assert paragraphs("Pasal 22\n(1) Satu.\n(2) Dua.\n(3) Tiga.\n(4). Dalam hal empat.\n(5) Lima.\n")[-2:] == [
+        "pasal-22/ayat-4", "pasal-22/ayat-5",
     ]  # fmt: skip
 
 
@@ -832,3 +883,105 @@ def test_the_elucidation_explains_items_as_the_body_numbers_them():
         "penjelasan/pasal-2", "penjelasan/pasal-2/ayat-1", "penjelasan/pasal-2/ayat-1/huruf-a",
     ]  # fmt: skip
     assert node(structure, "penjelasan/pasal-1/huruf-b/angka-1").label == "Angka 1"
+
+
+# Headings a reader ran onto one line with other text (MinerU reads a centred heading stack, or an elucidation's labels
+# and their wording, as one block). Extraction keeps the reader's lines; the parser cuts them (plan step 13).
+
+BODY = "MEMUTUSKAN:\n"
+
+
+def test_a_heading_stack_read_as_one_line_opens_each_heading():
+    # UU 24/1999; Perka PPATK 2012, PERMA 2/2015
+    structure = parse(
+        BODY + "BAB I KETENTUAN UMUM Pasal 1\nSatu.\nBagian Kesatu Umum\nParagraf 1 Umum Pasal 2\nDua.\n", "peraturan"
+    )
+
+    assert addresses(structure)[1:] == [
+        "bab-i", "pasal-1", "bab-i/bagian-kesatu", "bab-i/bagian-kesatu/paragraf-1", "pasal-2"
+    ]  # fmt: skip
+    assert node(structure, "bab-i").heading == "KETENTUAN UMUM"
+
+
+def test_a_title_in_capitals_read_with_the_headings_after_it_opens_them():
+    # UU 11/2008, Permenkominfo 19/2014; UU 37/2004, whose running head and page number ran into the stack
+    structure = parse(
+        BODY + "BAB I\nUMUM\nPasal 16\nEnam belas.\nBAB II\nTRANSAKSI ELEKTRONIK Pasal 17\nTujuh belas.\n"
+        "TATA CARA PEMBLOKIRAN Bagian Kesatu Penerimaan Laporan Pasal 18\nDelapan belas.\n",
+        "peraturan",
+    )
+
+    assert {"pasal-17", "bab-ii/bagian-kesatu", "pasal-18"} <= set(addresses(structure))
+    assert node(structure, "bab-ii").heading == "TRANSAKSI ELEKTRONIK"
+
+
+def test_an_elucidations_labels_read_with_their_wording_each_open():
+    # PADG 10/2026's elucidation, read by MinerU as one block; PP 82/2012
+    text = (
+        BODY + "Pasal 1\n(1) Satu, huruf:\na. a;\nb. b;\nc. c.\nPENJELASAN\nII. PASAL DEMI PASAL\n"
+        "Pasal 1 Ayat (1) Huruf a Cukup jelas. Huruf b Cukup jelas. Huruf c Kriteria umum.\n"
+    )
+
+    assert {"penjelasan/pasal-1/ayat-1/huruf-a", "penjelasan/pasal-1/ayat-1/huruf-c"} <= set(
+        addresses(parse(text, "peraturan"))
+    )
+
+
+def test_an_article_or_paragraph_run_into_the_sentence_before_it_opens():
+    # POJK 11/2020 ("Pasal 9 (1)" opens an article: a citation says "Pasal 9 ayat (1)"); POJK 8/2026
+    text = (
+        BODY + "Pasal 8\n(1) Data Pengguna.\n(2) Kewajiban:\nd. melakukan pengamanan data Pengguna. (3) Penunjukan "
+        "pegawai.\nbagian tidak terpisahkan dari Peraturan ini. Pasal 9 (1) Bank menyampaikan laporan bulan "
+        "Maret 2021. (2) Laporan disampaikan.\n"
+    )
+
+    found = set(addresses(parse(text, "peraturan")))
+    assert {"pasal-8/ayat-3", "pasal-9", "pasal-9/ayat-1", "pasal-9/ayat-2"} <= found
+
+
+def test_an_article_cited_in_a_sentence_stays_wording():
+    for sentence in (
+        "Pasal 5 Undang-Undang Nomor 10 Tahun 1998 diubah sehingga berbunyi",
+        "Pasal 5 diubah dan Pasal 6 dihapus sehingga berbunyi",
+        "Pasal 11 ayat (2), Pasal 13 ayat (6), Pasal 16 ayat (2), Pasal 17 ayat (3), dan Pasal 24 ayat (4)",
+        "c. bahwa ketentuan hukum acara perdata yang berlaku, Pasal 154 Reglemen Hukum Acara untuk Daerah Luar",
+        "sebagaimana dimaksud dalam Pasal 5",
+    ):
+        structure = parse(BODY + "Pasal 4\nEmpat " + sentence + "\n", "peraturan")
+        assert addresses(structure) == ["memutuskan", "pasal-4"], sentence
+
+
+def test_an_items_marker_is_not_a_sentence_ending_before_a_citation():
+    """POJK 45/2024, Pasal 59, printed a line to a line: "a. Angka 4 huruf a, … Peraturan Nomor IX.A.2"."""
+    text = (
+        BODY
+        + "Pasal 59\nketentuan dalam:\na. Angka 4 huruf a Peraturan Nomor IX.A.2;\nb. Pasal 2 Peraturan Nomor 31;\n"
+    )
+
+    assert {"pasal-59/huruf-a", "pasal-59/huruf-b"} <= set(addresses(parse(text, "peraturan")))
+
+
+def test_an_omnibus_elucidations_change_number_and_the_article_it_changes_stay_one_line():
+    """UU 4/2023: "Angka 58 Pasal 88" explains change 58, to article 88 of the law amended: not this law's Pasal 88."""
+    assert run_together.cuts("Angka 58 Pasal 88") == []
+    assert run_together.cuts("Ayat (7) Ayat (6) ......") == []  # POJK 2/2015's web text: a chain descends a level
+    assert run_together.cuts("Pasal 8 Ayat (1) Huruf a Cukup jelas.") != []
+
+
+def test_a_title_read_with_the_next_articles_heading_opens_that_article():
+    """BI's PBIs: a part's title and the article after it read as one line, the title not in capitals."""
+    text = (
+        BODY + "Pasal 27\nDua puluh tujuh.\nBagian Kedua\nHasil Uji Kemampuan dan Kepatutan Pasal 28\nDua puluh "
+        "delapan.\nPasal 29 Persyaratan Bank\nDua puluh sembilan.\n"
+    )
+
+    structure = parse(text, "peraturan")
+
+    assert {"pasal-28", "pasal-29"} <= set(addresses(structure))
+    assert not {"Pasal 28 missing", "Pasal 29 missing"} & set(structure.problems)
+
+
+def test_a_reference_to_the_next_article_ending_a_line_stays_wording():
+    text = BODY + "Pasal 27\nBank wajib menyampaikan laporan sebagaimana dimaksud dalam Pasal 28\nPasal 28\nDua.\n"
+
+    assert node(parse(text, "peraturan"), "pasal-28").char_start == text.rindex("Pasal 28")

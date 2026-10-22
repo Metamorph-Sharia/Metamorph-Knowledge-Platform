@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-PARSER_VERSION = "6"  # bump when a grammar or the reading of references changes, so every text is parsed again
+PARSER_VERSION = "11"  # bump when a grammar or the reading of references changes, so every text is parsed again
 
 
 @dataclass(frozen=True)

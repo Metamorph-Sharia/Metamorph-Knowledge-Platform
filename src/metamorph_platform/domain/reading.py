@@ -129,7 +129,8 @@ def _outside(read: list[Passage], piece: str) -> None:
 
 
 def _without_heading(piece: str, provision: Located) -> tuple[str, bool]:
-    names = {_name(name) for name in (provision.label, provision.heading) if name}
+    together = f"{provision.label} {provision.heading}" if provision.heading else None  # "BAB I KETENTUAN UMUM"
+    names = {_name(name) for name in (provision.label, provision.heading, together) if name}
     lines = piece.splitlines(keepends=True)
     taken = set()  # heading lines; a page break between them ("BAB I", the next page, its title) is passed over
     for index, line in enumerate(lines):

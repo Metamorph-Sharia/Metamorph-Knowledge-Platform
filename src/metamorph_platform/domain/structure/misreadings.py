@@ -16,7 +16,8 @@ _ROMAN_ARTICLE = re.compile(r"^(?:Pasal|PASAL)\s+([IVXLC]+)$")
 _L_READ_AS_DIGIT = re.compile(rf"^Pasa([17Il|i])\s*(\d+{_INSERTED})$")  # "Pasa136", "Pasa722", "PasaI 5"
 _L_DROPPED = re.compile(rf"^Pasa\s*(\d+{_INSERTED})$")  # "Pasa12"
 _CONFUSED_NUMBER = re.compile(r"^(?:Pasal|PASAL)\s+([\dOoIl][\dOoIl ]{0,5})$")  # "Pasal 1O", "Pasal 2 I", "Pasal 1 1"
-_PARAGRAPH = re.compile(r"^[(\[{]\s*([\dOoIl]{1,2})\s*([)\]}])?(?=\s|$)")  # "(I)", "{2)", "( 1)", "(21"
+# "(I)", "{2)", "( 1)", "(21", and "(4)." with a full stop OCR added
+_PARAGRAPH = re.compile(r"^[(\[{]\s*([\dOoIl]{1,2})\s*([)\]}])?\.?(?=\s|$)")
 # "l2l": both brackets read as l. A closing one is required: "l9 ayat (1)" is a misread number, not a paragraph.
 _PARAGRAPH_IN_LS = re.compile(r"^l(\d{1,2})[l)](?=\s|$)")
 _ONE = {"I", "l"}  # a paragraph marker's lone I or l: "(I)", "(l)"

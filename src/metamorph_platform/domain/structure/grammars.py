@@ -21,12 +21,16 @@ the one that continues the sequence is kept.
 
 from __future__ import annotations
 
+import itertools
 import re
 
+from metamorph_platform.domain.structure import run_together
 from metamorph_platform.domain.structure.builder import TreeBuilder
 from metamorph_platform.domain.structure.items import ITEM, Items
 from metamorph_platform.domain.structure.misreadings import article_numbers, paragraph_numbers
-from metamorph_platform.domain.structure.text import CATCHWORD, Line, is_roman, next_line, roman_value
+from metamorph_platform.domain.structure.model import Node
+from metamorph_platform.domain.structure.quality import circular_problems, regulation_problems
+from metamorph_platform.domain.structure.text import CATCHWORD, Line, article_key, is_roman, next_line, roman_value
 
 SECTION, CHAPTER, PART, GROUP, ARTICLE, PARAGRAPH, QUOTED_PARAGRAPH = range(7)
 MAX_LABEL = 40
@@ -38,6 +42,11 @@ MAX_INSTRUCTION_JUMP = 3  # an amendment's instructions run 1, 2, 3 …; OCR dro
 MAX_SECTION_JUMP = 3  # a circular has a handful of sections: a titled one further ahead is a quoted one
 
 _PREAMBLE = re.compile(r"^(menimbang|mengingat|memperhatikan)\b", re.IGNORECASE)
+# A title and the next article's heading read as one line ("Hasil Uji Kemampuan dan Kepatutan Pasal 28"), or the
+# heading and a short title ("Pasal 2 Persyaratan Bank"): a title has no sentence's punctuation, and ends in a word
+# with a capital, so "… sebagaimana dimaksud dalam Pasal 28" is wording. Taken only for the very next article.
+_TITLE_THEN_ARTICLE = re.compile(r"^(?P<title>(?:[^\s,.;:()]+\s+)*[A-Z][^\s,.;:()]*)\s+Pasal\s+(?P<number>\d+[A-Z]?)$")
+_ARTICLE_THEN_TITLE = re.compile(r"^Pasal\s+(?P<number>\d+[A-Z]?)\s+(?P<title>[A-Z][a-z]+(?:\s+[A-Za-z]+){0,6})$")
 _DECISION = re.compile(r"^(?:Menetapkan\s*:\s*)?MEMUTUSKAN\b")  # bi:padg:2024:18 prints both on one line
 _SIGNED = re.compile(r"^(ditetapkan|disahkan)\s+di\b", re.IGNORECASE)
 _DOTTED_PASAL = re.compile(r"^(?:Pasal|PASAL)\s+(\d+)\.$")
@@ -92,14 +101,14 @@ def _continuing(numbers: list[str], last: int) -> str:
     return min(above, key=article_key, default=numbers[0])
 
 
-def article_key(number: str) -> tuple[int, str]:
-    """ "82A" → (82, "a"): an inserted article sorts after the one it follows."""
-    digits = re.match(r"\d+", number)[0]
-    return int(digits), number[len(digits) :].lower()
-
-
 class _Grammar:
-    """What every shape shares: the preamble, the annexes, and the heading on the line after a bare one."""
+    """What every shape shares: the preamble, the annexes, and the heading on the line after a bare one. A shape of
+    document is one grammar: how its lines are recognised (`step`), and how its tree may have lost a part
+    (`problems`, quality.py)."""
+
+    @staticmethod
+    def problems(nodes: tuple[Node, ...]) -> list[str]:
+        return []
 
     def __init__(self, builder: TreeBuilder) -> None:
         self.b = builder
@@ -111,9 +120,30 @@ class _Grammar:
         self.last_annex_chapter = 0
 
     def feed(self, line: Line) -> None:
-        if not self.step(line):
-            self.b.take_heading(line)
-        self.previous = line.text
+        for part in self.parts(line):
+            if not self.step(part):
+                self.b.take_heading(part)
+            self.b.passed(part)
+            self.previous = part.text
+
+    def parts(self, line: Line) -> list[Line]:
+        """The line, or its pieces when headings were read onto it with other text (run_together.py): each heading
+        starts a line of its own."""
+        return self.cut(line, run_together.cuts(line.text))
+
+    def cut(self, line: Line, at: list[int]) -> list[Line]:
+        """The line cut at `at` (offsets in its stripped text): each piece from its first word to its last, the last
+        to the line's end."""
+        if not at:
+            return [line]
+        start = line.start + self.b.text[line.start : line.end].find(line.text)  # where the stripped text begins
+        pieces = []
+        for begin, end in itertools.pairwise([0, *at, len(line.text)]):
+            piece = line.text[begin:end].strip()
+            first = start + line.text.index(piece, begin)
+            pieces.append(Line(first, first + len(piece), piece))
+        pieces[-1] = Line(pieces[-1].start, line.end, pieces[-1].text)
+        return pieces
 
     def step(self, line: Line) -> bool:
         raise NotImplementedError
@@ -165,6 +195,8 @@ class _Grammar:
 
 
 class Peraturan(_Grammar):
+    problems = staticmethod(regulation_problems)
+
     def __init__(self, builder: TreeBuilder) -> None:
         super().__init__(builder)
         self.section = "body"  # body | signed | elucidation | annex
@@ -179,6 +211,24 @@ class Peraturan(_Grammar):
         self.last_ayat = 0
         self.last_explained: tuple[int, str] | None = None
         self.quote_pending = False  # an amending instruction was read: the next article heading is the one it quotes
+
+    def parts(self, line: Line) -> list[Line]:
+        return [piece for part in super().parts(line) for piece in self.article_beside(part)]
+
+    def article_beside(self, line: Line) -> list[Line]:
+        """A title read on one line with the next article's heading, before or after it: the heading on a line of
+        its own. Only the very next article, in the body: a heading is known by the numbering."""
+        if self.section != "body" or self.amending:
+            return [line]
+        for pattern in (_TITLE_THEN_ARTICLE, _ARTICLE_THEN_TITLE):
+            found = pattern.match(line.text)
+            if found and len(found["title"].split()) <= run_together.STACK_WORDS and self.is_next(found["number"]):
+                at = found.start("title") if pattern is _ARTICLE_THEN_TITLE else found.end("title")
+                return self.cut(line, [at])
+        return [line]
+
+    def is_next(self, number: str) -> bool:
+        return article_key(number) == (self.last_number + 1, "")
 
     def step(self, line: Line) -> bool:
         if _ELUCIDATION.match(line.text) and self.section != "elucidation" and (self.started() or self.b.empty()):
@@ -398,6 +448,8 @@ class SuratEdaran(_Grammar):
     """An amending circular quotes the sections it replaces ("… sehingga angka III berbunyi sebagai
     berikut:\nIII. LAPORAN …"). Like the chapters an amending regulation quotes, they are text of the
     circular's own sections, which in an amendment follow one another without gaps."""
+
+    problems = staticmethod(circular_problems)
 
     def __init__(self, builder: TreeBuilder) -> None:
         super().__init__(builder)

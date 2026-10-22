@@ -13,7 +13,6 @@ from __future__ import annotations
 from metamorph_platform.domain.structure.builder import TreeBuilder
 from metamorph_platform.domain.structure.grammars import GRAMMARS
 from metamorph_platform.domain.structure.model import PARSER_VERSION, Node, Structure
-from metamorph_platform.domain.structure.quality import problems
 from metamorph_platform.domain.structure.text import lines
 
 CIRCULARS = {("ojk", "seojk"), ("bi", "sebi")}
@@ -32,6 +31,5 @@ def parse(text: str, grammar: str) -> Structure:
     recogniser = GRAMMARS[grammar](builder)
     for line in lines(text):
         recogniser.feed(line)
-        builder.passed(line)
     nodes = builder.nodes()
-    return Structure(grammar=grammar, nodes=nodes, problems=problems(grammar, nodes))
+    return Structure(grammar=grammar, nodes=nodes, problems=GRAMMARS[grammar].problems(nodes))

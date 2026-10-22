@@ -86,3 +86,9 @@ def is_roman(value: str) -> bool:
 def roman_value(numeral: str) -> int:
     values = [_ROMAN_VALUES[char] for char in numeral.lower()]
     return sum(-v if v < following else v for v, following in zip(values, [*values[1:], 0], strict=True))
+
+
+def article_key(number: str) -> tuple[int, str]:
+    """ "82A" → (82, "a"): an inserted article sorts after the one it follows."""
+    digits = re.match(r"\d+", number)[0]
+    return int(digits), number[len(digits) :].lower()
