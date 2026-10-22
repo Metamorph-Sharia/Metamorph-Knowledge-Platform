@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Metamorph's PostgreSQL 16 on Amazon RDS (docs/aws-deployment-guide.md): the platform's database, BI's own and
+  Airflow's, as on the local stack. Single-AZ, with 7 days of point-in-time recovery. The master password is read
+  from Parameter Store (/metamorph/database/master-password), never written in the template.
+
+Parameters:
+  EngineVersion:
+    Type: String
+    Default: "16.15"
+    Description: >-
+      The newest PostgreSQL 16 in the region (the dump is from 16):
+      aws rds describe-db-engine-versions --engine postgres --engine-version 16 --query 'DBEngineVersions[-1].EngineVersion'
+  InstanceClass:
+    Type: String
+    Default: db.t4g.small
+    AllowedValues: [db.t4g.micro, db.t4g.small, db.t4g.medium]
+    Description: db.t4g.small (2 GiB) holds the three databases; db.t4g.medium if the build grows slow
+  StorageGiB:
+    Type: Number
+    Default: 20
+    Description: gp3; grows by itself up to 100 GiB
+
+Resources:
+  SubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: metamorph database
+      SubnetIds: !Split [",", !ImportValue metamorph-subnets]
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: metamorph
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref InstanceClass
+      StorageType: gp3
+      AllocatedStorage: !Ref StorageGiB
+      MaxAllocatedStorage: 100
+      StorageEncrypted: true
+      DBName: metamorph
+      MasterUsername: metamorph
+      MasterUserPassword: "{{resolve:ssm-secure:/metamorph/database/master-password}}"
+      DBSubnetGroupName: !Ref SubnetGroup
+      VPCSecurityGroups: [!ImportValue metamorph-sg-database]
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "19:00-19:30"           # 02:00 WIB, outside every ingest window
+      PreferredMaintenanceWindow: "sun:20:00-sun:20:30"
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      DeletionProtection: true
+
+  HostSetting:   # the guide's Phase 2 builds the database URLs in Parameter Store from it
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/database/host, Type: String, Value: !GetAtt Database.Endpoint.Address}
+
+Outputs:
+  Host: {Value: !GetAtt Database.Endpoint.Address, Export: {Name: metamorph-database-host}}

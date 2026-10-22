@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Airflow on Fargate (docs/aws-deployment-guide.md): the scheduler and its web UI in one task (`standalone`), its
+  metadata in RDS. It starts every DAG task as an ECS task (METAMORPH_TASK_LAUNCHER=ecs; jobs.yaml defines them).
+  Its UI isn't public: deploy/aws/tunnel.sh airflow 18080 8080. Stop it with DesiredCount=0: no task then runs.
+
+Parameters:
+  AirflowTag: {Type: String, Description: The metamorph/airflow image's tag (deploy/aws/push-images.sh)}
+  DesiredCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [0, 1]
+  AlertWebhook:
+    Type: String
+    Default: "no"
+    AllowedValues: ["yes", "no"]
+    Description: '"yes" once /metamorph/airflow/alert-webhook-url exists: failed tasks are posted there'
+
+Conditions:
+  HasAlertWebhook: !Equals [!Ref AlertWebhook, "yes"]
+
+Resources:
+  TaskRole:   # what Airflow's DAGs do in AWS: run Metamorph's task definitions and read their logs
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: metamorph-airflow
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [!ImportValue metamorph-exec-policy]
+      Policies:
+        - PolicyName: run-tasks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-*
+                Condition:
+                  ArnEquals: {ecs:cluster: !ImportValue metamorph-cluster-arn}
+              - Effect: Allow
+                Action: [ecs:DescribeTasks, ecs:StopTask]
+                Resource: !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/metamorph/*
+              - {Effect: Allow, Action: ecs:DescribeTaskDefinition, Resource: "*"}
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: [!ImportValue metamorph-execution-role, !ImportValue metamorph-platform-role]
+                Condition:
+                  StringEquals: {iam:PassedToService: ecs-tasks.amazonaws.com}
+              - Effect: Allow
+                Action: [logs:GetLogEvents, logs:FilterLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/metamorph:*
+
+  Task:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-airflow
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: "512"
+      Memory: "3072"
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/airflow:${AirflowTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          Command: [standalone]
+          PortMappings: [{ContainerPort: 8080}]
+          Environment:
+            - {Name: AIRFLOW__CORE__EXECUTOR, Value: LocalExecutor}
+            - {Name: AIRFLOW__CORE__LOAD_EXAMPLES, Value: "false"}
+            - {Name: AIRFLOW__WEBSERVER__EXPOSE_CONFIG, Value: "false"}
+            # The image's entrypoint migrates the database and makes the admin account, with the password in
+            # Parameter Store, before `standalone` starts: a new task keeps the same sign-in.
+            - {Name: _AIRFLOW_DB_MIGRATE, Value: "true"}
+            - {Name: _AIRFLOW_WWW_USER_CREATE, Value: "true"}
+            - {Name: _AIRFLOW_WWW_USER_USERNAME, Value: admin}
+            - {Name: METAMORPH_TASK_LAUNCHER, Value: ecs}
+            - {Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}
+          Secrets:
+            - {Name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN, ValueFrom: /metamorph/airflow/database-url}
+            - {Name: AIRFLOW__WEBSERVER__SECRET_KEY, ValueFrom: /metamorph/airflow/webserver-secret}
+            - {Name: _AIRFLOW_WWW_USER_PASSWORD, ValueFrom: /metamorph/airflow/admin-password}
+            - {Name: METAMORPH_ECS_CLUSTER, ValueFrom: /metamorph/airflow/ecs-cluster}
+            - {Name: METAMORPH_ECS_SUBNETS, ValueFrom: /metamorph/airflow/ecs-subnets}
+            - {Name: METAMORPH_ECS_SECURITY_GROUP, ValueFrom: /metamorph/airflow/ecs-security-group}
+            - {Name: METAMORPH_ECS_LOG_GROUP, ValueFrom: /metamorph/airflow/ecs-log-group}
+            - !If
+              - HasAlertWebhook
+              - {Name: METAMORPH_ALERT_WEBHOOK_URL, ValueFrom: /metamorph/airflow/alert-webhook-url}
+              - !Ref AWS::NoValue
+          HealthCheck:
+            Command: [CMD-SHELL, curl --fail --silent http://localhost:8080/health]
+            Interval: 30
+            Retries: 5
+            StartPeriod: 180
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-airflow}
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: airflow
+      Cluster: !ImportValue metamorph-cluster
+      TaskDefinition: !Ref Task
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      EnableExecuteCommand: true   # deploy/aws/tunnel.sh: its UI
+      DeploymentConfiguration:     # never two schedulers: the old task stops before the new one starts
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Split [",", !ImportValue metamorph-subnets]
+          SecurityGroups: [!ImportValue metamorph-sg-airflow]
+          AssignPublicIp: ENABLED

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+PLATFORM_IMAGE = "metamorph-platform:dev"  # the platform's tasks: load, build, health
 BUNDLES = "/bundles"
 BUNDLES_VOLUME = "metamorph-bundles"
 EXPORT_FAILED = 3  # the collect task's exit code when no bundle could be written
@@ -30,6 +31,7 @@ CONNECTOR_SETTINGS = (
     "METAMORPH_MINERU_CACHE",
 )
 OJK_CREDENTIALS = f"{CONTAINER_HOME}/.config/ojk-connector/credentials"
+TASK_CONTAINER = "main"  # on ECS, the one container of every task definition (deploy/aws/jobs.yaml)
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,11 @@ class ConnectorJob:
 def passed_on(job: ConnectorJob) -> tuple[str, ...]:
     """The environment variables a job's container gets from Airflow's: its secrets, and every connector's settings."""
     return (*job.secrets, *CONNECTOR_SETTINGS)
+
+
+def task_family(image: str) -> str:
+    """The ECS task definition an image runs as: `metamorph/ojk-connector:dev` → `metamorph-ojk-connector`."""
+    return image.rsplit(":", 1)[0].replace("/", "-")
 
 
 def bundle_path(connector: str, run_id: str) -> str:
@@ -100,7 +107,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_ojk",
             connector="ojk",
             image="metamorph/ojk-connector:dev",
-            schedule="0 1 * * *",  # 08:00 WIB
+            schedule="0 1 * * *",  # 08:00 WIB; every ingest runs in MinerU's window, 00:30–03:15 UTC
             collect="ojk-connector run",
             export="ojk-connector export --format v2 --out {out} --run-id {run_id}",
             mounts=(data("OJK-Source-Connector"), Mount(ojk_credentials, OJK_CREDENTIALS), bundles),
@@ -111,7 +118,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_bpk",
             connector="bpk",
             image="metamorph/bpk-connector:dev",
-            schedule="0 2 * * *",
+            schedule="20 1 * * *",
             collect="bpk-connector run",
             export="bpk-connector export --format v2 --out {out} --run-id {run_id}",
             mounts=(data("BPK-Source-Connector"), bundles),
@@ -122,7 +129,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_bi",
             connector="bi-website",
             image="metamorph/bi-connector:dev",
-            schedule="0 3 * * *",
+            schedule="40 1 * * *",
             collect="python -m src.init_db && python -m src.cli sync",
             export="python -m src.pipeline.exporter_v2 --out {out} --run-id {run_id}",
             fails_from=1,  # BI's CLI exits 1 only on an unhandled error
@@ -133,14 +140,14 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
         ),
         ConnectorJob(
             dag_id="ingest_dsn_fatwa",
-            schedule="0 4 * * 1",  # weekly: DSN-MUI publishes a few fatwas a year
+            schedule="0 2 * * 1",  # weekly: DSN-MUI publishes a few fatwas a year
             collect="dsn sync --quiet",
             description="DSN-MUI fatwas: new or moved files (MinerU reads their Arabic too), export",
             **dsn,
         ),
         ConnectorJob(
             dag_id="ingest_dsn_fatwa_full",
-            schedule="0 16 1 * *",  # monthly, away from the weekly run
+            schedule="30 2 1 * *",  # monthly, after the weekly run; the window runs to 04:30 on the 1st
             collect="dsn sync --all --refresh-index --quiet",
             description="DSN-MUI fatwas, full pass: re-download everything to catch silent re-uploads",
             **dsn,

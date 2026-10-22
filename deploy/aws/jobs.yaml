@@ -1,0 +1,304 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  The tasks Airflow runs on Fargate (docs/aws-deployment-guide.md): the platform and the four connectors, one task
+  definition per image, named as dags/metamorph_pipeline/jobs.py's task_family() names them, with one container,
+  "main". Airflow passes only the command: each definition holds its volumes (EFS) and its settings (Parameter
+  Store). Also metamorph-ops, a shell with every volume mounted, for an operator's one-off work.
+
+Parameters:
+  PlatformTag: {Type: String, Description: The metamorph/platform image's tag (deploy/aws/push-images.sh)}
+  OjkTag: {Type: String, Description: The metamorph/ojk-connector image's tag}
+  BpkTag: {Type: String, Description: The metamorph/bpk-connector image's tag}
+  BiTag: {Type: String, Description: The metamorph/bi-connector image's tag}
+  DsnTag: {Type: String, Description: The metamorph/dsn-mui-connector image's tag}
+  Cpu:
+    Type: String
+    Default: "1024"
+    Description: Each task's vCPU units. A task is billed only while it runs, a few minutes a day
+  Memory:
+    Type: String
+    Default: "4096"
+    Description: Each task's memory, MiB
+
+Resources:
+  Platform:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-platform
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      TaskRoleArn: !ImportValue metamorph-platform-role
+      Volumes:
+        - Name: bundles
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bundles}
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/platform:${PlatformTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          MountPoints: [{SourceVolume: bundles, ContainerPath: /bundles}]
+          Environment: [{Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}]
+          Secrets:
+            - {Name: METAMORPH_DATABASE_URL, ValueFrom: /metamorph/platform/database-url}
+            - {Name: METAMORPH_S3_BUCKET, ValueFrom: /metamorph/platform/s3-bucket}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-platform}
+
+  Ojk:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-ojk-connector
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      Volumes:
+        - Name: data
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-ojk-data}
+        - Name: credentials
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-ojk-credentials}
+        - Name: bundles
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bundles}
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/ojk-connector:${OjkTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          MountPoints:
+            - {SourceVolume: data, ContainerPath: /workspace/OJK-Source-Connector/data}
+            - {SourceVolume: credentials, ContainerPath: /home/connector/.config/ojk-connector/credentials}
+            - {SourceVolume: bundles, ContainerPath: /bundles}
+          Secrets:   # jobs.py's CONNECTOR_SETTINGS: one parameter rolls every connector back at once
+            - {Name: METAMORPH_PDF_LINES, ValueFrom: /metamorph/connectors/pdf-lines}
+            - {Name: METAMORPH_PDF_ENGINE, ValueFrom: /metamorph/connectors/pdf-engine}
+            - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
+            - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
+            - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-ojk-connector}
+
+  Bpk:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-bpk-connector
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      Volumes:
+        - Name: data
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bpk-data}
+        - Name: bundles
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bundles}
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/bpk-connector:${BpkTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          MountPoints:
+            - {SourceVolume: data, ContainerPath: /workspace/BPK-Source-Connector/data}
+            - {SourceVolume: bundles, ContainerPath: /bundles}
+          Secrets:
+            - {Name: METAMORPH_PDF_LINES, ValueFrom: /metamorph/connectors/pdf-lines}
+            - {Name: METAMORPH_PDF_ENGINE, ValueFrom: /metamorph/connectors/pdf-engine}
+            - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
+            - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
+            - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-bpk-connector}
+
+  Bi:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-bi-connector
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      Volumes:
+        - Name: data
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bi-data}
+        - Name: bundles
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bundles}
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/bi-connector:${BiTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          MountPoints:
+            - {SourceVolume: data, ContainerPath: /workspace/BI-Source-Connector/data}
+            - {SourceVolume: bundles, ContainerPath: /bundles}
+          Secrets:
+            - {Name: DATABASE_URL, ValueFrom: /metamorph/bi/database-url}   # BI's own database
+            - {Name: METAMORPH_PDF_LINES, ValueFrom: /metamorph/connectors/pdf-lines}
+            - {Name: METAMORPH_PDF_ENGINE, ValueFrom: /metamorph/connectors/pdf-engine}
+            - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
+            - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
+            - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-bi-connector}
+
+  Dsn:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-dsn-mui-connector
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      Volumes:
+        - Name: data
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-dsn-data}
+        - Name: bundles
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bundles}
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/dsn-mui-connector:${DsnTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          MountPoints:
+            - {SourceVolume: data, ContainerPath: /workspace/DSN-MUI-Source-Connector/data}
+            - {SourceVolume: bundles, ContainerPath: /bundles}
+          Secrets:
+            - {Name: METAMORPH_PDF_LINES, ValueFrom: /metamorph/connectors/pdf-lines}
+            - {Name: METAMORPH_PDF_ENGINE, ValueFrom: /metamorph/connectors/pdf-engine}
+            - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
+            - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
+            - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-dsn-mui-connector}
+
+  # metamorph-ops: `sh -c <command>` in the platform image (python, boto3, tar), with every connector's data/ at
+  # the path its connector sees and the bundles. The guide's Phase 4 unpacks the Mac's data/ with it.
+  OpsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: metamorph-ops
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [!ImportValue metamorph-exec-policy]   # a tunnel to the database before any service runs
+      Policies:
+        - PolicyName: transfer
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub
+                  - "${Ops}/transfer/*"
+                  - Ops: !ImportValue metamorph-ops-arn
+  Ops:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-ops
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      EphemeralStorage: {SizeInGiB: 40}
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      TaskRoleArn: !GetAtt OpsRole.Arn
+      Volumes:
+        - Name: ojk
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-ojk-data}
+        - Name: bpk
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bpk-data}
+        - Name: bi
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bi-data}
+        - Name: dsn
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-dsn-data}
+        - Name: bundles
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue metamorph-efs
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !ImportValue metamorph-efs-bundles}
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/platform:${PlatformTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          EntryPoint: [sh, -c]
+          User: "0"   # tar sets its directories' times; EFS's access points still write every file as uid 1000
+          Command: ["df -h /workspace/*/data /bundles"]
+          WorkingDirectory: /workspace
+          MountPoints:
+            - {SourceVolume: ojk, ContainerPath: /workspace/OJK-Source-Connector/data}
+            - {SourceVolume: bpk, ContainerPath: /workspace/BPK-Source-Connector/data}
+            - {SourceVolume: bi, ContainerPath: /workspace/BI-Source-Connector/data}
+            - {SourceVolume: dsn, ContainerPath: /workspace/DSN-MUI-Source-Connector/data}
+            - {SourceVolume: bundles, ContainerPath: /bundles}
+          Environment: [{Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}]
+          Secrets: [{Name: OPS_BUCKET, ValueFrom: /metamorph/ops/bucket}]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-ops}
+
+Outputs:
+  OpsRoleArn: {Value: !GetAtt OpsRole.Arn, Export: {Name: metamorph-ops-role}}

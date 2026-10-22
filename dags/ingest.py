@@ -5,14 +5,13 @@ A successful load updates the `registry` Dataset, which triggers registry_build.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.datasets import Dataset
 from airflow.utils.trigger_rule import TriggerRule
 from metamorph_pipeline.alerts import on_failure
-from metamorph_pipeline.containers import container, platform
+from metamorph_pipeline.containers import container, host_path, platform
 from metamorph_pipeline.jobs import (
     BUNDLES,
     BUNDLES_VOLUME,
@@ -29,14 +28,7 @@ RUN_ID = "{{ ts_nodash }}"
 DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_callback": on_failure}
 
 
-def _setting(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f"{name} is not set: see Metamorph-Knowledge-Platform/.env.example")
-    return value
-
-
-for job in ingest_jobs(_setting("METAMORPH_WORKSPACE"), ojk_credentials=_setting("METAMORPH_OJK_CREDENTIALS")):
+for job in ingest_jobs(host_path("METAMORPH_WORKSPACE"), ojk_credentials=host_path("METAMORPH_OJK_CREDENTIALS")):
     with DAG(
         dag_id=job.dag_id,
         description=job.description,

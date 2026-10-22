@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  The curation JSON API on Fargate (docs/aws-deployment-guide.md), at api.metamorph.internal:8001 inside the VPC.
+  Only the web app reaches it. Stop it with DesiredCount=0, or `aws ecs update-service --desired-count 0`.
+
+Parameters:
+  PlatformTag: {Type: String, Description: The metamorph/platform image's tag (deploy/aws/push-images.sh)}
+  DesiredCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [0, 1]
+
+Resources:
+  Discovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: api
+      NamespaceId: !ImportValue metamorph-namespace
+      DnsConfig: {DnsRecords: [{Type: A, TTL: 10}], RoutingPolicy: MULTIVALUE}
+      HealthCheckCustomConfig: {FailureThreshold: 1}
+
+  Task:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-api
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: "256"
+      Memory: "1024"
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      TaskRoleArn: !ImportValue metamorph-platform-role
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/platform:${PlatformTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          Command: [api, --host, 0.0.0.0, --port, "8001"]
+          PortMappings: [{ContainerPort: 8001}]
+          Environment: [{Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}]
+          Secrets:
+            - {Name: METAMORPH_DATABASE_URL, ValueFrom: /metamorph/platform/database-url}
+            - {Name: METAMORPH_S3_BUCKET, ValueFrom: /metamorph/platform/s3-bucket}
+            - {Name: METAMORPH_CURATORS, ValueFrom: /metamorph/api/curators}
+            - {Name: METAMORPH_WEB_SECRET, ValueFrom: /metamorph/api/web-secret}
+          HealthCheck:
+            Command: [CMD-SHELL, "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')\""]
+            Interval: 15
+            Retries: 5
+            StartPeriod: 30
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-api}
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: api
+      Cluster: !ImportValue metamorph-cluster
+      TaskDefinition: !Ref Task
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      EnableExecuteCommand: true   # deploy/aws/tunnel.sh reaches the database through it
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Split [",", !ImportValue metamorph-subnets]
+          SecurityGroups: [!ImportValue metamorph-sg-api]
+          AssignPublicIp: ENABLED   # no NAT gateway: ECR and Parameter Store over the internet; nothing comes in
+      ServiceRegistries: [{RegistryArn: !GetAtt Discovery.Arn}]

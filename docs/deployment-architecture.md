@@ -47,10 +47,12 @@ This page describes the system as it is meant to run once MinerU reads every con
 | Service | Image | Runs | MinerU's part |
 |---|---|---|---|
 | Connectors | `metamorph/<connector>-connector`, built from each repository | Per Airflow task | Each one calls MinerU over HTTP when `METAMORPH_PDF_ENGINE=mineru`, and keeps every reading in its own `data/mineru-cache/` |
-| MinerU | `metamorph/mineru:4.0.12`, from [`docker/mineru/Dockerfile`](../docker/mineru/Dockerfile) | Always on, on the GPU host | Reads PDFs. It has no state worth keeping: the readings live in the connectors' caches |
+| MinerU | `metamorph/mineru:4.0.12`, from [`docker/mineru/Dockerfile`](../docker/mineru/Dockerfile) | On the GPU host. On AWS, only in the ingest window | Reads PDFs. It has no state worth keeping: the readings live in the connectors' caches |
 | Platform | `metamorph-platform` | Per Airflow task, and the API | None. It stores the `extraction` record a bundle carries, and never calls MinerU |
 | Airflow | `apache/airflow:2.10.5` | Always on | Passes the MinerU settings on to every connector task ([`dags/metamorph_pipeline/jobs.py`](../dags/metamorph_pipeline/jobs.py)) |
 | PostgreSQL, object store, curation API and web | as in [`compose.yaml`](../compose.yaml) | Always on | None |
+
+**On AWS** ([aws-deployment-guide.md](aws-deployment-guide.md)), each box is an ECS service or task. Airflow runs every DAG task as an ECS task (`METAMORPH_TASK_LAUNCHER=ecs`), each task definition holds its volumes (EFS) and settings (Parameter Store), and PostgreSQL is RDS. The rings below don't change: only the outermost one, `dags/metamorph_pipeline/containers.py`, knows where a container runs.
 
 The Knowledge & Retrieval layer reads `published.*` only ([published-schema.md](published-schema.md)). It never sees which engine read a PDF, except through `published.text.extraction`.
 

@@ -1,0 +1,298 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Metamorph on ECS, the shared foundation (docs/aws-deployment-guide.md): the cluster, the security groups, the
+  file and blob storage, the image repositories, the roles every task shares, and the wiring every service reads
+  from Parameter Store. The budget is made with the CLI (CloudFormation offers budgets in us-east-1 only). The services are stacks of their own, so each one starts, stops and changes alone.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The default VPC
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: The default VPC's three subnets, one per Availability Zone (public; there is no NAT gateway)
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: metamorph
+      ClusterSettings: [{Name: containerInsights, Value: disabled}]
+
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /metamorph
+      RetentionInDays: 30
+
+  Namespace:   # api.metamorph.internal and mineru.metamorph.internal: the addresses tasks use inside the VPC
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: metamorph.internal
+      Vpc: !Ref VpcId
+
+  # Security groups: who may reach whom. Nothing but the load balancer takes traffic from the internet.
+  LoadBalancerGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: metamorph load balancer, HTTPS from anywhere
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
+  WebGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph curation web app, VpcId: !Ref VpcId}
+  ApiGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph curation API, VpcId: !Ref VpcId}
+  AirflowGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph Airflow, VpcId: !Ref VpcId}
+  JobsGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph connector and platform tasks, VpcId: !Ref VpcId}
+  MinerUGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph MinerU task, VpcId: !Ref VpcId}
+  GpuHostGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph GPU container instance (outbound only), VpcId: !Ref VpcId}
+  DatabaseGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph PostgreSQL, VpcId: !Ref VpcId}
+  FilesGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph EFS, VpcId: !Ref VpcId}
+
+  WebFromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref WebGroup, IpProtocol: tcp, FromPort: 3000, ToPort: 3000, SourceSecurityGroupId: !Ref LoadBalancerGroup}
+  ApiFromWeb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref ApiGroup, IpProtocol: tcp, FromPort: 8001, ToPort: 8001, SourceSecurityGroupId: !Ref WebGroup}
+  MinerUFromJobs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref MinerUGroup, IpProtocol: tcp, FromPort: 8010, ToPort: 8010, SourceSecurityGroupId: !Ref JobsGroup}
+  DatabaseFromApi:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref DatabaseGroup, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref ApiGroup}
+  DatabaseFromAirflow:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref DatabaseGroup, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AirflowGroup}
+  DatabaseFromJobs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref DatabaseGroup, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref JobsGroup}
+  FilesFromJobs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref FilesGroup, IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref JobsGroup}
+
+  # The connectors' state (stores, PDFs, MinerU caches) and the bundles, on EFS. Files not read for 30 days move
+  # to Infrequent Access, which costs a fifteenth as much; AWS Backup copies the file system daily (35 days kept).
+  Files:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      BackupPolicy: {Status: ENABLED}
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
+      FileSystemTags: [{Key: Name, Value: metamorph}]
+  FilesMountA:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [0, !Ref Subnets], SecurityGroups: [!Ref FilesGroup]}
+  FilesMountB:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [1, !Ref Subnets], SecurityGroups: [!Ref FilesGroup]}
+  FilesMountC:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [2, !Ref Subnets], SecurityGroups: [!Ref FilesGroup]}
+  # One access point per directory, each owned by uid 1000 (the connectors' user): a task sees only its own.
+  OjkData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /OJK-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  BpkData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /BPK-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  BiData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /BI-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  DsnData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /DSN-MUI-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  OjkCredentials:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /ojk-credentials, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "700"}}
+  Bundles:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /bundles, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+
+  Blobs:   # the platform's text and file blobs; the API signs links into it for browsers
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub metamorph-blobs-${AWS::AccountId}
+      PublicAccessBlockConfiguration: {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      LifecycleConfiguration:
+        Rules: [{Id: multipart, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 2}}]
+  Ops:     # what an operator hands to AWS: source archives and the data moved from the Mac
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub metamorph-ops-${AWS::AccountId}
+      PublicAccessBlockConfiguration: {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      LifecycleConfiguration:
+        Rules:
+          - {Id: transfer, Status: Enabled, Prefix: transfer/, ExpirationInDays: 14}
+          - {Id: multipart, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 2}}
+
+  # One repository per image. Old images are expired: MinerU's is 20 GB, so only the last two are kept.
+  PlatformImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/platform, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  WebImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/curation-web, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  AirflowImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/airflow, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  OjkImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/ojk-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  BpkImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/bpk-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  BiImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/bi-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  DsnImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/dsn-mui-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  MinerUImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/mineru, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}'}}
+
+  # What ECS itself needs to start any task: pull the image, write its log, read its settings from Parameter Store.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: metamorph-task-execution
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy]
+      Policies:
+        - PolicyName: settings
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/metamorph/*
+  # A shell in a running task (ECS Exec), for an operator's port forwarding: deploy/aws/tunnel.sh.
+  ExecPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: metamorph-ecs-exec
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel, ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel]
+            Resource: "*"
+  # The platform's tasks and the API: the blobs bucket. The platform never deletes a blob (adapters/blobs/s3.py).
+  PlatformRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: metamorph-platform
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [!Ref ExecPolicy]
+      Policies:
+        - PolicyName: blobs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: [s3:ListBucket, s3:PutBucketCORS], Resource: !GetAtt Blobs.Arn}
+              - {Effect: Allow, Action: [s3:GetObject, s3:PutObject], Resource: !Sub "${Blobs.Arn}/*"}
+
+  # The wiring, in Parameter Store beside the settings an operator writes (the guide's Phase 2): every value a task
+  # reads from its environment comes from /metamorph/.
+  BucketSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/platform/s3-bucket, Type: String, Value: !Ref Blobs}
+  ApiUrlSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/web/api-url, Type: String, Value: http://api.metamorph.internal:8001}
+  MinerUUrlSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/connectors/mineru-url, Type: String, Value: http://mineru.metamorph.internal:8010}
+  ClusterSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-cluster, Type: String, Value: !Ref Cluster}
+  SubnetsSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-subnets, Type: String, Value: !Join [",", !Ref Subnets]}
+  JobsGroupSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-security-group, Type: String, Value: !Ref JobsGroup}
+  OpsBucketSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/ops/bucket, Type: String, Value: !Ref Ops}
+  LogGroupSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-log-group, Type: String, Value: !Ref Logs}
+
+Outputs:
+  Subnets: {Value: !Join [",", !Ref Subnets], Export: {Name: metamorph-subnets}}
+  VpcId: {Value: !Ref VpcId, Export: {Name: metamorph-vpc}}
+  Cluster: {Value: !Ref Cluster, Export: {Name: metamorph-cluster}}
+  ClusterArn: {Value: !GetAtt Cluster.Arn, Export: {Name: metamorph-cluster-arn}}
+  Logs: {Value: !Ref Logs, Export: {Name: metamorph-logs}}
+  Namespace: {Value: !Ref Namespace, Export: {Name: metamorph-namespace}}
+  LoadBalancerGroup: {Value: !Ref LoadBalancerGroup, Export: {Name: metamorph-sg-load-balancer}}
+  WebGroup: {Value: !Ref WebGroup, Export: {Name: metamorph-sg-web}}
+  ApiGroup: {Value: !Ref ApiGroup, Export: {Name: metamorph-sg-api}}
+  AirflowGroup: {Value: !Ref AirflowGroup, Export: {Name: metamorph-sg-airflow}}
+  JobsGroup: {Value: !Ref JobsGroup, Export: {Name: metamorph-sg-jobs}}
+  MinerUGroup: {Value: !Ref MinerUGroup, Export: {Name: metamorph-sg-mineru}}
+  GpuHostGroup: {Value: !Ref GpuHostGroup, Export: {Name: metamorph-sg-gpu-host}}
+  DatabaseGroup: {Value: !Ref DatabaseGroup, Export: {Name: metamorph-sg-database}}
+  Files: {Value: !Ref Files, Export: {Name: metamorph-efs}}
+  OjkData: {Value: !Ref OjkData, Export: {Name: metamorph-efs-ojk-data}}
+  BpkData: {Value: !Ref BpkData, Export: {Name: metamorph-efs-bpk-data}}
+  BiData: {Value: !Ref BiData, Export: {Name: metamorph-efs-bi-data}}
+  DsnData: {Value: !Ref DsnData, Export: {Name: metamorph-efs-dsn-data}}
+  OjkCredentials: {Value: !Ref OjkCredentials, Export: {Name: metamorph-efs-ojk-credentials}}
+  Bundles: {Value: !Ref Bundles, Export: {Name: metamorph-efs-bundles}}
+  Blobs: {Value: !Ref Blobs, Export: {Name: metamorph-blobs}}
+  Ops: {Value: !Ref Ops, Export: {Name: metamorph-ops}}
+  OpsArn: {Value: !GetAtt Ops.Arn, Export: {Name: metamorph-ops-arn}}
+  Registry: {Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com", Export: {Name: metamorph-registry}}
+  MinerUImagesArn: {Value: !GetAtt MinerUImages.Arn, Export: {Name: metamorph-ecr-mineru-arn}}
+  ExecutionRoleArn: {Value: !GetAtt ExecutionRole.Arn, Export: {Name: metamorph-execution-role}}
+  ExecPolicy: {Value: !Ref ExecPolicy, Export: {Name: metamorph-exec-policy}}
+  PlatformRoleArn: {Value: !GetAtt PlatformRole.Arn, Export: {Name: metamorph-platform-role}}

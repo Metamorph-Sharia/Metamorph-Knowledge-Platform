@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
+from pathlib import Path
 
 import pytest
 from metamorph_pipeline.alerts import failure_message
-from metamorph_pipeline.jobs import BUNDLES, ConnectorJob, bundle_path, collect_command, ingest_jobs, passed_on
+from metamorph_pipeline.jobs import (
+    BUNDLES,
+    PLATFORM_IMAGE,
+    TASK_CONTAINER,
+    ConnectorJob,
+    bundle_path,
+    collect_command,
+    ingest_jobs,
+    passed_on,
+    task_family,
+)
 
 WORKSPACE = "/Users/someone/Metamorph-Sharia"
 CREDENTIALS = "/Users/someone/.config/ojk-connector/credentials"
@@ -43,6 +55,20 @@ def test_every_setting_the_pdf_text_package_reads_is_passed_on() -> None:
     from metamorph_pipeline.jobs import CONNECTOR_SETTINGS
 
     assert set(SETTINGS) <= set(CONNECTOR_SETTINGS)
+
+
+def test_on_ecs_an_image_runs_as_the_task_definition_named_after_it() -> None:
+    assert task_family("metamorph/ojk-connector:dev") == "metamorph-ojk-connector"
+    assert task_family(PLATFORM_IMAGE) == "metamorph-platform"
+
+
+def test_every_image_a_dag_runs_has_its_task_definition_on_ecs(jobs) -> None:
+    template = (Path(__file__).parents[1] / "deploy/aws/jobs.yaml").read_text()
+    defined = set(re.findall(r"^      Family: (\S+)$", template, re.MULTILINE))
+    images = {job.image for job in jobs.values()} | {PLATFORM_IMAGE}
+
+    assert {task_family(image) for image in images} <= defined
+    assert re.findall(r"ContainerDefinitions:\n        - Name: (\S+)", template) == [TASK_CONTAINER] * len(defined)
 
 
 def test_bundles_are_kept_per_connector_and_run() -> None:

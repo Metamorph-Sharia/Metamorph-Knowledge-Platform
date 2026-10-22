@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  The curation web app on Fargate behind an HTTPS load balancer (docs/aws-deployment-guide.md). The certificate is
+  ACM's, requested before this stack. Stop it with DesiredCount=0; the load balancer then answers 503.
+
+Parameters:
+  WebTag: {Type: String, Description: The metamorph/curation-web image's tag (deploy/aws/push-images.sh)}
+  CertificateArn: {Type: String, Description: "The ACM certificate for the app's host name, in this region"}
+  DesiredCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [0, 1]
+
+Resources:
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: metamorph
+      Type: application
+      Scheme: internet-facing
+      # Two Availability Zones, the fewest it accepts: each one is a public IPv4 address billed by the hour.
+      Subnets:
+        - !Select [0, !Split [",", !ImportValue metamorph-subnets]]
+        - !Select [1, !Split [",", !ImportValue metamorph-subnets]]
+      SecurityGroups: [!ImportValue metamorph-sg-load-balancer]
+  Target:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Protocol: HTTP
+      Port: 3000
+      VpcId: !ImportValue metamorph-vpc
+      HealthCheckPath: /sign-in
+      Matcher: {HttpCode: "200"}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: "30"}]
+  Https:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates: [{CertificateArn: !Ref CertificateArn}]
+      DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
+  Http:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions: [{Type: redirect, RedirectConfig: {Protocol: HTTPS, Port: "443", StatusCode: HTTP_301}}]
+
+  Task:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-web
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/curation-web:${WebTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          PortMappings: [{ContainerPort: 3000}]
+          Secrets: [{Name: METAMORPH_API_URL, ValueFrom: /metamorph/web/api-url}]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-web}
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Https
+    Properties:
+      ServiceName: web
+      Cluster: !ImportValue metamorph-cluster
+      TaskDefinition: !Ref Task
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      LoadBalancers: [{ContainerName: main, ContainerPort: 3000, TargetGroupArn: !Ref Target}]
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:   # the load balancer's zones only: it doesn't send traffic to a target in another
+            - !Select [0, !Split [",", !ImportValue metamorph-subnets]]
+            - !Select [1, !Split [",", !ImportValue metamorph-subnets]]
+          SecurityGroups: [!ImportValue metamorph-sg-web]
+          AssignPublicIp: ENABLED
+
+Outputs:
+  LoadBalancerDns:
+    Description: Point the app's host name here (a CNAME, or a Route 53 alias)
+    Value: !GetAtt LoadBalancer.DNSName
