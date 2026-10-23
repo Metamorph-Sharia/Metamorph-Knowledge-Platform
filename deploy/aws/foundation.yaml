@@ -151,7 +151,7 @@ Resources:
             Principal: {AWS: !Ref BucketRoleArns}
             Action: [s3:GetObject, s3:PutObject]
             Resource: !Sub "${Blobs.Arn}/*"
-  Ops:     # what an operator hands to AWS: database dumps, source archives, the data moved from the Mac
+  Ops:     # what an operator hands to AWS (transfer/) and what AWS hands back (exports/: database copies)
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub metamorph-ops-${AWS::AccountId}
@@ -159,6 +159,7 @@ Resources:
       LifecycleConfiguration:
         Rules:
           - {Id: transfer, Status: Enabled, Prefix: transfer/, ExpirationInDays: 14}
+          - {Id: exports, Status: Enabled, Prefix: exports/, ExpirationInDays: 30}   # copies shared from the database
           - {Id: multipart, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 2}}
   OpsPolicy:
     Type: AWS::S3::BucketPolicy
@@ -175,6 +176,10 @@ Resources:
             Principal: {AWS: !Ref BucketRoleArns}
             Action: s3:GetObject
             Resource: !Sub "${Ops.Arn}/transfer/*"
+          - Effect: Allow   # metamorph-dbops's dumps, for the team to download
+            Principal: {AWS: !Ref BucketRoleArns}
+            Action: s3:PutObject
+            Resource: !Sub "${Ops.Arn}/exports/*"
 
   # The core's images. Ingestion's own repositories come with it.
   PlatformImages:

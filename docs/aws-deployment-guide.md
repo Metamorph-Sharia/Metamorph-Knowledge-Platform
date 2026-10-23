@@ -217,8 +217,8 @@ These are Jakarta on-demand prices from AWS's public price list files, read on 2
 Build both arm64 images on the Mac and push them to ECR. The first push uploads about 400 MB, and uploads into AWS are free.
 
 ```bash
-TAG=$(date -u +%Y%m%d-%H%M) deploy/aws/push-images.sh      # prints "pushed with tag …"
-TAG=<that tag>
+TAG=$(date -u +%Y%m%d-%H%M)          # its own line: `TAG=… command` would set it for that command only
+TAG=$TAG deploy/aws/push-images.sh   # prints "pushed with tag …"
 ```
 
 ## Phase 4: move the data from the Mac
@@ -241,7 +241,7 @@ This is the cut-over. **From here on, nobody curates on the Mac**, because their
      until aws ecs wait tasks-stopped --cluster metamorph --tasks "$id" 2>/dev/null; do :; done
      aws logs tail /metamorph --log-stream-name-prefix "metamorph-$1/" --since 1h | grep "$id"
      aws ecs describe-tasks --cluster metamorph --tasks "$id" \
-       --query 'tasks[0].containers[?name==`main`].[exitCode,reason]' --output text
+       --query 'tasks[0].containers[].[name,exitCode,reason]' --output text
    }
    ```
 3. **The databases:** the platform's and BI's own, dumped on the Mac and put in the operations bucket. Its `transfer/` copies expire after 14 days.
@@ -264,7 +264,7 @@ This is the cut-over. **From here on, nobody curates on the Mac**, because their
    EOF
    )"
    ```
-   **Pass:** the last line of the log is `2561`, the count on 2026-10-23, and the exit code is `0`. A warning from `pg_restore` about the owner of schema `public` is harmless. Run it once only: a second run stops at `role "bi" already exists`.
+   **Pass:** the last line of the log is `2561`, the count on 2026-10-23, and every container exits `0`. A warning from `pg_restore` about the owner of schema `public` is harmless. Run it once only: a second run stops at `role "bi" already exists`.
 5. **Migrations.** A no-op at migration 15, but it proves the API's settings reach Aurora:
    ```bash
    run_task cli metamorph-sg-api db migrate
@@ -317,16 +317,36 @@ This is the cut-over. **From here on, nobody curates on the Mac**, because their
 
 ## Operating it
 
-**Deploying a change.** Commit, push the image that changed under a new tag, and deploy the stack that uses it:
+**Deploying a change.** Commit, push the image that changed under a new tag, and deploy the stack that uses it. Set the tag on its own line first, `TAG=$(date -u +%Y%m%d-%H%M)`, so the push and the deploy use the same one. A tag already deployed makes `deploy` answer "No changes to deploy":
 
 | Changed | Push | Deploy |
 |---|---|---|
-| The web app | `TAG=… deploy/aws/push-images.sh curation-web` | `deploy web --parameter-overrides WebTag=$TAG` |
-| The platform | `TAG=… deploy/aws/push-images.sh platform` | `deploy api --parameter-overrides PlatformTag=$TAG`, then `run_task cli metamorph-sg-api db migrate` if there is a new migration |
+| The web app | `TAG=$TAG deploy/aws/push-images.sh curation-web` | `deploy web --parameter-overrides WebTag=$TAG` |
+| The platform | `TAG=$TAG deploy/aws/push-images.sh platform` | `deploy api --parameter-overrides PlatformTag=$TAG`, then `run_task cli metamorph-sg-api db migrate` if there is a new migration |
 
 `aws cloudformation deploy` keeps a parameter you don't pass as it was. A deployment that fails its health checks rolls back by itself, through the circuit breaker on both services. To return to an older version, deploy the old tag.
 
 **Publishing curators' work** until the ingestion layer does it: `run_task cli metamorph-sg-api build`, then `run_task cli metamorph-sg-api health`. Run them daily, or after a session of corrections.
+
+**Sharing a copy of the database,** for experiments such as chunking and embeddings. The database is private, and the account's roles can't open a tunnel into the VPC (no `ssm:StartSession`), so the team works on copies: `metamorph-dbops` dumps the database into the operations bucket, and anyone with the same AWS access downloads it and restores it locally. The copy holds the `published` schema only: what the Knowledge & Retrieval layer reads ([published-schema.md](published-schema.md)), including `provision_unit` with each unit's `wording` and `heading_path`. No curator accounts, nothing of `registry` or `curation`. It is about 70 MB, and restores cleanly into an empty PostgreSQL 16 (checked on 2026-10-23: 2,561 documents, 261,320 units).
+
+1. **Make a fresh copy.** From the shell of Phase 0, with the `run_task` helper of Phase 4. It wakes Aurora for a minute:
+   ```bash
+   run_task dbops metamorph-sg-database-ops 'mkdir -p out && pg_dump -Fc -n published -f "out/published-$(date -u +%F).dump"'
+   ```
+   **Pass:** `fetch`, `main` and `put` all exit `0`. The copy is in `s3://metamorph-ops-<account>/exports/`, and it expires after 30 days.
+2. **Each person, on their own computer,** with the AWS CLI signed in to the account and Docker:
+   ```bash
+   export AWS_REGION=ap-southeast-3
+   OPS=metamorph-ops-$(aws sts get-caller-identity --query Account --output text)
+   aws s3 ls "s3://$OPS/exports/"                                     # the copies, by date
+   aws s3 cp "s3://$OPS/exports/published-2026-10-23.dump" .
+   docker run -d --name metamorph-lab -e POSTGRES_PASSWORD=lab -p 5434:5432 pgvector/pgvector:pg16
+   sleep 5; docker exec metamorph-lab createdb -U postgres metamorph
+   docker exec -i metamorph-lab pg_restore -U postgres -d metamorph --no-owner --no-privileges < published-2026-10-23.dump
+   docker exec metamorph-lab psql -U postgres -d metamorph -c 'select count(*) from published.provision_unit'
+   ```
+   The database is then at `postgresql://postgres:lab@localhost:5434/metamorph`, with `pgvector` installed (`CREATE EXTENSION vector`). Experiments belong in a schema of their own, such as `lab`, so a newer copy can replace `published` without touching them.
 
 **Logs:** `aws logs tail /metamorph --follow --log-stream-name-prefix metamorph-api`, or `metamorph-web`, `metamorph-cli`, `metamorph-dbops`.
 

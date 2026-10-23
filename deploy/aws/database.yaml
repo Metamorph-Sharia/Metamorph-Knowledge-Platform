@@ -3,8 +3,8 @@ Description: >-
   Metamorph's PostgreSQL 16 on Aurora Serverless v2 (docs/aws-deployment-guide.md): the platform's database and BI's
   own, and later Airflow's. It pauses at 0 ACU when nothing is connected (the API connects per request) and wakes
   on the next connection in about 15 seconds. 7 days of point-in-time recovery. The master password is read from
-  Parameter Store (/metamorph/database/master-password), never written in the template. Also metamorph-dbops: psql
-  and pg_restore in the VPC, fed from the operations bucket, for restores without a tunnel.
+  Parameter Store (/metamorph/database/master-password), never written in the template. Also metamorph-dbops: psql,
+  pg_dump and pg_restore in the VPC, between the database and the operations bucket, without a tunnel.
 
 Parameters:
   EngineVersion:
@@ -72,8 +72,9 @@ Resources:
     Type: AWS::SSM::Parameter
     Properties: {Name: /metamorph/database/host, Type: String, Value: !GetAtt Cluster.Endpoint.Address}
 
-  # metamorph-dbops: "fetch" copies s3://<ops bucket>/transfer/database/ into /work, then "main" runs its command
-  # with psql and pg_restore, signed in as the master user. The guide's Phase 4 passes the restore as the command.
+  # metamorph-dbops: "fetch" copies s3://<ops bucket>/transfer/database/ into /work, "main" runs its command with
+  # psql, pg_dump and pg_restore, signed in as the master user, then "put" copies /work/out/ to s3://<ops bucket>/exports/.
+  # The guide passes a restore (Phase 4) or a dump (Sharing a copy) as main's command.
   Operations:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -85,7 +86,7 @@ Resources:
       Memory: "2048"
       EphemeralStorage: {SizeInGiB: 30}
       ExecutionRoleArn: !ImportValue metamorph-execution-role
-      TaskRoleArn: !ImportValue metamorph-app-role   # reads the operations bucket's transfer/ through its policy
+      TaskRoleArn: !ImportValue metamorph-app-role   # the operations bucket, through its policy
       Volumes: [{Name: work}]
       ContainerDefinitions:
         - Name: fetch
@@ -101,7 +102,7 @@ Resources:
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-dbops}
         - Name: main
           Image: public.ecr.aws/docker/library/postgres:16
-          Essential: true
+          Essential: false                 # "put" ends the task, after main succeeds
           DependsOn: [{ContainerName: fetch, Condition: SUCCESS}]
           EntryPoint: [sh, -c]
           Command: ["psql -Atc 'select version()'"]
@@ -114,6 +115,18 @@ Resources:
             - {Name: PGHOST, ValueFrom: /metamorph/database/host}
             - {Name: PGPASSWORD, ValueFrom: /metamorph/database/master-password}
             - {Name: BI_PASSWORD, ValueFrom: /metamorph/database/bi-password}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-dbops}
+        - Name: put
+          Image: public.ecr.aws/aws-cli/aws-cli:2.17.0
+          Essential: true
+          DependsOn: [{ContainerName: main, Condition: SUCCESS}]
+          EntryPoint: [sh, -c]
+          Command: ['mkdir -p /work/out && aws s3 cp --recursive /work/out/ "s3://$OPS_BUCKET/exports/"']
+          MountPoints: [{SourceVolume: work, ContainerPath: /work}]
+          Environment: [{Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}]
+          Secrets: [{Name: OPS_BUCKET, ValueFrom: /metamorph/ops/bucket}]
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-dbops}

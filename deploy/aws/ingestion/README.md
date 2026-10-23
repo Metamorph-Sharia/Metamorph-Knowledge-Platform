@@ -33,7 +33,7 @@ The order, from the platform's directory with the core guide's Phase 0 shell lin
    - SecureString: `/metamorph/mineru/api-key`, `/metamorph/airflow/admin-password`, `/metamorph/airflow/webserver-secret`, `/metamorph/airflow/database-url` (`postgresql+psycopg2://metamorph:…@<host>:5432/airflow`), `/metamorph/bi/database-url` (`postgresql+psycopg://bi:<bi-password>@<host>:5432/bi`).
    - String: `/metamorph/connectors/pdf-engine` (`mineru`), `pdf-lines` (`printed`), `mineru-cache` (`data/mineru-cache`).
 3. **Airflow's database:** a `metamorph-dbops` task with the command `psql -c 'CREATE DATABASE airflow'`.
-4. **The images:** `TAG=… deploy/aws/push-images.sh airflow ojk-connector bpk-connector bi-connector dsn-mui-connector`, then `push-images.sh platform` if its tag moved.
+4. **The images:** `TAG=$(date -u +%Y%m%d-%H%M)` on its own line, then `TAG=$TAG deploy/aws/push-images.sh airflow ojk-connector bpk-connector bi-connector dsn-mui-connector`, then `push-images.sh platform` if its tag moved.
 5. **The task definitions:** `deploy ingestion/jobs --capabilities CAPABILITY_NAMED_IAM --parameter-overrides PlatformTag=… OjkTag=… BpkTag=… BiTag=… DsnTag=…`.
 6. **The connectors' data into EFS:** tar the Mac's `{BI,BPK,OJK,DSN-MUI}-Source-Connector/data` without `exports/`, upload it to `s3://metamorph-ops-<account>/transfer/connector-data.tgz`, and unpack it with a `metamorph-ops` task (`… | tar -xzf - --no-same-owner --no-same-permissions -C /workspace`). **The MinerU caches are the one thing that costs money to rebuild.**
 7. **MinerU** (only with the GPU): `deploy ingestion/mineru --capabilities CAPABILITY_NAMED_IAM`. Then build its image on the GPU instance:
