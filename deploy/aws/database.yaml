@@ -1,25 +1,30 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Metamorph's PostgreSQL 16 on Amazon RDS (docs/aws-deployment-guide.md): the platform's database, BI's own and
-  Airflow's, as on the local stack. Single-AZ, with 7 days of point-in-time recovery. The master password is read
-  from Parameter Store (/metamorph/database/master-password), never written in the template.
+  Metamorph's PostgreSQL 16 on Aurora Serverless v2 (docs/aws-deployment-guide.md): the platform's database and BI's
+  own, and later Airflow's. It pauses at 0 ACU when nothing is connected (the API connects per request) and wakes
+  on the next connection in about 15 seconds. 7 days of point-in-time recovery. The master password is read from
+  Parameter Store (/metamorph/database/master-password), never written in the template. Also metamorph-dbops: psql
+  and pg_restore in the VPC, fed from the operations bucket, for restores without a tunnel.
 
 Parameters:
   EngineVersion:
     Type: String
     Default: "16.15"
     Description: >-
-      The newest PostgreSQL 16 in the region (the dump is from 16):
-      aws rds describe-db-engine-versions --engine postgres --engine-version 16 --query 'DBEngineVersions[-1].EngineVersion'
-  InstanceClass:
-    Type: String
-    Default: db.t4g.small
-    AllowedValues: [db.t4g.micro, db.t4g.small, db.t4g.medium]
-    Description: db.t4g.small (2 GiB) holds the three databases; db.t4g.medium if the build grows slow
-  StorageGiB:
+      Aurora PostgreSQL 16, 16.3 or newer (pausing at 0 ACU needs it). The newest in the region:
+      aws rds describe-db-engine-versions --engine aurora-postgresql --engine-version 16 --query 'DBEngineVersions[-1].EngineVersion'
+  MinCapacity:
     Type: Number
-    Default: 20
-    Description: gp3; grows by itself up to 100 GiB
+    Default: 0
+    Description: ACUs when idle. 0 pauses it; 0.5 keeps it awake (about $73 a month)
+  MaxCapacity:
+    Type: Number
+    Default: 4
+    Description: ACUs at most (2 GiB each), for a heavy query or a restore
+  SecondsUntilPause:
+    Type: Number
+    Default: 900
+    Description: Idle seconds before it pauses (MinCapacity 0 only)
 
 Resources:
   SubnetGroup:
@@ -28,36 +33,90 @@ Resources:
       DBSubnetGroupDescription: metamorph database
       SubnetIds: !Split [",", !ImportValue metamorph-subnets]
 
-  Database:
-    Type: AWS::RDS::DBInstance
+  Cluster:
+    Type: AWS::RDS::DBCluster
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
     Properties:
-      DBInstanceIdentifier: metamorph
-      Engine: postgres
+      DBClusterIdentifier: metamorph
+      Engine: aurora-postgresql
       EngineVersion: !Ref EngineVersion
-      DBInstanceClass: !Ref InstanceClass
-      StorageType: gp3
-      AllocatedStorage: !Ref StorageGiB
-      MaxAllocatedStorage: 100
-      StorageEncrypted: true
-      DBName: metamorph
+      DatabaseName: metamorph
       MasterUsername: metamorph
       MasterUserPassword: "{{resolve:ssm-secure:/metamorph/database/master-password}}"
+      Port: 5432
       DBSubnetGroupName: !Ref SubnetGroup
-      VPCSecurityGroups: [!ImportValue metamorph-sg-database]
-      PubliclyAccessible: false
-      MultiAZ: false
+      VpcSecurityGroupIds: [!ImportValue metamorph-sg-database]
+      StorageEncrypted: true
       BackupRetentionPeriod: 7
-      PreferredBackupWindow: "19:00-19:30"           # 02:00 WIB, outside every ingest window
+      PreferredBackupWindow: "19:00-19:30"           # 02:00 WIB
       PreferredMaintenanceWindow: "sun:20:00-sun:20:30"
-      AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
       DeletionProtection: true
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+        SecondsUntilAutoPause: !Ref SecondsUntilPause
+  Writer:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: metamorph-1
+      DBClusterIdentifier: !Ref Cluster
+      Engine: aurora-postgresql
+      DBInstanceClass: db.serverless
+      DBSubnetGroupName: !Ref SubnetGroup
+      PubliclyAccessible: false
+      AutoMinorVersionUpgrade: true
 
   HostSetting:   # the guide's Phase 2 builds the database URLs in Parameter Store from it
     Type: AWS::SSM::Parameter
-    Properties: {Name: /metamorph/database/host, Type: String, Value: !GetAtt Database.Endpoint.Address}
+    Properties: {Name: /metamorph/database/host, Type: String, Value: !GetAtt Cluster.Endpoint.Address}
+
+  # metamorph-dbops: "fetch" copies s3://<ops bucket>/transfer/database/ into /work, then "main" runs its command
+  # with psql and pg_restore, signed in as the master user. The guide's Phase 4 passes the restore as the command.
+  Operations:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-dbops
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: "1024"
+      Memory: "2048"
+      EphemeralStorage: {SizeInGiB: 30}
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      TaskRoleArn: !ImportValue metamorph-app-role   # reads the operations bucket's transfer/ through its policy
+      Volumes: [{Name: work}]
+      ContainerDefinitions:
+        - Name: fetch
+          Image: public.ecr.aws/aws-cli/aws-cli:2.17.0
+          Essential: false
+          EntryPoint: [sh, -c]
+          Command: ['aws s3 cp --recursive "s3://$OPS_BUCKET/transfer/database/" /work/ && ls -l /work']
+          MountPoints: [{SourceVolume: work, ContainerPath: /work}]
+          Environment: [{Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}]
+          Secrets: [{Name: OPS_BUCKET, ValueFrom: /metamorph/ops/bucket}]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-dbops}
+        - Name: main
+          Image: public.ecr.aws/docker/library/postgres:16
+          Essential: true
+          DependsOn: [{ContainerName: fetch, Condition: SUCCESS}]
+          EntryPoint: [sh, -c]
+          Command: ["psql -Atc 'select version()'"]
+          WorkingDirectory: /work
+          MountPoints: [{SourceVolume: work, ContainerPath: /work}]
+          Environment:
+            - {Name: PGUSER, Value: metamorph}
+            - {Name: PGDATABASE, Value: metamorph}
+          Secrets:
+            - {Name: PGHOST, ValueFrom: /metamorph/database/host}
+            - {Name: PGPASSWORD, ValueFrom: /metamorph/database/master-password}
+            - {Name: BI_PASSWORD, ValueFrom: /metamorph/database/bi-password}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-dbops}
 
 Outputs:
-  Host: {Value: !GetAtt Database.Endpoint.Address, Export: {Name: metamorph-database-host}}
+  Host: {Value: !GetAtt Cluster.Endpoint.Address, Export: {Name: metamorph-database-host}}

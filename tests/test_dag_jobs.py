@@ -63,7 +63,7 @@ def test_on_ecs_an_image_runs_as_the_task_definition_named_after_it() -> None:
 
 
 def test_every_image_a_dag_runs_has_its_task_definition_on_ecs(jobs) -> None:
-    template = (Path(__file__).parents[1] / "deploy/aws/jobs.yaml").read_text()
+    template = (Path(__file__).parents[1] / "deploy/aws/ingestion/jobs.yaml").read_text()
     defined = set(re.findall(r"^      Family: (\S+)$", template, re.MULTILINE))
     images = {job.image for job in jobs.values()} | {PLATFORM_IMAGE}
 

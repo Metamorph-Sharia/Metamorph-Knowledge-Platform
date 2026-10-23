@@ -5,7 +5,7 @@ depends on what is installed in Airflow, and each can be run by hand the same wa
 
 METAMORPH_TASK_LAUNCHER chooses where the container runs:
   docker  (the default) on the stack's network, through the host's Docker: the local Compose stack;
-  ecs     as an ECS task on Fargate (deploy/aws). The image's task definition holds its volumes (EFS) and its
+  ecs     as an ECS task on Fargate (deploy/aws/ingestion). The image's task definition holds its volumes (EFS) and its
           settings (Parameter Store), so a DAG passes only the command; `mounts` and `secrets` are Docker's.
 """
 

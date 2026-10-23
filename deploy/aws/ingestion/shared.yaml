@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Metamorph's ingestion layer, what its stacks share (deploy/aws/ingestion/README.md): the connectors' files on EFS,
+  MinerU's private address (Cloud Map), the ingestion images' repositories, the roles of its tasks, its security
+  groups and its way into the core's database. It plugs into the core (deploy/aws/foundation.yaml) through the
+  core's exports only, and the core doesn't change. Needs what the core doesn't: creating IAM roles, EFS and
+  Cloud Map.
+
+Resources:
+  # Security groups, and the ingestion layer's rules into the core's database.
+  AirflowGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph Airflow, VpcId: !ImportValue metamorph-vpc}
+  JobsGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph connector and platform tasks, VpcId: !ImportValue metamorph-vpc}
+  MinerUGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph MinerU task, VpcId: !ImportValue metamorph-vpc}
+  GpuHostGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph GPU container instance (outbound only), VpcId: !ImportValue metamorph-vpc}
+  FilesGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph EFS, VpcId: !ImportValue metamorph-vpc}
+  MinerUFromJobs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref MinerUGroup, IpProtocol: tcp, FromPort: 8010, ToPort: 8010, SourceSecurityGroupId: !Ref JobsGroup}
+  FilesFromJobs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !Ref FilesGroup, IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref JobsGroup}
+  DatabaseFromAirflow:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !ImportValue metamorph-sg-database, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AirflowGroup}
+  DatabaseFromJobs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !ImportValue metamorph-sg-database, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref JobsGroup}
+
+  Namespace:   # mineru.metamorph.internal: the address the connectors call MinerU at
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: metamorph.internal
+      Vpc: !ImportValue metamorph-vpc
+
+  # The connectors' state (stores, PDFs, MinerU caches) and the bundles, on EFS. Files not read for 30 days move
+  # to Infrequent Access, which costs a fifteenth as much; AWS Backup copies the file system daily (35 days kept).
+  Files:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      BackupPolicy: {Status: ENABLED}
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
+      FileSystemTags: [{Key: Name, Value: metamorph}]
+  FilesMountA:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [0, !Split [",", !ImportValue metamorph-subnets]], SecurityGroups: [!Ref FilesGroup]}
+  FilesMountB:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [1, !Split [",", !ImportValue metamorph-subnets]], SecurityGroups: [!Ref FilesGroup]}
+  FilesMountC:
+    Type: AWS::EFS::MountTarget
+    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [2, !Split [",", !ImportValue metamorph-subnets]], SecurityGroups: [!Ref FilesGroup]}
+  # One access point per directory, each owned by uid 1000 (the connectors' user): a task sees only its own.
+  OjkData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /OJK-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  BpkData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /BPK-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  BiData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /BI-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  DsnData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /DSN-MUI-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+  OjkCredentials:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /ojk-credentials, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "700"}}
+  Bundles:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref Files
+      PosixUser: {Uid: "1000", Gid: "1000"}
+      RootDirectory: {Path: /bundles, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
+
+  # The ingestion images. MinerU's is 20 GB, so only its last two are kept.
+  AirflowImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/airflow, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  OjkImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/ojk-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  BpkImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/bpk-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  BiImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/bi-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  DsnImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/dsn-mui-connector, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+  MinerUImages:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/mineru, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}'}}
+
+  # A shell in a running task (ECS Exec), for an operator's port forwarding: deploy/aws/ingestion/tunnel.sh.
+  ExecPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: metamorph-ecs-exec
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel, ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel]
+            Resource: "*"
+  # The platform's ingestion tasks (load, build, health): the blobs bucket. The platform never deletes a blob.
+  PlatformRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: metamorph-platform
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [!Ref ExecPolicy]
+      Policies:
+        - PolicyName: blobs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: [s3:ListBucket], Resource: !ImportValue metamorph-blobs-arn}
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub
+                  - "${Blobs}/*"
+                  - Blobs: !ImportValue metamorph-blobs-arn
+
+  # The wiring the ingestion tasks read from Parameter Store.
+  MinerUUrlSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/connectors/mineru-url, Type: String, Value: http://mineru.metamorph.internal:8010}
+  ClusterSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-cluster, Type: String, Value: !ImportValue metamorph-cluster}
+  SubnetsSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-subnets, Type: String, Value: !ImportValue metamorph-subnets}
+  JobsGroupSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-security-group, Type: String, Value: !Ref JobsGroup}
+  LogGroupSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/airflow/ecs-log-group, Type: String, Value: !ImportValue metamorph-logs}
+
+Outputs:
+  AirflowGroup: {Value: !Ref AirflowGroup, Export: {Name: metamorph-sg-airflow}}
+  JobsGroup: {Value: !Ref JobsGroup, Export: {Name: metamorph-sg-jobs}}
+  MinerUGroup: {Value: !Ref MinerUGroup, Export: {Name: metamorph-sg-mineru}}
+  GpuHostGroup: {Value: !Ref GpuHostGroup, Export: {Name: metamorph-sg-gpu-host}}
+  Namespace: {Value: !Ref Namespace, Export: {Name: metamorph-namespace}}
+  Files: {Value: !Ref Files, Export: {Name: metamorph-efs}}
+  OjkData: {Value: !Ref OjkData, Export: {Name: metamorph-efs-ojk-data}}
+  BpkData: {Value: !Ref BpkData, Export: {Name: metamorph-efs-bpk-data}}
+  BiData: {Value: !Ref BiData, Export: {Name: metamorph-efs-bi-data}}
+  DsnData: {Value: !Ref DsnData, Export: {Name: metamorph-efs-dsn-data}}
+  OjkCredentials: {Value: !Ref OjkCredentials, Export: {Name: metamorph-efs-ojk-credentials}}
+  Bundles: {Value: !Ref Bundles, Export: {Name: metamorph-efs-bundles}}
+  MinerUImagesArn: {Value: !GetAtt MinerUImages.Arn, Export: {Name: metamorph-ecr-mineru-arn}}
+  ExecPolicy: {Value: !Ref ExecPolicy, Export: {Name: metamorph-exec-policy}}
+  PlatformRoleArn: {Value: !GetAtt PlatformRole.Arn, Export: {Name: metamorph-platform-role}}

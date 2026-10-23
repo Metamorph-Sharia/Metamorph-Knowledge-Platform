@@ -31,7 +31,7 @@ CONNECTOR_SETTINGS = (
     "METAMORPH_MINERU_CACHE",
 )
 OJK_CREDENTIALS = f"{CONTAINER_HOME}/.config/ojk-connector/credentials"
-TASK_CONTAINER = "main"  # on ECS, the one container of every task definition (deploy/aws/jobs.yaml)
+TASK_CONTAINER = "main"  # on ECS, the one container of every task definition (deploy/aws/ingestion/jobs.yaml)
 
 
 @dataclass(frozen=True)

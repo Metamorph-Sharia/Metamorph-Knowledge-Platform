@@ -1,11 +1,11 @@
 #!/bin/bash
 # A port on this Mac forwarded into the VPC through a running task, with ECS Exec and Session Manager
-# (docs/aws-deployment-guide.md). Nothing but the load balancer is open to the internet, so this is the way in.
+# (deploy/aws/ingestion/README.md). Nothing but the load balancer is open to the internet, so this is the way in.
 #
-#   deploy/aws/tunnel.sh airflow 18080 8080                 Airflow's UI at http://localhost:18080
-#   deploy/aws/tunnel.sh api 15432 "$DB_HOST:5432"          PostgreSQL on RDS at localhost:15432
+#   deploy/aws/ingestion/tunnel.sh airflow 18080 8080              Airflow's UI at http://localhost:18080
+#   deploy/aws/ingestion/tunnel.sh airflow 15432 "$DB_HOST:5432"   PostgreSQL (Aurora) at localhost:15432
 #
-# The first argument names the task definition, without "metamorph-": a service's (api, airflow) or a one-off
+# The first argument names the task definition, without "metamorph-": a service's (airflow) or a one-off
 # task started with --enable-execute-command (ops).
 # Needs the AWS CLI and its Session Manager plugin. Stop it with Ctrl-C.
 set -euo pipefail

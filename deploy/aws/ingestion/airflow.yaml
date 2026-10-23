@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Airflow on Fargate (docs/aws-deployment-guide.md): the scheduler and its web UI in one task (`standalone`), its
   metadata in RDS. It starts every DAG task as an ECS task (METAMORPH_TASK_LAUNCHER=ecs; jobs.yaml defines them).
-  Its UI isn't public: deploy/aws/tunnel.sh airflow 18080 8080. Stop it with DesiredCount=0: no task then runs.
+  Its UI isn't public: deploy/aws/ingestion/tunnel.sh airflow 18080 8080. Stop it with DesiredCount=0: no task then runs.
 
 Parameters:
   AirflowTag: {Type: String, Description: The metamorph/airflow image's tag (deploy/aws/push-images.sh)}
@@ -110,7 +110,7 @@ Resources:
       TaskDefinition: !Ref Task
       LaunchType: FARGATE
       DesiredCount: !Ref DesiredCount
-      EnableExecuteCommand: true   # deploy/aws/tunnel.sh: its UI
+      EnableExecuteCommand: true   # deploy/aws/ingestion/tunnel.sh: its UI
       DeploymentConfiguration:     # never two schedulers: the old task stops before the new one starts
         MinimumHealthyPercent: 0
         MaximumPercent: 100

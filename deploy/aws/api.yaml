@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  The curation JSON API on Fargate (docs/aws-deployment-guide.md), at api.metamorph.internal:8001 inside the VPC.
-  Only the web app reaches it. Stop it with DesiredCount=0, or `aws ecs update-service --desired-count 0`.
+  The curation JSON API on Fargate (docs/aws-deployment-guide.md), behind an internal load balancer that only the
+  web app may reach; its address goes to Parameter Store (/metamorph/web/api-url) for the web app to read. Also
+  metamorph-cli, the `metamorph` command as a one-off task with the API's settings: migrations (its default), and a
+  build or a health check by hand until the ingestion layer runs them. Stop the API with DesiredCount=0, or
+  `aws ecs update-service --desired-count 0`.
 
 Parameters:
   PlatformTag: {Type: String, Description: The metamorph/platform image's tag (deploy/aws/push-images.sh)}
@@ -11,13 +14,51 @@ Parameters:
     AllowedValues: [0, 1]
 
 Resources:
-  Discovery:
-    Type: AWS::ServiceDiscovery::Service
+  LoadBalancerGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      Name: api
-      NamespaceId: !ImportValue metamorph-namespace
-      DnsConfig: {DnsRecords: [{Type: A, TTL: 10}], RoutingPolicy: MULTIVALUE}
-      HealthCheckCustomConfig: {FailureThreshold: 1}
+      GroupDescription: metamorph API load balancer, from the web app only
+      VpcId: !ImportValue metamorph-vpc
+      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 80, ToPort: 80, SourceSecurityGroupId: !ImportValue metamorph-sg-web}]
+  ApiFromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue metamorph-sg-api
+      IpProtocol: tcp
+      FromPort: 8001
+      ToPort: 8001
+      SourceSecurityGroupId: !Ref LoadBalancerGroup
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: metamorph-api
+      Type: application
+      Scheme: internal
+      Subnets:
+        - !Select [0, !Split [",", !ImportValue metamorph-subnets]]
+        - !Select [1, !Split [",", !ImportValue metamorph-subnets]]
+      SecurityGroups: [!Ref LoadBalancerGroup]
+  Target:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Protocol: HTTP
+      Port: 8001
+      VpcId: !ImportValue metamorph-vpc
+      HealthCheckPath: /healthz   # never touches the database, so health checks don't keep Aurora awake
+      Matcher: {HttpCode: "200"}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: "30"}]
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
+  ApiUrlSetting:
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/web/api-url, Type: String, Value: !Sub "http://${LoadBalancer.DNSName}"}
 
   Task:
     Type: AWS::ECS::TaskDefinition
@@ -29,7 +70,7 @@ Resources:
       Cpu: "256"
       Memory: "1024"
       ExecutionRoleArn: !ImportValue metamorph-execution-role
-      TaskRoleArn: !ImportValue metamorph-platform-role
+      TaskRoleArn: !ImportValue metamorph-app-role
       ContainerDefinitions:
         - Name: main
           Image: !Sub
@@ -44,31 +85,55 @@ Resources:
             - {Name: METAMORPH_S3_BUCKET, ValueFrom: /metamorph/platform/s3-bucket}
             - {Name: METAMORPH_CURATORS, ValueFrom: /metamorph/api/curators}
             - {Name: METAMORPH_WEB_SECRET, ValueFrom: /metamorph/api/web-secret}
-          HealthCheck:
-            Command: [CMD-SHELL, "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')\""]
-            Interval: 15
-            Retries: 5
-            StartPeriod: 30
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-api}
 
   Service:
     Type: AWS::ECS::Service
+    DependsOn: Listener
     Properties:
       ServiceName: api
       Cluster: !ImportValue metamorph-cluster
       TaskDefinition: !Ref Task
       LaunchType: FARGATE
       DesiredCount: !Ref DesiredCount
-      EnableExecuteCommand: true   # deploy/aws/tunnel.sh reaches the database through it
+      HealthCheckGracePeriodSeconds: 60
       DeploymentConfiguration:
         MinimumHealthyPercent: 100
         MaximumPercent: 200
         DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      LoadBalancers: [{ContainerName: main, ContainerPort: 8001, TargetGroupArn: !Ref Target}]
       NetworkConfiguration:
         AwsvpcConfiguration:
-          Subnets: !Split [",", !ImportValue metamorph-subnets]
+          Subnets:   # the load balancer's zones only: it doesn't send traffic to a target in another
+            - !Select [0, !Split [",", !ImportValue metamorph-subnets]]
+            - !Select [1, !Split [",", !ImportValue metamorph-subnets]]
           SecurityGroups: [!ImportValue metamorph-sg-api]
           AssignPublicIp: ENABLED   # no NAT gateway: ECR and Parameter Store over the internet; nothing comes in
-      ServiceRegistries: [{RegistryArn: !GetAtt Discovery.Arn}]
+
+  Cli:   # `metamorph …` once: `db migrate` (the default) per platform release; `build` and `health` by hand
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-cli
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: "1024"
+      Memory: "4096"
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      TaskRoleArn: !ImportValue metamorph-app-role
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/platform:${PlatformTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          Command: [db, migrate]
+          Environment: [{Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}]
+          Secrets:
+            - {Name: METAMORPH_DATABASE_URL, ValueFrom: /metamorph/platform/database-url}
+            - {Name: METAMORPH_S3_BUCKET, ValueFrom: /metamorph/platform/s3-bucket}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-cli}

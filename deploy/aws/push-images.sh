@@ -2,8 +2,8 @@
 # Builds Metamorph's images on this Mac (arm64, Fargate's Graviton) and pushes them to ECR in Jakarta, all with one
 # tag (docs/aws-deployment-guide.md). MinerU's image is x86-64 and is built on the GPU instance instead (Phase 3).
 #
-#   deploy/aws/push-images.sh                          every image
-#   deploy/aws/push-images.sh platform curation-web    some of them
+#   deploy/aws/push-images.sh                          the core's images: platform, curation-web
+#   deploy/aws/push-images.sh airflow bpk-connector    others, once the ingestion layer has their repositories
 #   TAG=20261024-1 deploy/aws/push-images.sh           a tag of your own (default: the UTC time)
 #
 # It builds the working trees as they are: commit first, so a tag always names code that is in git.
@@ -14,14 +14,15 @@ workspace="$(dirname "$platform")"
 region="${AWS_REGION:-ap-southeast-3}"
 registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$region.amazonaws.com"
 tag="${TAG:-$(date -u +%Y%m%d-%H%M)}"
-IMAGES=(platform curation-web airflow ojk-connector bpk-connector bi-connector dsn-mui-connector)
+CORE=(platform curation-web)
+IMAGES=("${CORE[@]}" airflow ojk-connector bpk-connector bi-connector dsn-mui-connector)
 
 build() {  # repository, build context, Dockerfile
   docker build --platform linux/arm64 -t "$registry/metamorph/$1:$tag" -f "$3" "$2"
   docker push "$registry/metamorph/$1:$tag"
 }
 
-[ $# -gt 0 ] || set -- "${IMAGES[@]}"
+[ $# -gt 0 ] || set -- "${CORE[@]}"
 aws ecr get-login-password --region "$region" | docker login --username AWS --password-stdin "$registry"
 for image in "$@"; do
   case "$image" in
