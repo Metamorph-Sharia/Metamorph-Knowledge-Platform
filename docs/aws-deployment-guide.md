@@ -29,7 +29,7 @@ This guide deploys **the core:** the curation web app, the curation API and the 
 ## The design
 
 ```
- Curators ── HTTPS ──► public load balancer (ACM certificate) ──► web   Fargate ARM, ECS service "web"
+ Curators ── HTTPS ──► CloudFront (us-east-1 certificate) ── VPC origin ──► internal load balancer, private subnets ──► web   Fargate ARM, ECS service "web"
                                                                     │ http://<internal load balancer>   (/metamorph/web/api-url)
                                                                     ▼
                                    internal load balancer, from the web app only ──► api   Fargate ARM, ECS service "api" ──► S3 blobs
@@ -58,7 +58,8 @@ A desired count set with the CLI stays until the next update of that service's s
 | **Each service its own stack** | Each stack creates, updates or deletes one service and nothing else. Changes are reviewable and reversible | Console clicks: nothing records what was made |
 | **Aurora Serverless v2, minimum 0 ACU** | The account allows only Aurora Serverless v2. At 0 ACU it pauses when no curator works, and you pay for storage only | A minimum of 0.5 ACU: about $73 a month, even at night |
 | **An internal load balancer in front of the API** | A stable private address, reachable only from the web app's security group. The API stays off the internet, as on the Mac | **Cloud Map:** not allowed in this account. **The web app and API in one task:** saves about $19 a month, but one can't be stopped or deployed without the other |
-| **Public subnets with a public IP per task, no NAT gateway** | Tasks need outbound access to ECR and Parameter Store. A public IPv4 costs $3.65 a month. Inbound, everything but the public load balancer is closed | **NAT gateway:** $43 a month plus data |
+| **CloudFront in front of the web app, through a VPC origin** | The account may not issue certificates in Jakarta, only in us-east-1, which is CloudFront's. The VPC origin reaches an internal load balancer over AWS's network, so no part of the app is on the internet but CloudFront, and nothing crosses it unencrypted. Within the free tier: 1 TB and 10 million requests a month | **A public load balancer with HTTPS:** needs a certificate in Jakarta, which the organization's policy denies. **A public load balancer behind CloudFront over HTTP:** session cookies would cross the internet unencrypted |
+| **Public subnets with a public IP per task, no NAT gateway** | Tasks need outbound access to ECR and Parameter Store. A public IPv4 costs $3.65 a month. Inbound, no security group admits the internet | **NAT gateway:** $43 a month plus data |
 | **Parameter Store for every setting** | Free and encrypted, and ECS reads it into each container at start | **Secrets Manager:** $0.40 per secret a month |
 
 ## Why it fits today's access
@@ -71,7 +72,7 @@ The `Project3Learner` role can't create IAM roles, and every role in the account
 | A role for the API's containers, with S3 | **The same role.** It has no S3 permission of its own, so the buckets' policies grant it: your role may set bucket policies, and in one account a bucket policy is enough |
 | PostgreSQL | Aurora Serverless v2 PostgreSQL, the only engine the account allows. The platform needs nothing Aurora lacks: the Mac's dump uses no extension |
 | A private address for the API | An internal load balancer (`elasticloadbalancing:*`) |
-| HTTPS | ACM and Route 53, both allowed |
+| HTTPS | **Not ACM in Jakarta:** an organization policy (SCP) denies requesting and importing certificates there. ACM in us-east-1 may request them (checked on 2026-10-23), and CloudFront uses those |
 | Resources marked as the project's | Every stack is deployed with the tag `Owner=project3`, which the account's rules accept, and they also protect resources tagged that way |
 
 **The trade-off:** the API runs as the execution role, so it could read every `/metamorph/` parameter, not only its own four. A dedicated role, when the account allows one, replaces it. That means deploying the foundation with a new `AppRoleArn` and adding the role to `BucketRoleArns`, with no other change.
@@ -124,13 +125,14 @@ These are Jakarta on-demand prices from AWS's public price list files, read on 2
 |---|---|---:|
 | Web app: 0.25 vCPU, 0.5 GB, Fargate ARM | $0.04045 per vCPU-hour, $0.00442 per GB-hour | $9.00 |
 | API: 0.25 vCPU, 1 GB | | $10.61 |
-| Public load balancer, and the API's internal one | $0.0252 an hour each, plus a few LCUs | about $38 |
-| Public IPv4: the two tasks, and the public load balancer's two | $0.005 an hour each | $14.60 |
+| The web app's and the API's internal load balancers | $0.0252 an hour each, plus a few LCUs | about $38 |
+| CloudFront: within its free tier (1 TB, 10 million requests a month). VPC origins cost nothing extra | | $0 |
+| Public IPv4: the two tasks. The load balancers are internal and have none | $0.005 an hour each | $7.30 |
 | Aurora: 0.5 ACU while curators work (about 9 hours on weekdays, plus 15 minutes before each pause), paused otherwise | $0.20 per ACU-hour | about $21 |
 | Aurora storage (about 3 GB) and I/O. Backups up to the database's size are free | $0.11 per GB-month, $0.22 per million I/Os | about $1.50 |
 | ECR, CloudWatch Logs (30 days), S3 (3 GB of blobs) | | about $1 |
 | One-off tasks (`metamorph-cli`, `metamorph-dbops`) | billed by the second while they run | cents |
-| **Total** | | **about $96** |
+| **Total** | | **about $89** |
 
 **What moves the total:**
 - **Aurora is the variable.** Used around the clock, it stays at 0.5 ACU or more: about $73 instead of $21. A heavy query scales it up for its duration only, up to `MaxCapacity`, 4 ACUs.
@@ -146,7 +148,7 @@ These are Jakarta on-demand prices from AWS's public price list files, read on 2
    ```bash
    export AWS_REGION=ap-southeast-3
    ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-   ROLE=arn:aws:iam::$ACCOUNT:role/Project3EcsTaskExecutionRole
+   ROLE="arn:aws:iam::${ACCOUNT}:role/Project3EcsTaskExecutionRole"   # braces: in zsh, $ACCOUNT:r would be a modifier
    DOMAIN=curation.<your-domain>
    setting() { aws ssm get-parameter --name "$1" --with-decryption --query Parameter.Value --output text; }
    secret() { aws ssm put-parameter --name "$1" --type SecureString --value "$2" --overwrite >/dev/null; }
@@ -162,11 +164,15 @@ These are Jakarta on-demand prices from AWS's public price list files, read on 2
    VPC=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
    SUBNETS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC" Name=default-for-az,Values=true \
                --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
-   echo "$VPC $SUBNETS"                 # three subnet IDs
+   ZONES=$(for subnet in $(echo "$SUBNETS" | cut -d, -f1-2 | tr ',' ' '); do
+             aws ec2 describe-subnets --subnet-ids "$subnet" --query 'Subnets[0].AvailabilityZone' --output text
+           done | paste -sd, -)
+   echo "$VPC $SUBNETS $ZONES"          # three subnet IDs, then the zones of the first two, in the same order
    ```
-2. **The foundation stack:** the cluster, the security groups, the log group, the buckets with their policies and CORS, the two image repositories, and the wiring parameters. The existing role is the execution role, the app role and the one bucket principal:
+   **Keep this order once deployed.** Later stacks import the list, so CloudFormation won't let it change. The tasks behind the load balancers run in the first two subnets, and the two private subnets go in their zones.
+2. **The foundation stack:** the cluster, the two private subnets, the security groups, the log group, the buckets with their policies and CORS, the two image repositories, and the wiring parameters. The existing role is the execution role, the app role and the one bucket principal:
    ```bash
-   deploy foundation --parameter-overrides VpcId="$VPC" Subnets="$SUBNETS" \
+   deploy foundation --parameter-overrides VpcId="$VPC" Subnets="$SUBNETS" PrivateZones="$ZONES" \
      ExecutionRoleArn="$ROLE" AppRoleArn="$ROLE" BucketRoleArns="$ROLE" AppOrigin="https://$DOMAIN"
    ```
 3. **The secrets,** each generated here and never shown:
@@ -277,20 +283,21 @@ This is the cut-over. **From here on, nobody curates on the Mac**, because their
    ```bash
    deploy api --parameter-overrides DesiredCount=1
    ```
-2. **The certificate.** Request it, add its validation record to your DNS, and wait:
+2. **The certificate, in us-east-1** (CloudFront's region; Jakarta is denied). Request it, add its validation record to your DNS, and wait:
    ```bash
-   CERT=$(aws acm request-certificate --domain-name "$DOMAIN" --validation-method DNS --query CertificateArn --output text)
-   sleep 10; aws acm describe-certificate --certificate-arn "$CERT" \
+   CERT=$(aws acm request-certificate --region us-east-1 --domain-name "$DOMAIN" --validation-method DNS \
+            --tags Key=Owner,Value=project3 --query CertificateArn --output text)
+   sleep 10; aws acm describe-certificate --region us-east-1 --certificate-arn "$CERT" \
      --query 'Certificate.DomainValidationOptions[0].ResourceRecord' --output table      # add this CNAME
-   aws acm wait certificate-validated --certificate-arn "$CERT"
+   aws acm wait certificate-validated --region us-east-1 --certificate-arn "$CERT"
    ```
-3. **The web app,** and its host name:
+3. **The web app,** with its CloudFront distribution. CloudFront takes 5–15 minutes to deploy everywhere:
    ```bash
-   deploy web --parameter-overrides WebTag=$TAG CertificateArn="$CERT"
+   deploy web --parameter-overrides WebTag=$TAG DomainName="$DOMAIN" CertificateArn="$CERT"
    aws cloudformation describe-stacks --stack-name metamorph-web \
-     --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDns'].OutputValue" --output text
+     --query "Stacks[0].Outputs[?OutputKey=='DistributionDomain'].OutputValue" --output text
    ```
-   Add a CNAME from `$DOMAIN` to that name.
+   Add a CNAME from `$DOMAIN` to that `d….cloudfront.net` name.
 
 ## Phase 6: check, then go live
 
@@ -303,7 +310,7 @@ This is the cut-over. **From here on, nobody curates on the Mac**, because their
 | Uploads work | **Add Document** with a small PDF: it goes from the browser straight to S3 |
 | Curation reaches the published schema | Correct something small, then `run_task cli metamorph-sg-api build` exits `0` and the change shows as published |
 | The API isn't public | `aws elbv2 describe-load-balancers --names metamorph-api --query 'LoadBalancers[0].Scheme'` says `internal` |
-| Only the public load balancer is open | `aws ec2 describe-security-groups --filters Name=tag:aws:cloudformation:stack-name,Values=metamorph-foundation --query 'SecurityGroups[].IpPermissions[].IpRanges[].CidrIp'` shows `0.0.0.0/0` twice: its ports 80 and 443 |
+| Nothing is open to the internet | `aws ec2 describe-security-groups --filters Name=tag:aws:cloudformation:stack-name,Values=metamorph-foundation --query 'SecurityGroups[].IpPermissions[].IpRanges[].CidrIp'` is empty, and both load balancers are `internal` |
 | Aurora pauses | After 15 minutes with nobody signed in, CloudWatch's `ServerlessDatabaseCapacity` for `metamorph-1` drops to 0. A paused instance still reports `available` |
 
 **Then go live:** tell the curators the new address. The Mac stays a development stack, with its DAGs paused until the ingestion layer takes over.
@@ -348,5 +355,6 @@ This is the cut-over. **From here on, nobody curates on the Mac**, because their
 | The API's S3 calls fail | `AccessDenied` on opening a PDF or uploading | `BucketRoleArns` must contain the role the API runs as (`AppRoleArn`) |
 | The web app can't reach the API | Pages fail with a connection error | `/metamorph/web/api-url` is written by the API stack: deploy it before the web stack, then restart the web service |
 | The first request after a pause is slow | A curator waits about 15 seconds while Aurora wakes | Expected. Set `MinCapacity=0.5` if that matters more than the $50 a month |
-| No certificate | `aws acm wait` times out | The validation CNAME must be exactly as ACM gave it |
+| No certificate | `aws acm wait` times out | The validation CNAME must be exactly as ACM gave it. The certificate must be in us-east-1: Jakarta's ACM is denied by the organization's policy |
+| CloudFront answers 502 or 504 | It can't reach the load balancer | The load balancer's security group must admit CloudFront's prefix list (`CloudFrontPrefixList`, `pl-bca247d5` in Jakarta), and the web task must be healthy in the target group |
 | A secret leaks | | Secrets exist only in Parameter Store, encrypted, and reach a container at its start. Rotate: `secret … <new value>`, then restart the services that read it |

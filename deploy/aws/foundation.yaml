@@ -12,7 +12,9 @@ Parameters:
     Description: The default VPC
   Subnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: The default VPC's three subnets, one per Availability Zone (public; there is no NAT gateway)
+    Description: >-
+      The default VPC's three subnets, one per Availability Zone (public; there is no NAT gateway). The tasks behind
+      the load balancers run in the first two
   ExecutionRoleArn:
     Type: String
     Description: The role ECS uses to start every task (pull the image, write its log, read its settings)
@@ -28,6 +30,20 @@ Parameters:
     Type: String
     Default: ""
     Description: https://<the curation app's host name>. Browsers there may upload files into the blobs bucket
+
+  CloudFrontPrefixList:
+    Type: String
+    Default: pl-bca247d5
+    Description: >-
+      CloudFront's origin-facing addresses in this region (com.amazonaws.global.cloudfront.origin-facing), the only
+      source the web app's load balancer accepts
+  PrivateZones:
+    Type: CommaDelimitedList
+    Description: The zones of the first two Subnets, in that order. The private subnets go there, beside the tasks
+  PrivateCidrs:
+    Type: CommaDelimitedList
+    Default: 172.31.240.0/24,172.31.241.0/24
+    Description: Two unused ranges of the VPC, for the private subnets CloudFront's VPC origin reaches
 
 Conditions:
   HasAppOrigin: !Not [!Equals [!Ref AppOrigin, ""]]
@@ -45,15 +61,43 @@ Resources:
       LogGroupName: /metamorph
       RetentionInDays: 30
 
-  # Security groups: who may reach whom. Only the public load balancer takes traffic from the internet.
+  # Two private subnets, with no route to the internet: the web app's load balancer lives there, reached only by
+  # CloudFront through its VPC origin. They share the zones of the first two public subnets, where the tasks run.
+  PrivateRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: {VpcId: !Ref VpcId, Tags: [{Key: Name, Value: metamorph-private}]}
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Select [0, !Ref PrivateCidrs]
+      AvailabilityZone: !Select [0, !Ref PrivateZones]
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: metamorph-private-a}]
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Select [1, !Ref PrivateCidrs]
+      AvailabilityZone: !Select [1, !Ref PrivateZones]
+      MapPublicIpOnLaunch: false
+      Tags: [{Key: Name, Value: metamorph-private-b}]
+  PrivateRoutesA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRoutes}
+  PrivateRoutesB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: {SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRoutes}
+
+  # Security groups: who may reach whom. Nothing takes traffic from the internet: curators reach the web app
+  # through CloudFront, whose VPC origin is the only way into its load balancer.
   LoadBalancerGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: metamorph public load balancer, HTTPS from anywhere
+      GroupDescription: metamorph web load balancer, from CloudFront only
       VpcId: !Ref VpcId
       SecurityGroupIngress:
-        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
-        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, SourcePrefixListId: !Ref CloudFrontPrefixList}
   WebGroup:
     Type: AWS::EC2::SecurityGroup
     Properties: {GroupDescription: metamorph curation web app, VpcId: !Ref VpcId}
@@ -152,6 +196,7 @@ Resources:
 Outputs:
   VpcId: {Value: !Ref VpcId, Export: {Name: metamorph-vpc}}
   Subnets: {Value: !Join [",", !Ref Subnets], Export: {Name: metamorph-subnets}}
+  PrivateSubnets: {Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]], Export: {Name: metamorph-private-subnets}}
   Cluster: {Value: !Ref Cluster, Export: {Name: metamorph-cluster}}
   ClusterArn: {Value: !GetAtt Cluster.Arn, Export: {Name: metamorph-cluster-arn}}
   Logs: {Value: !Ref Logs, Export: {Name: metamorph-logs}}

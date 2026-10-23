@@ -1,11 +1,14 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  The curation web app on Fargate behind an HTTPS load balancer (docs/aws-deployment-guide.md). The certificate is
-  ACM's, requested before this stack. Stop it with DesiredCount=0; the load balancer then answers 503.
+  The curation web app on Fargate (docs/aws-deployment-guide.md), served by CloudFront at the app's host name with
+  an ACM certificate from us-east-1 (CloudFront's region; the account may not issue certificates in Jakarta). Its
+  load balancer is internal, in private subnets, and CloudFront reaches it through a VPC origin over AWS's network:
+  nothing of the app is on the internet but CloudFront. Stop it with DesiredCount=0; CloudFront then answers 503.
 
 Parameters:
   WebTag: {Type: String, Description: The metamorph/curation-web image's tag (deploy/aws/push-images.sh)}
-  CertificateArn: {Type: String, Description: "The ACM certificate for the app's host name, in this region"}
+  DomainName: {Type: String, Description: "The app's host name, e.g. curation.example.com"}
+  CertificateArn: {Type: String, Description: "The ACM certificate for that name, issued in us-east-1"}
   DesiredCount:
     Type: Number
     Default: 1
@@ -15,13 +18,10 @@ Resources:
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: metamorph
+      Name: metamorph-web
       Type: application
-      Scheme: internet-facing
-      # Two Availability Zones, the fewest it accepts: each one is a public IPv4 address billed by the hour.
-      Subnets:
-        - !Select [0, !Split [",", !ImportValue metamorph-subnets]]
-        - !Select [1, !Split [",", !ImportValue metamorph-subnets]]
+      Scheme: internal
+      Subnets: !Split [",", !ImportValue metamorph-private-subnets]
       SecurityGroups: [!ImportValue metamorph-sg-load-balancer]
   Target:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -33,22 +33,56 @@ Resources:
       HealthCheckPath: /sign-in
       Matcher: {HttpCode: "200"}
       TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: "30"}]
-  Https:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref LoadBalancer
-      Protocol: HTTPS
-      Port: 443
-      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
-      Certificates: [{CertificateArn: !Ref CertificateArn}]
-      DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
-  Http:
+  Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       LoadBalancerArn: !Ref LoadBalancer
       Protocol: HTTP
       Port: 80
-      DefaultActions: [{Type: redirect, RedirectConfig: {Protocol: HTTPS, Port: "443", StatusCode: HTTP_301}}]
+      DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
+
+  # CloudFront → the internal load balancer, over AWS's network (HTTP inside the VPC; HTTPS to the browser).
+  Origin:
+    Type: AWS::CloudFront::VpcOrigin
+    Properties:
+      VpcOriginEndpointConfig:
+        Name: metamorph-web
+        Arn: !Ref LoadBalancer
+        HTTPPort: 80
+        HTTPSPort: 443
+        OriginProtocolPolicy: http-only
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: metamorph curation web app
+        Aliases: [!Ref DomainName]
+        ViewerCertificate: {AcmCertificateArn: !Ref CertificateArn, SslSupportMethod: sni-only, MinimumProtocolVersion: TLSv1.2_2021}
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200          # includes Asia
+        Origins:
+          - Id: web
+            DomainName: !GetAtt LoadBalancer.DNSName
+            VpcOriginConfig: {VpcOriginId: !GetAtt Origin.Id, OriginReadTimeout: 60}
+        # Pages are signed in and change with every curation: nothing is cached, and the browser's cookies,
+        # headers and query strings reach the app as they were sent. Next.js's hashed assets are cached.
+        DefaultCacheBehavior:
+          TargetOriginId: web
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # Managed-AllViewer
+        CacheBehaviors:
+          - PathPattern: /_next/static/*
+            TargetOriginId: web
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6        # Managed-CachingOptimized
 
   Task:
     Type: AWS::ECS::TaskDefinition
@@ -74,7 +108,7 @@ Resources:
 
   Service:
     Type: AWS::ECS::Service
-    DependsOn: Https
+    DependsOn: Listener
     Properties:
       ServiceName: web
       Cluster: !ImportValue metamorph-cluster
@@ -89,13 +123,13 @@ Resources:
       LoadBalancers: [{ContainerName: main, ContainerPort: 3000, TargetGroupArn: !Ref Target}]
       NetworkConfiguration:
         AwsvpcConfiguration:
-          Subnets:   # the load balancer's zones only: it doesn't send traffic to a target in another
+          Subnets:   # the load balancer's zones (the first two, sorted by zone): it sends no traffic to another
             - !Select [0, !Split [",", !ImportValue metamorph-subnets]]
             - !Select [1, !Split [",", !ImportValue metamorph-subnets]]
           SecurityGroups: [!ImportValue metamorph-sg-web]
-          AssignPublicIp: ENABLED
+          AssignPublicIp: ENABLED   # no NAT gateway: ECR and Parameter Store over the internet; nothing comes in
 
 Outputs:
-  LoadBalancerDns:
-    Description: Point the app's host name here (a CNAME, or a Route 53 alias)
-    Value: !GetAtt LoadBalancer.DNSName
+  DistributionDomain:
+    Description: Point the app's host name here (a CNAME)
+    Value: !GetAtt Distribution.DomainName
