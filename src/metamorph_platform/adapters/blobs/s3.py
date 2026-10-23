@@ -82,9 +82,12 @@ class S3FileLinks:
     def __init__(self, bucket: str, endpoint_url: str | None = None, *, public_endpoint_url: str | None = None) -> None:
         self.bucket = bucket
         self.client = boto3.client("s3", endpoint_url=endpoint_url)
-        # SigV4 explicitly: S3-compatible stores (SeaweedFS) refuse other presigned signatures
+        # SigV4 explicitly: S3-compatible stores (SeaweedFS) refuse other presigned signatures. On AWS itself, virtual
+        # addressing explicitly, or botocore signs for S3's global address, which can't reach an opt-in region's bucket.
+        signer_endpoint = public_endpoint_url or endpoint_url
+        addressing = {} if signer_endpoint else {"s3": {"addressing_style": "virtual"}}
         self.signer = boto3.client(
-            "s3", endpoint_url=public_endpoint_url or endpoint_url, config=Config(signature_version="s3v4")
+            "s3", endpoint_url=signer_endpoint, config=Config(signature_version="s3v4", **addressing)
         )
 
     def download_url(self, storage_key: str, *, name: str, media_type: str) -> str:
