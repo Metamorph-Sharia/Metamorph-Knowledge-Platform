@@ -1,9 +1,10 @@
 """What Airflow runs for each connector, as plain data. No Airflow import, so it is tested on its own.
 
 Each job runs in its connector's own image (built from the connector's repository):
-  1. collect   the connector's scheduled run, then `export` of a contract v2 bundle into /bundles,
-               even when the run raised alerts, so the platform always gets the latest full snapshot
-  2. load      `metamorph load` in the platform image
+  1. collect   the connector's scheduled run, then `export` of its bundle into /bundles, even when the run
+               raised alerts, so the platform always gets the latest full snapshot
+  2. load      in the platform image, into the connector's layer: `metamorph load` (regulations, contract v2,
+               then the registry build) or `metamorph market load --publish` (market data, market contract)
   3. discard   the bundle, once it is loaded (a failed load keeps it for inspection)
 
 The connectors keep their state (SQLite stores, downloaded files) in their repositories' data/
@@ -13,6 +14,7 @@ directories, bind-mounted, so a scheduled run and a person's CLI run see the sam
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 PLATFORM_IMAGE = "metamorph-platform:dev"  # the platform's tasks: load, build, health
 BUNDLES = "/bundles"
@@ -41,6 +43,11 @@ class Mount:
     kind: str = "bind"  # bind | volume
 
 
+class Layer(StrEnum):
+    REGULATION = "regulation"  # contract v2 bundles: `metamorph load`, then the registry build
+    MARKET = "market"  # market contract bundles: `metamorph market load --publish`
+
+
 @dataclass(frozen=True)
 class ConnectorJob:
     dag_id: str
@@ -54,6 +61,7 @@ class ConnectorJob:
     secrets: tuple[str, ...] = ()  # environment variables passed through, never logged
     description: str = ""
     tags: tuple[str, ...] = ()
+    layer: Layer = Layer.REGULATION
 
 
 def passed_on(job: ConnectorJob) -> tuple[str, ...]:
@@ -82,6 +90,12 @@ def collect_command(job: ConnectorJob, run_id: str) -> list[str]:
         ]
     )
     return ["sh", "-c", script]
+
+
+def load_command(job: ConnectorJob, run_id: str) -> list[str]:
+    """The platform's command for the job's bundle, in the job's layer."""
+    bundle = bundle_path(job.connector, run_id)
+    return ["market", "load", bundle, "--publish"] if job.layer is Layer.MARKET else ["load", bundle]
 
 
 def discard_command(job: ConnectorJob, run_id: str) -> list[str]:
@@ -151,6 +165,19 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             collect="dsn sync --all --refresh-index --quiet",
             description="DSN-MUI fatwas, full pass: re-download everything to catch silent re-uploads",
             **dsn,
+        ),
+        ConnectorJob(
+            dag_id="ingest_ojk_register",
+            connector="ojk-register",
+            image="metamorph/ojk-register:dev",
+            schedule="45 2 * * 1",  # weekly, Mondays: OJK publishes each list on no fixed day
+            collect="ojk-register sync",  # exits 2 on a refusal or an edition it can't read: the task fails
+            export="ojk-register export --out {out} --run-id {run_id}",
+            mounts=(data("OJK-Register-Connector"), bundles),
+            secrets=("OJK_REGISTER_CONTACT",),  # added to the connector's User-Agent, if set
+            description="OJK's register of licensed fintech lenders: new editions from OJK's directory, export",
+            tags=("ojk", "market"),
+            layer=Layer.MARKET,
         ),
     ]
 

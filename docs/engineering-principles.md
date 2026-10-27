@@ -19,6 +19,10 @@ Extraction quality is prioritised by its impact on retrieval and answer accuracy
 - **Count the cost of a rule.** Every rule adds code, tests and a chance to break another document, and new kinds of document are coming. A rule is added only when its benefit, measured across the corpus, outweighs that. A rule that causes regressions elsewhere is removed, not patched with exceptions.
 - **Prefer removing complexity to adding it.** When two rules overlap, or a rule only serves a case another mechanism already covers, remove one.
 
+## OCR only through MinerU
+
+Set by the project owner on 2026-10-27. **Whenever reading a PDF requires OCR, the MinerU service does it** (`packages/metamorph-pdf-text`), in every repository. No other OCR engine is added: no Tesseract, no PyMuPDF OCR, no cloud OCR API. A PDF's text layer may still be read directly where it is good. When OCR is needed and no MinerU service is configured, the work fails with a clear message rather than falling back to another engine.
+
 ## Checks warn; fallbacks need strong evidence
 
 - A failed check need not change the output. Fall back to another reading only on strong evidence that a reading is unreliable: a born-digital page's words differ from the PDF's own characters, or OCR is noisier than the text layer.

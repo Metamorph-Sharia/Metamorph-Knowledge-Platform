@@ -4,7 +4,7 @@ import pytest
 
 from metamorph_platform.adapters.postgres.migrate import Migration, MigrationError, applied, available, migrate
 
-SCHEMAS = {"ingest", "registry", "curation", "published"}
+SCHEMAS = {"ingest", "registry", "curation", "published", "market", "published_market"}
 
 
 def write(directory: Path, name: str, sql: str = "SELECT 1;") -> None:

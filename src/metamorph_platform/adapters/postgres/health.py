@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 import psycopg
 
-from metamorph_platform.domain.health import ConnectorActivity, Health, HealthFacts
+from metamorph_platform.domain.health import ConnectorActivity, Health, HealthFacts, RegisterFreshness
 
 _ACTIVITY = """
 SELECT connector,
@@ -28,6 +28,7 @@ class PostgresHealth:
             now=now,
             connectors=tuple(ConnectorActivity(*row) for row in self.connection.execute(_ACTIVITY)),
             open_reviews=dict(self.connection.execute(_OPEN_REVIEWS).fetchall()),
+            registers=tuple(RegisterFreshness(*row) for row in self.connection.execute(_REGISTERS)),
         )
 
     def record(self, health: Health) -> None:
@@ -35,3 +36,10 @@ class PostgresHealth:
             "INSERT INTO ingest.health_snapshot (status, checks) VALUES (%s, %s)",
             (health.status.value, json.dumps([asdict(check) for check in health.checks])),
         )
+
+# A register's newest edition as published; one without a publish yet has none.
+_REGISTERS = """
+SELECT r.id, p.newest_edition, r.fresh_days
+FROM market.register r LEFT JOIN published_market.register p ON p.id = r.id
+ORDER BY r.id
+"""

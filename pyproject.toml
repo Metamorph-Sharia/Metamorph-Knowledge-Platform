@@ -7,6 +7,7 @@ dependencies = [
     "boto3>=1.43.114",
     "fastapi>=0.115",
     "metamorph-contract",
+    "metamorph-market-contract",
     "psycopg[binary]>=3.2",
     "uvicorn>=0.30",
 ]
@@ -34,12 +35,13 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 metamorph-contract = { workspace = true }
+metamorph-market-contract = { workspace = true }
 metamorph-pdf-text = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "tests"]
 addopts = "--import-mode=importlib"
-pythonpath = ["packages/metamorph-contract/tests", "packages/metamorph-pdf-text/tests", "tests", "dags"]
+pythonpath = ["packages/metamorph-contract/tests", "packages/metamorph-market-contract/tests", "packages/metamorph-pdf-text/tests", "tests", "dags"]
 markers = [
     "database: needs a PostgreSQL server (METAMORPH_TEST_DATABASE_URL); skipped otherwise",
     "mineru: needs a MinerU service (METAMORPH_TEST_MINERU_URL); skipped otherwise",

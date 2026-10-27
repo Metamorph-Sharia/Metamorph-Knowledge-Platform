@@ -9,11 +9,13 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | Path | What it is |
 |---|---|
 | [packages/metamorph-contract](packages/metamorph-contract/CONTRACT_V2.md) | **Contract v2**: JSON Schemas (the formal contract) for the normalized document and bundle manifest, the matching Python types, validator and bundle writer/reader. Every connector depends on it |
+| [packages/metamorph-market-contract](packages/metamorph-market-contract/MARKET_CONTRACT.md) | **Market contract 1.0**: the market data layer's counterpart to contract v2. JSON Schemas, Python types and a bundle writer/reader for the `licensed_entity` record that `OJK-Register-Connector` exports ([plan](docs/market-data-layer-plan.md)) |
 | [src/metamorph_platform](src/metamorph_platform) | The platform: `metamorph` CLI, PostgreSQL migrations (`adapters/postgres/migrations`). Layers follow the dependency rule, enforced by `tests/test_architecture.py` |
 | [compose.yaml](compose.yaml) | Local stack: PostgreSQL 16 + pgvector, SeaweedFS (S3), Airflow 2.10, and the platform image |
 | [docs/data-source-management-plan.md](docs/data-source-management-plan.md) | The phased plan for this layer |
 | [dags](dags/README.md) | Airflow DAGs: one ingest DAG per connector job, `registry_build`, `health` |
 | [docs/published-schema.md](docs/published-schema.md) | **The read contract** for the Knowledge and Retrieval layer: tables, IDs, provision addresses, links, validity |
+| [docs/published-market-schema.md](docs/published-market-schema.md) | **The market read contract** (`published_market`): registers, editions, companies, licenses and registrations, listings. Loaded with `metamorph market load BUNDLE`, rebuilt with `metamorph market publish` |
 | [docs/curation-workflow-design.md](docs/curation-workflow-design.md) | The publish gate, held documents, approving as is, and text correction |
 | [docs/curation-workflow-implementation-plan.md](docs/curation-workflow-implementation-plan.md) | How that design is built: two releases, step by step, test lists first |
 | [docs/aws-step9-guide.md](docs/aws-step9-guide.md) | Running the plan's step 9 (MinerU re-extraction) on one AWS GPU instance in Jakarta, then the live rollout from its cached readings: design, costs, runbook with the AWS CLI |
@@ -22,6 +24,7 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | [docs/aws-deployment-guide.md](docs/aws-deployment-guide.md) | Deploying on AWS in Jakarta with the account's current access: the core first (the curation web app and API as ECS services on Fargate, Aurora Serverless v2 PostgreSQL, settings in Parameter Store), one CloudFormation stack each ([`deploy/aws/`](deploy/aws)). The ingestion layer (Airflow, the connectors, MinerU) plugs in later ([`deploy/aws/ingestion/`](deploy/aws/ingestion/README.md)) |
 | [docs/deployment-architecture.md](docs/deployment-architecture.md) | The architecture as deployed with MinerU: the rings in each package, the composition roots, the services, what changes at deployment, and why step 9 on SageMaker AI leaves it as it is |
 | [docs/mineru-extraction-plan.md](docs/mineru-extraction-plan.md) | MinerU extraction in every connector, text cleaning, parser 6 (huruf/angka) and the retrieval units: architecture, steps, validation |
+| [docs/market-data-layer-plan.md](docs/market-data-layer-plan.md) | The market data layer beside the regulation layer, for journey Phases 1 and 2: the phases, then Phase 1 in detail: `OJK-Register-Connector` (OJK's monthly register of licensed fintech lenders), the market contract, and the `market` and `published_market` schemas. Phase 1 closed (AWS deferred until every phase is built) |
 | [docs/curation-web-separation-design.md](docs/curation-web-separation-design.md) | The curation web app in its own repository (Next.js + TypeScript) over the curation JSON API; migration plan (Phases 1 to 3 built) |
 
 ## The database

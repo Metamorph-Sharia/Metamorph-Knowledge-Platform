@@ -3,6 +3,8 @@
     a connector     ok while it loaded within 1.5 × its cadence; warning after that, or when a run failed
                     since its last good load; critical after 3 × its cadence, or if it never loaded
     quarantine      warning while lines that broke the contract wait for a person
+    a register      warning while its newest published edition is older than the register's bound, or it has none
+                    (market.register.fresh_days: OJK publishes each list one to three months after its date)
 
 The overall status is the worst check's.
 """
@@ -11,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 LATE = 1.5  # × the cadence: one run missed
@@ -23,6 +25,7 @@ CADENCE = {
     "bpk": timedelta(days=1),
     "bi-website": timedelta(days=1),
     "dsn-fatwa": timedelta(days=7),
+    "ojk-register": timedelta(days=7),
 }
 
 
@@ -44,10 +47,18 @@ class ConnectorActivity:
 
 
 @dataclass(frozen=True)
+class RegisterFreshness:
+    register: str
+    newest_edition: date | None
+    fresh_days: int
+
+
+@dataclass(frozen=True)
 class HealthFacts:
     now: datetime
     connectors: tuple[ConnectorActivity, ...]
     open_reviews: Mapping[str, int]  # review kind → open items
+    registers: tuple[RegisterFreshness, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -68,6 +79,7 @@ def assess(facts: HealthFacts, cadence: Mapping[str, timedelta] = CADENCE) -> He
     checks = [
         *(_connector(name, every, activity.get(name), facts.now) for name, every in cadence.items()),
         _quarantine(facts.open_reviews.get("quarantine", 0)),
+        *(_register(register, facts.now.date()) for register in facts.registers),
     ]
     return Health(max((c.severity for c in checks), key=lambda s: s.rank), tuple(checks))
 
@@ -92,6 +104,15 @@ def _quarantine(waiting: int) -> Check:
     if waiting:
         return Check("quarantine", Severity.WARNING, f"{waiting} bundle line(s) broke the contract and wait for review")
     return Check("quarantine", Severity.OK, "nothing quarantined")
+
+
+def _register(register: RegisterFreshness, today: date) -> Check:
+    name = f"register {register.register}"
+    if register.newest_edition is None:
+        return Check(name, Severity.WARNING, "no edition published yet")
+    age = (today - register.newest_edition).days
+    detail = f"newest edition {register.newest_edition}, {age} days old (fresh within {register.fresh_days})"
+    return Check(name, Severity.WARNING if age > register.fresh_days else Severity.OK, detail)
 
 
 def _hours(span: timedelta) -> str:

@@ -1,6 +1,7 @@
 """One DAG per connector job (metamorph_pipeline/jobs.py): collect and export → load → discard the bundle.
 
-A successful load updates the `registry` Dataset, which triggers registry_build.
+A successful regulation load updates the `registry` Dataset, which triggers registry_build. A market load
+publishes its own layer (`metamorph market load --publish`).
 """
 
 from __future__ import annotations
@@ -15,11 +16,12 @@ from metamorph_pipeline.containers import container, host_path, platform
 from metamorph_pipeline.jobs import (
     BUNDLES,
     BUNDLES_VOLUME,
+    Layer,
     Mount,
-    bundle_path,
     collect_command,
     discard_command,
     ingest_jobs,
+    load_command,
     passed_on,
 )
 
@@ -44,10 +46,10 @@ for job in ingest_jobs(host_path("METAMORPH_WORKSPACE"), ojk_credentials=host_pa
             execution_timeout=timedelta(hours=6),
         )  # fmt: skip
         load = platform(
-            "load", ["load", bundle_path(job.connector, RUN_ID)],
+            "load", load_command(job, RUN_ID),
             mounts=[Mount(BUNDLES_VOLUME, BUNDLES, kind="volume")],
             trigger_rule=TriggerRule.ALL_DONE,  # a run that raised alerts still exported its bundle
-            outlets=[REGISTRY],
+            outlets=[REGISTRY] if job.layer is Layer.REGULATION else [],
         )  # fmt: skip
         discard = container("discard", job.image, discard_command(job, RUN_ID), mounts=job.mounts, retries=0)
         collect >> load >> discard

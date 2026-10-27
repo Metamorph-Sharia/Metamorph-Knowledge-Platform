@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:metamorph:market:1.0:licensed-entity",
+  "title": "Licensed entity (market contract 1.0)",
+  "description": "One line of records.jsonl: one license on a regulator's register, with every edition of the register that listed it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "kind",
+    "source",
+    "entity",
+    "listings",
+    "files",
+    "source_fields"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "market-1.0"
+    },
+    "kind": {
+      "const": "licensed_entity"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "entity": {
+      "$ref": "#/$defs/entity"
+    },
+    "listings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/listing"
+      },
+      "description": "One per edition of the register that lists the license, oldest first."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "description": "The register editions the listings were read from, as published."
+    },
+    "source_fields": {
+      "type": "object",
+      "description": "The newest listing's cells, unchanged."
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connector",
+        "connector_version",
+        "source_id",
+        "url",
+        "fetched_at"
+      ],
+      "properties": {
+        "connector": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "connector_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The license number, as printed."
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The newest edition's page, when known."
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "register",
+        "legal_name",
+        "names",
+        "business_type",
+        "license",
+        "website",
+        "channels"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+:[a-z0-9_]+:[a-z0-9][a-z0-9._-]*$",
+          "description": "{register}:{license key}, e.g. ojk:lpbbti:kep-49-d.05-2017"
+        },
+        "register": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+:[a-z0-9_]+$",
+          "description": "{issuer}:{register}, e.g. ojk:lpbbti"
+        },
+        "legal_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "As in the newest listing."
+        },
+        "names": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Every other name listed: platform names, earlier legal names."
+        },
+        "business_type": {
+          "enum": [
+            "sharia",
+            "conventional",
+            "unknown"
+          ]
+        },
+        "license": {
+          "$ref": "#/$defs/license"
+        },
+        "website": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "As printed."
+        },
+        "channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "android",
+              "ios"
+            ]
+          }
+        }
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "date",
+        "kind"
+      ],
+      "properties": {
+        "number": {
+          "type": "string",
+          "minLength": 1,
+          "description": "As printed, e.g. KEP-49/D.05/2017"
+        },
+        "date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "kind": {
+          "enum": [
+            "license",
+            "registration",
+            "unknown"
+          ],
+          "description": "license: licensed by a decision (KEP-…, berizin); registration: registered by a letter (S-…, terdaftar), not yet licensed; unknown: neither form"
+        }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "edition",
+        "file",
+        "page",
+        "row",
+        "legal_name",
+        "cells"
+      ],
+      "properties": {
+        "edition": {
+          "$ref": "#/$defs/date"
+        },
+        "file": {
+          "$ref": "#/$defs/sha256"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "row": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The row's number as printed."
+        },
+        "legal_name": {
+          "type": "string",
+          "description": "The company's name as this edition lists it; \"\" when the row has none."
+        },
+        "cells": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The row's cells under their printed headers."
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "role",
+        "media_type",
+        "source_url",
+        "edition"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "role": {
+          "enum": [
+            "register_edition"
+          ]
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edition": {
+          "$ref": "#/$defs/date"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+[project]
+name = "metamorph-market-contract"
+version = "1.0.0"
+description = "Market contract 1.0: JSON Schemas and Python types for the records every Metamorph market connector emits"
+readme = "MARKET_CONTRACT.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.23",
+    "rfc3339-validator>=0.1.4",  # makes the schema's "date-time" format binding
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/metamorph_market"]

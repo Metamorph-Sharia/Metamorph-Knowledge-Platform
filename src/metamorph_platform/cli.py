@@ -12,6 +12,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+import metamorph_market
 from metamorph_contract import Bundle, UnloadableBundle
 
 from metamorph_platform import wiring
@@ -22,7 +23,7 @@ from metamorph_platform.domain.health import Severity
 
 EXIT_OK, EXIT_REFUSED, EXIT_MISCONFIGURED = 0, 1, 2
 MIN_PASSWORD_LENGTH = 12
-REFUSALS = (migrations.MigrationError, BundleAlreadyLoaded, UnloadableBundle)
+REFUSALS = (migrations.MigrationError, BundleAlreadyLoaded, UnloadableBundle, metamorph_market.UnloadableBundle)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,6 +66,16 @@ def _parser() -> argparse.ArgumentParser:
     publish = commands.add_parser("publish", help="refresh `published` for documents that changed")
     publish.add_argument("--all", action="store_true", help="republish every document")
     publish.set_defaults(run=_publish)
+
+    market = commands.add_parser("market", help="the market data layer: registers of licensed entities")
+    market_actions = market.add_subparsers(required=True, metavar="ACTION")
+    market_load = market_actions.add_parser("load", help="load a market connector's bundle (market contract)")
+    market_load.add_argument("bundle", type=Path, help="the bundle directory (manifest.json, records.jsonl, blobs/)")
+    market_load.add_argument("--publish", action="store_true", help="refresh `published_market` afterwards")
+    market_load.set_defaults(run=_market_load)
+    market_actions.add_parser("publish", help="rebuild `published_market` from the records held").set_defaults(
+        run=_market_publish
+    )
 
     parse = commands.add_parser("parse", help="parse new or changed texts: provisions, citations, stated dates")
     parse.add_argument("--all", action="store_true", help="parse every current text again")
@@ -140,6 +151,23 @@ def _load(settings: Settings, arguments: argparse.Namespace) -> int:
 def _publish(settings: Settings, arguments: argparse.Namespace) -> int:
     with wiring.connect(settings) as connection:
         print(json.dumps(wiring.publish(connection, settings).run(everything=arguments.all).counts(), indent=2))
+    return EXIT_OK
+
+
+def _market_load(settings: Settings, arguments: argparse.Namespace) -> int:
+    bundle = metamorph_market.Bundle(arguments.bundle)
+    with wiring.connect(settings) as connection:
+        report = wiring.load_market_bundle(connection, settings).run(bundle, uri=str(arguments.bundle.resolve()))
+        result = {"bundle_id": report.bundle_id, "connector": report.connector, **report.counts()}
+        if arguments.publish:
+            result["published"] = asdict(wiring.publish_market(connection).run())
+    print(json.dumps(result, indent=2))
+    return EXIT_OK
+
+
+def _market_publish(settings: Settings, _: argparse.Namespace) -> int:
+    with wiring.connect(settings) as connection:
+        print(json.dumps(asdict(wiring.publish_market(connection).run()), indent=2))
     return EXIT_OK
 
 

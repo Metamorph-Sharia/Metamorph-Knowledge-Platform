@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "metamorph-contract",
     "metamorph-knowledge-platform",
+    "metamorph-market-contract",
     "metamorph-pdf-text",
 ]
 
@@ -247,6 +248,7 @@ dependencies = [
     { name = "boto3" },
     { name = "fastapi" },
     { name = "metamorph-contract" },
+    { name = "metamorph-market-contract" },
     { name = "psycopg", extra = ["binary"] },
     { name = "uvicorn" },
 ]
@@ -264,6 +266,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.43.114" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "metamorph-contract", editable = "packages/metamorph-contract" },
+    { name = "metamorph-market-contract", editable = "packages/metamorph-market-contract" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
@@ -274,6 +277,21 @@ dev = [
     { name = "metamorph-pdf-text", editable = "packages/metamorph-pdf-text" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
+name = "metamorph-market-contract"
+version = "1.0.0"
+source = { editable = "packages/metamorph-market-contract" }
+dependencies = [
+    { name = "jsonschema" },
+    { name = "rfc3339-validator" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.23" },
+    { name = "rfc3339-validator", specifier = ">=0.1.4" },
 ]
 
 [[package]]

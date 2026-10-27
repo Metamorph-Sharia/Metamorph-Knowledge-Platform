@@ -2,7 +2,8 @@
 
     domain  →  application  →  adapters  →  entry points (cli, wiring, config, dags)
 
-Inner rings import only the standard library, the contract package and rings further in.
+Inner rings import only the standard library, the contract packages (documents and market records) and rings
+further in.
 Adapted from BPK-Source-Connector/tests/test_architecture.py.
 """
 
@@ -13,7 +14,7 @@ import sys
 from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[1] / "src" / "metamorph_platform"
-CONTRACT = "metamorph_contract"
+CONTRACTS = {"metamorph_contract", "metamorph_market"}
 
 INNER_RINGS = {
     "domain": {"domain"},
@@ -50,7 +51,7 @@ def violations() -> list[str]:
                 target = module.split(".")[1] if "." in module else ""
                 if target not in INNER_RINGS[ring]:
                     found.append(f"{path.relative_to(PACKAGE)} ({ring}) imports {module}")
-            elif top not in sys.stdlib_module_names | {CONTRACT, "__future__"} and ring not in MAY_USE_THIRD_PARTY:
+            elif top not in sys.stdlib_module_names | CONTRACTS | {"__future__"} and ring not in MAY_USE_THIRD_PARTY:
                 found.append(f"{path.relative_to(PACKAGE)} ({ring}) imports third-party {module}")
     return found
 

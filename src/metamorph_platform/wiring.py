@@ -15,6 +15,7 @@ from metamorph_platform.adapters.postgres.curation import PostgresCurationAction
 from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks, PostgresParsedTexts, PostgresValidity
 from metamorph_platform.adapters.postgres.health import PostgresHealth
 from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, PostgresRegistry, PostgresReviewQueue
+from metamorph_platform.adapters.postgres.market import PostgresMarket, PostgresPublishedMarket
 from metamorph_platform.adapters.postgres.publishing import PostgresPublication
 from metamorph_platform.adapters.postgres.reviews import PostgresOpenReviews
 from metamorph_platform.adapters.postgres.views import PostgresCurationViews
@@ -23,8 +24,10 @@ from metamorph_platform.application.check_health import CheckHealth
 from metamorph_platform.application.compute_validity import ComputeValidity
 from metamorph_platform.application.curate import CorrectText, Curate
 from metamorph_platform.application.load_bundle import LoadBundle
+from metamorph_platform.application.load_market_bundle import LoadMarketBundle
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.publish import Publish
+from metamorph_platform.application.publish_market import PublishMarket
 from metamorph_platform.application.resolve_citations import ResolveCitations
 from metamorph_platform.application.settle_reviews import SettleReviews
 from metamorph_platform.config import Settings
@@ -47,6 +50,19 @@ def load_bundle(connection: psycopg.Connection, settings: Settings) -> LoadBundl
         reviews=PostgresReviewQueue(connection),
         overrides=PostgresOverrides(connection),
     )
+
+
+def load_market_bundle(connection: psycopg.Connection, settings: Settings) -> LoadMarketBundle:
+    return LoadMarketBundle(
+        ledger=PostgresIngestLedger(connection),
+        market=PostgresMarket(connection),
+        blobs=blob_store(settings),
+        reviews=PostgresReviewQueue(connection),
+    )
+
+
+def publish_market(connection: psycopg.Connection) -> PublishMarket:
+    return PublishMarket(source=PostgresMarket(connection), published=PostgresPublishedMarket(connection))
 
 
 def publish(connection: psycopg.Connection, settings: Settings) -> Publish:

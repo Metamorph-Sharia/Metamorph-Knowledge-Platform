@@ -13,14 +13,19 @@ from metamorph_pipeline.jobs import (
     PLATFORM_IMAGE,
     TASK_CONTAINER,
     ConnectorJob,
+    Layer,
     bundle_path,
     collect_command,
     ingest_jobs,
+    load_command,
     passed_on,
     task_family,
 )
 
 WORKSPACE = "/Users/someone/Metamorph-Sharia"
+# Images whose ECS task definition waits: the market data layer joins the AWS ingestion layer after every phase is
+# built (docs/market-data-layer-plan.md, Step 10, deferred by the project owner on 2026-10-27).
+ECS_DEFERRED = {"metamorph/ojk-register:dev"}
 CREDENTIALS = "/Users/someone/.config/ojk-connector/credentials"
 
 
@@ -30,8 +35,37 @@ def jobs() -> dict[str, ConnectorJob]:
 
 
 def test_every_connector_has_a_scheduled_job(jobs) -> None:
-    assert sorted(jobs) == ["ingest_bi", "ingest_bpk", "ingest_dsn_fatwa", "ingest_dsn_fatwa_full", "ingest_ojk"]
-    assert {job.connector for job in jobs.values()} == {"ojk", "bpk", "bi-website", "dsn-fatwa"}
+    assert sorted(jobs) == [
+        "ingest_bi", "ingest_bpk", "ingest_dsn_fatwa", "ingest_dsn_fatwa_full", "ingest_ojk", "ingest_ojk_register",
+    ]
+    assert {job.connector for job in jobs.values()} == {"ojk", "bpk", "bi-website", "dsn-fatwa", "ojk-register"}
+
+
+def test_health_expects_every_connector_on_its_cadence(jobs) -> None:
+    from metamorph_platform.domain.health import CADENCE
+
+    assert {job.connector for job in jobs.values()} == set(CADENCE)
+
+
+def test_the_register_job_syncs_and_loads_into_the_market_layer(jobs) -> None:
+    register = jobs["ingest_ojk_register"]
+
+    assert (register.image, register.layer, register.collect) == (
+        "metamorph/ojk-register:dev", Layer.MARKET, "ojk-register sync",
+    )
+    assert register.export == "ojk-register export --out {out} --run-id {run_id}"
+    assert [(m.source, m.target) for m in register.mounts] == [
+        (f"{WORKSPACE}/OJK-Register-Connector/data", "/workspace/OJK-Register-Connector/data"),
+        ("metamorph-bundles", BUNDLES),
+    ]
+    assert "OJK_REGISTER_CONTACT" in passed_on(register)
+
+
+def test_a_bundle_loads_into_its_own_layer(jobs) -> None:
+    assert load_command(jobs["ingest_ojk"], "r1") == ["load", "/bundles/ojk/r1"]
+    assert load_command(jobs["ingest_ojk_register"], "r1") == [
+        "market", "load", "/bundles/ojk-register/r1", "--publish",
+    ]
 
 
 def test_each_connector_keeps_its_own_data_directory_and_ojk_its_token(jobs) -> None:
@@ -65,7 +99,7 @@ def test_on_ecs_an_image_runs_as_the_task_definition_named_after_it() -> None:
 def test_every_image_a_dag_runs_has_its_task_definition_on_ecs(jobs) -> None:
     template = (Path(__file__).parents[1] / "deploy/aws/ingestion/jobs.yaml").read_text()
     defined = set(re.findall(r"^      Family: (\S+)$", template, re.MULTILINE))
-    images = {job.image for job in jobs.values()} | {PLATFORM_IMAGE}
+    images = {job.image for job in jobs.values()} - ECS_DEFERRED | {PLATFORM_IMAGE}
 
     assert {task_family(image) for image in images} <= defined
     assert re.findall(r"ContainerDefinitions:\n        - Name: (\S+)", template) == [TASK_CONTAINER] * len(defined)

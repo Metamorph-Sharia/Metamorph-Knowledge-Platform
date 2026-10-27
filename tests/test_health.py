@@ -77,3 +77,20 @@ def test_health_exits_by_severity_unless_told_to_fail_only_on_worse() -> None:
 
     assert [health_exit(s, Severity.WARNING) for s in Severity] == [0, 1, 2]
     assert [health_exit(s, Severity.CRITICAL) for s in Severity] == [0, 0, 2]
+
+
+def test_a_register_is_fresh_while_its_newest_edition_is_within_its_bound() -> None:
+    from metamorph_platform.domain.health import RegisterFreshness
+
+    fresh = RegisterFreshness("ojk:lpbbti", NOW.date() - timedelta(days=88), fresh_days=90)
+    stale = RegisterFreshness("ojk:lpbbti", NOW.date() - timedelta(days=91), fresh_days=90)
+    empty = RegisterFreshness("ojk:lpbbti", None, fresh_days=90)
+
+    def check(register):  # noqa: ANN001, ANN202
+        health = assess(HealthFacts(now=NOW, connectors=(), open_reviews={}, registers=(register,)), {})
+        return next(found for found in health.checks if found.name == "register ojk:lpbbti")
+
+    assert check(fresh).severity == Severity.OK
+    assert check(fresh).detail == "newest edition 2026-07-24, 88 days old (fresh within 90)"
+    assert check(stale).severity == Severity.WARNING
+    assert (check(empty).severity, check(empty).detail) == (Severity.WARNING, "no edition published yet")

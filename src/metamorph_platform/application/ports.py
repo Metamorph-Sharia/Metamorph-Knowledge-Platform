@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from metamorph_contract import Manifest, NormalizedDocument
+from metamorph_market import LicensedEntityRecord
 
 from metamorph_platform.domain.citations import TextCitation
 from metamorph_platform.domain.curation import ActiveOverride
@@ -18,6 +19,7 @@ from metamorph_platform.domain.dates import TextDates
 from metamorph_platform.domain.gate import HoldReason
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
+from metamorph_platform.domain.market.publication import MarketPublication, RegisterInfo
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
 from metamorph_platform.domain.structure import Structure
 from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, StatusChange
@@ -80,6 +82,48 @@ class Registry(Protocol):
 
     def mark_missing(self, connector: str, present: set[str]) -> int:
         """Records of `connector` absent from a full snapshot; returns how many newly went missing."""
+
+
+class MarketStore(Protocol):
+    """Market records as received (market contract), keyed by (connector, source_id)."""
+
+    def registers(self) -> set[str]:
+        """The registers the platform knows (market.register)."""
+        ...
+
+    def package_hash(self, connector: str, source_id: str) -> str | None: ...
+
+    def seen_again(self, connector: str, source_id: str, bundle_id: int) -> None: ...
+
+    def save(
+        self, record: LicensedEntityRecord, *, bundle_id: int, package_hash: str, files: Mapping[str, StoredBlob]
+    ) -> SaveOutcome:
+        """Atomic: the record and its files' locations, or nothing."""
+        ...
+
+    def mark_missing(self, connector: str, present: set[str]) -> int:
+        """Records of this connector not in `present` are marked missing; returns how many newly."""
+        ...
+
+
+class MarketSource(Protocol):
+    """What publishing reads from the market store."""
+
+    def register_infos(self) -> list[RegisterInfo]: ...
+
+    def current_records(self) -> list[LicensedEntityRecord]:
+        """Every record the connectors' latest snapshots still send."""
+        ...
+
+    def storage_keys(self) -> dict[str, str]:
+        """Where each edition file (by sha256) is kept in the object store."""
+        ...
+
+
+class PublishedMarketStore(Protocol):
+    def replace_all(self, publication: MarketPublication) -> None:
+        """Atomic: readers see the old published_market or the new one, never a mix."""
+        ...
 
 
 class Overrides(Protocol):
