@@ -25,7 +25,8 @@ from metamorph_pipeline.jobs import (
 WORKSPACE = "/Users/someone/Metamorph-Sharia"
 # Images whose ECS task definition waits: the market data layer joins the AWS ingestion layer after every phase is
 # built (docs/market-data-layer-plan.md, Step 10, deferred by the project owner on 2026-10-27).
-ECS_DEFERRED = {"metamorph/ojk-register:dev"}
+ECS_DEFERRED = {"metamorph/ojk-register:dev", "metamorph/ojk-stats:dev", "metamorph/bi-stats:dev",
+                "metamorph/bps-stats:dev"}
 CREDENTIALS = "/Users/someone/.config/ojk-connector/credentials"
 
 
@@ -36,9 +37,12 @@ def jobs() -> dict[str, ConnectorJob]:
 
 def test_every_connector_has_a_scheduled_job(jobs) -> None:
     assert sorted(jobs) == [
-        "ingest_bi", "ingest_bpk", "ingest_dsn_fatwa", "ingest_dsn_fatwa_full", "ingest_ojk", "ingest_ojk_register",
+        "ingest_bi", "ingest_bi_seki", "ingest_bpk", "ingest_bps_stats", "ingest_dsn_fatwa", "ingest_dsn_fatwa_full",
+        "ingest_ojk", "ingest_ojk_register", "ingest_ojk_stats",
     ]
-    assert {job.connector for job in jobs.values()} == {"ojk", "bpk", "bi-website", "dsn-fatwa", "ojk-register"}
+    assert {job.connector for job in jobs.values()} == {
+        "ojk", "bpk", "bi-website", "dsn-fatwa", "ojk-register", "ojk-stats", "bi-stats", "bps-stats",
+    }
 
 
 def test_health_expects_every_connector_on_its_cadence(jobs) -> None:
@@ -59,6 +63,20 @@ def test_the_register_job_syncs_and_loads_into_the_market_layer(jobs) -> None:
         ("metamorph-bundles", BUNDLES),
     ]
     assert "OJK_REGISTER_CONTACT" in passed_on(register)
+
+
+def test_the_statistics_job_collects_from_the_portal_and_loads_into_the_market_layer(jobs) -> None:
+    stats = jobs["ingest_ojk_stats"]
+
+    assert (stats.image, stats.layer, stats.collect, stats.schedule) == (
+        "metamorph/ojk-stats:dev", Layer.MARKET, "ojk-stats collect", "15 3 * * 1",
+    )
+    assert stats.export == "ojk-stats export --out {out} --run-id {run_id}"
+    assert [(m.source, m.target) for m in stats.mounts] == [
+        (f"{WORKSPACE}/OJK-Stats-Connector/data", "/workspace/OJK-Stats-Connector/data"),
+        ("metamorph-bundles", BUNDLES),
+    ]
+    assert "OJK_STATS_CONTACT" in passed_on(stats)
 
 
 def test_a_bundle_loads_into_its_own_layer(jobs) -> None:
@@ -142,6 +160,27 @@ def test_a_failed_export_fails_the_task_and_a_retry_starts_from_an_empty_bundle(
 
     assert run(collect_command(job("true", export="false"), "r1")).returncode == 3
     assert not (tmp_path / "x" / "r1").exists()
+
+
+def test_the_macro_jobs_load_into_the_market_layer(jobs) -> None:
+    seki, bps = jobs["ingest_bi_seki"], jobs["ingest_bps_stats"]
+
+    assert (seki.image, seki.layer, seki.collect) == ("metamorph/bi-stats:dev", Layer.MARKET, "bi-stats import")
+    assert seki.export == "bi-stats export --out {out} --run-id {run_id}"
+    assert (bps.image, bps.layer, bps.collect) == ("metamorph/bps-stats:dev", Layer.MARKET, "bps-stats collect")
+    assert bps.export == "bps-stats export --out {out} --run-id {run_id} --since {since}"
+    assert [m.source for m in bps.mounts] == [f"{WORKSPACE}/BPS-Stats-Connector/data", "metamorph-bundles"]
+    assert "BPS_STATS_CONTACT" in passed_on(bps)
+    assert [m.source for m in seki.mounts][0] == f"{WORKSPACE}/BI-Stats-Connector/data"  # its inbox, data/inbox/
+
+
+def test_an_export_may_take_the_start_of_the_last_successful_run(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("metamorph_pipeline.jobs.BUNDLES", str(tmp_path))
+    since = job("true", export="mkdir -p {out} && echo since={since} > {out}/manifest")
+
+    run(collect_command(since, "r1", since="2026-10-20T03:15:00+00:00"))
+
+    assert (tmp_path / "x" / "r1" / "manifest").read_text() == "since=2026-10-20T03:15:00+00:00\n"
 
 
 def test_a_failure_message_names_the_task_and_its_log() -> None:

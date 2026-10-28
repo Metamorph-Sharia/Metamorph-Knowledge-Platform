@@ -1,4 +1,4 @@
-"""LicensedEntityRecord ⇄ JSON. Reading checks the JSON Schema first, so building can trust the shape."""
+"""Market records ⇄ JSON. Reading checks the record's JSON Schema first, so building can trust the shape."""
 
 from __future__ import annotations
 
@@ -10,16 +10,22 @@ from typing import Any
 from metamorph_market.record import (
     BusinessType,
     Channel,
+    Dimension,
     Entity,
     FileRef,
     FileRole,
+    Frequency,
     License,
     LicensedEntityRecord,
     LicenseKind,
     Listing,
+    MarketRecord,
+    Observation,
+    Series,
+    SeriesRecord,
     SourceRef,
 )
-from metamorph_market.schema import schema_problems
+from metamorph_market.schema import record_problems
 
 
 class ContractViolation(Exception):
@@ -30,16 +36,16 @@ class ContractViolation(Exception):
         self.problems = problems
 
 
-def to_dict(record: LicensedEntityRecord) -> dict[str, Any]:
+def to_dict(record: MarketRecord) -> dict[str, Any]:
     """The record as its JSON reads: tuples become arrays, so the schema sees what a loader will."""
     return json.loads(to_json(record))
 
 
-def to_json(record: LicensedEntityRecord) -> str:
+def to_json(record: MarketRecord) -> str:
     return json.dumps(asdict(record), ensure_ascii=False, allow_nan=False)
 
 
-def from_json(line: str) -> LicensedEntityRecord:
+def from_json(line: str) -> MarketRecord:
     try:
         data = json.loads(line)
     except json.JSONDecodeError as exc:
@@ -47,19 +53,44 @@ def from_json(line: str) -> LicensedEntityRecord:
     return from_dict(data)
 
 
-def from_dict(data: Mapping[str, Any]) -> LicensedEntityRecord:
-    found = schema_problems(data)
+def from_dict(data: Mapping[str, Any]) -> MarketRecord:
+    found = record_problems(data)
     if found:
         raise ContractViolation(found)
+    if data["kind"] == "series":
+        return _series_record(data)
     return LicensedEntityRecord(
         contract_version=data["contract_version"],
         kind=data["kind"],
         source=SourceRef(**data["source"]),
         entity=_entity(data["entity"]),
         listings=tuple(Listing(**listing) for listing in data["listings"]),
-        files=tuple(FileRef(**{**file, "role": FileRole(file["role"])}) for file in data["files"]),
+        files=_files(data),
         source_fields=data["source_fields"],
     )
+
+
+def _series_record(data: Mapping[str, Any]) -> SeriesRecord:
+    series = data["series"]
+    return SeriesRecord(
+        contract_version=data["contract_version"],
+        kind=data["kind"],
+        source=SourceRef(**data["source"]),
+        series=Series(
+            **{
+                **series,
+                "dimensions": tuple(Dimension(**member) for member in series["dimensions"]),
+                "frequency": Frequency(series["frequency"]),
+            }
+        ),
+        observations=tuple(Observation(**observation) for observation in data["observations"]),
+        files=_files(data),
+        source_fields=data["source_fields"],
+    )
+
+
+def _files(data: Mapping[str, Any]) -> tuple[FileRef, ...]:
+    return tuple(FileRef(**{**file, "role": FileRole(file["role"])}) for file in data["files"])
 
 
 def _entity(entity: Mapping[str, Any]) -> Entity:

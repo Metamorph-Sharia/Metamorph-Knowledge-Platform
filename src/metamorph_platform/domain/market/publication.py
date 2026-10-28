@@ -7,7 +7,7 @@ record's; its names are every other name its records were listed under.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -15,6 +15,7 @@ from metamorph_market import LicensedEntityRecord, Listing
 
 from metamorph_platform.domain.market.companies import Company, companies
 from metamorph_platform.domain.market.history import HeldLicense, edition_changes, review_notes, standing
+from metamorph_platform.domain.market.statistics import Statistics
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class MarketPublication:
     companies: tuple[PublishedCompany, ...]
     entities: tuple[PublishedEntity, ...]
     listings: tuple[PublishedListing, ...]
+    statistics: Statistics = field(default_factory=lambda: Statistics((), (), ()))
 
 
 def publication(

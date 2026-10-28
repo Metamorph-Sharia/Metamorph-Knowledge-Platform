@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from metamorph_contract import Manifest, NormalizedDocument
-from metamorph_market import LicensedEntityRecord
+from metamorph_market import LicensedEntityRecord, MarketRecord, SeriesRecord
 
 from metamorph_platform.domain.citations import TextCitation
 from metamorph_platform.domain.curation import ActiveOverride
@@ -20,6 +20,7 @@ from metamorph_platform.domain.gate import HoldReason
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
 from metamorph_platform.domain.market.publication import MarketPublication, RegisterInfo
+from metamorph_platform.domain.market.statistics import IndustryLink
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
 from metamorph_platform.domain.structure import Structure
 from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, StatusChange
@@ -91,18 +92,25 @@ class MarketStore(Protocol):
         """The registers the platform knows (market.register)."""
         ...
 
+    def sources(self) -> set[str]:
+        """The statistics sources the platform knows (market.statistics_source)."""
+        ...
+
     def package_hash(self, connector: str, source_id: str) -> str | None: ...
 
     def seen_again(self, connector: str, source_id: str, bundle_id: int) -> None: ...
 
     def save(
-        self, record: LicensedEntityRecord, *, bundle_id: int, package_hash: str, files: Mapping[str, StoredBlob]
+        self, record: MarketRecord, *, bundle_id: int, package_hash: str, files: Mapping[str, StoredBlob]
     ) -> SaveOutcome:
         """Atomic: the record and its files' locations, or nothing."""
         ...
 
-    def mark_missing(self, connector: str, present: set[str]) -> int:
-        """Records of this connector not in `present` are marked missing; returns how many newly."""
+    def mark_missing(self, connector: str, present: set[str], within: set[str] | None = None) -> int:
+        """Records of this connector not in `present` are marked missing; returns how many newly.
+
+        `within`: for a bundle of whole datasets, only series of these datasets can go missing.
+        """
         ...
 
 
@@ -111,12 +119,24 @@ class MarketSource(Protocol):
 
     def register_infos(self) -> list[RegisterInfo]: ...
 
+    def industry_links(self) -> list[IndustryLink]:
+        """How each statistics source's industries link to registers and regulations (market.industry)."""
+        ...
+
     def current_records(self) -> list[LicensedEntityRecord]:
-        """Every record the connectors' latest snapshots still send."""
+        """Every licensed entity the connectors' latest snapshots still send."""
+        ...
+
+    def current_series(self) -> list[SeriesRecord]:
+        """Every series the connectors' latest snapshots still send."""
         ...
 
     def storage_keys(self) -> dict[str, str]:
-        """Where each edition file (by sha256) is kept in the object store."""
+        """Where each file (by sha256: register editions, source answers) is kept in the object store."""
+        ...
+
+    def citations(self) -> dict[str, str]:
+        """How each statistics source asks to be cited, by source ID."""
         ...
 
 

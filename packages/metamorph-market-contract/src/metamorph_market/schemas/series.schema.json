@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:metamorph:market:1.0:series",
+  "title": "Series (market contract 1.0)",
+  "description": "One line of records.jsonl: one statistic a regulator publishes, over time, with every observation the connector has read.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "kind",
+    "source",
+    "series",
+    "observations",
+    "files",
+    "source_fields"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "market-1.0"
+    },
+    "kind": {
+      "const": "series"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "series": {
+      "$ref": "#/$defs/series"
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/observation"
+      },
+      "description": "One per period, oldest first: the value as the source last gave it."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "description": "The source's answers the observations were read from, as received."
+    },
+    "source_fields": {
+      "type": "object",
+      "description": "What the source says of the series, unchanged: its names and keys as given."
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connector",
+        "connector_version",
+        "source_id",
+        "url",
+        "fetched_at"
+      ],
+      "properties": {
+        "connector": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "connector_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The series' key as the source gives it: the table, the measure and each member's key."
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The page that shows the series, when known."
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dataset",
+        "industry",
+        "group",
+        "metric",
+        "measure",
+        "dimensions",
+        "frequency",
+        "unit"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "{dataset}:{measure}:{dimension=key…}, e.g. ojk:portal:bu_syariah_posisikeuangan:posisi-keuangan:akun=110001010100."
+        },
+        "dataset": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+:[a-z0-9]+:[a-z0-9_.-]+$",
+          "description": "{issuer}:{source}:{table}: the source's table the series is read from, e.g. ojk:portal:bu_syariah_posisikeuangan."
+        },
+        "industry": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "The industry as the source names it, e.g. Bank Umum Syariah; null for a macro series, which belongs to none."
+        },
+        "group": {
+          "type": "string",
+          "description": "The source's group of information, e.g. Informasi Keuangan Utama; \"\" when it has none."
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The table's name as the source gives it, e.g. Laporan Posisi Keuangan."
+        },
+        "measure": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What is counted, e.g. Posisi Keuangan or Jumlah Rekening."
+        },
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dimension"
+          },
+          "description": "Which slice of the table this series is: one member per dimension, in the source's order."
+        },
+        "frequency": {
+          "enum": [
+            "monthly",
+            "quarterly",
+            "semiannual",
+            "annual"
+          ],
+          "description": "How often the series is observed; its periods take the matching form."
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "The unit as the source states it, e.g. Miliar Rp or Persen; null when it states none. Never inferred."
+        }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "key",
+        "label"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The dimension, e.g. Akun or DATI1."
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The member's key, stable across periods, e.g. 110001010100."
+        },
+        "label": {
+          "type": "string",
+          "description": "The member's name as shown, e.g. 003. 1. Kas dan Setara Kas."
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "period",
+        "value",
+        "file",
+        "provisional"
+      ],
+      "properties": {
+        "period": {
+          "type": "string",
+          "pattern": "^[0-9]{4}(-(0[1-9]|1[0-2])|-Q[1-4]|-S[12])?$",
+          "description": "A month (YYYY-MM), a quarter (YYYY-Qn), a half-year (YYYY-Sn) or a year (YYYY), by the series' frequency."
+        },
+        "value": {
+          "type": "number",
+          "description": "As the source gives it, never rescaled."
+        },
+        "file": {
+          "$ref": "#/$defs/sha256",
+          "description": "The answer the value was read from."
+        },
+        "provisional": {
+          "type": "boolean",
+          "description": "The source marks the period provisional, e.g. SEKI's Aug* or Q2**."
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "role",
+        "media_type",
+        "source_url",
+        "edition"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "role": {
+          "enum": [
+            "source_answer",
+            "source_table"
+          ]
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edition": {
+          "type": "string",
+          "format": "date",
+          "description": "When the source last updated the data the answer holds."
+        }
+      }
+    }
+  }
+}

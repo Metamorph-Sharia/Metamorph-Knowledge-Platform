@@ -1,14 +1,17 @@
-# Market contract 1.0: the licensed entity
+# Market contract 1.0: licensed entities and series
 
 **Version 1.0 · 2026-10-27** · package `metamorph-market-contract` (module `metamorph_market`; Python ≥ 3.11; depends on `jsonschema`)
 
-The market data layer's counterpart to [contract v2](../metamorph-contract/CONTRACT_V2.md). Contract v2 describes a legal document. This contract describes market records, one kind at a time, as each source arrives ([docs/market-data-layer-plan.md](../../docs/market-data-layer-plan.md)). Version 1.0 has one kind: **`licensed_entity`**, one license on a regulator's register.
+The market data layer's counterpart to [contract v2](../metamorph-contract/CONTRACT_V2.md). Contract v2 describes a legal document. This contract describes market records, one kind at a time, as each source arrives ([docs/market-data-layer-plan.md](../../docs/market-data-layer-plan.md)). Version 1.0 has two kinds:
+- **`licensed_entity`:** one license on a regulator's register;
+- **`series`:** one statistic a regulator publishes, over time.
 
-**The formal contract is two JSON Schemas (draft 2020-12):**
+**The formal contract is three JSON Schemas (draft 2020-12):**
 
 | Schema | Describes |
 |---|---|
 | [`licensed-entity.schema.json`](src/metamorph_market/schemas/licensed-entity.schema.json) (`urn:metamorph:market:1.0:licensed-entity`) | One line of `records.jsonl` |
+| [`series.schema.json`](src/metamorph_market/schemas/series.schema.json) (`urn:metamorph:market:1.0:series`) | One line of `records.jsonl`, of kind `series` |
 | [`market-manifest.schema.json`](src/metamorph_market/schemas/market-manifest.schema.json) (`urn:metamorph:market:1.0:manifest`) | `manifest.json` |
 
 The Python types mirror them exactly, and a test fails on any drift.
@@ -42,6 +45,34 @@ LicensedEntityRecord
 - every listing's file is in `files`;
 - no edition is listed twice.
 
+## The series
+
+```text
+SeriesRecord
+  contract_version   "market-1.0"
+  kind               "series"
+  source             connector, connector_version, source_id (the table, the measure and each member's key),
+                     url (the page that shows it), fetched_at
+  series             id {dataset}:{measure}:{dimension=key…}, dataset {issuer}:{source}:{table},
+                     industry, group, metric, measure (each as the source names it),
+                     dimensions[] (name, key, label): which slice of the table this is
+  observations[]     period (YYYY-MM), value (as given, never rescaled), file (sha256 of the answer it came from)
+  files[]            sha256, role (source_answer), media_type, source_url, edition (when the source last updated it)
+  source_fields      what the source says of the series, unchanged
+```
+
+The same rules hold:
+- **The key is the source's own.** A member's key, such as an account code, not its label or its row number. A label that changes keeps the series.
+- **Report what the source says; don't interpret it.** A value is kept as given, in the source's units. Totals, shares and growth are the platform's to derive.
+- **Pointers, not payloads.** Each answer is a blob, and every observation points at the one it was read from.
+- **A bundle is a full snapshot** of every series the connector holds, unless its manifest says `snapshot: "datasets"`: then each dataset in it is whole, and a dataset not in it is untouched. A connector whose source is too large to re-send each week sends only the datasets that changed.
+
+`problems(record)` checks a series' own rules:
+- the ID is in the record's dataset;
+- every observation's file is in `files`;
+- every period has its series' frequency's form;
+- no period is observed twice.
+
 ## Writing a bundle
 
 ```python
@@ -55,9 +86,9 @@ with BundleWriter(out_dir, connector="ojk-register", connector_version="0.1.0", 
 
 ```text
 {bundle}/manifest.json           contract_version, connector, connector_version, run_id, created_at, records, blobs,
-                                 complete, snapshot
+                                 complete, snapshot (full | datasets)
 {bundle}/records.jsonl           one record per line
 {bundle}/blobs/{sha[:2]}/{sha}   every file referenced
 ```
 
-A bundle without a manifest, or whose manifest names another contract, raises `UnloadableBundle` and is never loaded.
+A bundle may hold records of both kinds. A bundle without a manifest, or whose manifest names another contract, raises `UnloadableBundle` and is never loaded.

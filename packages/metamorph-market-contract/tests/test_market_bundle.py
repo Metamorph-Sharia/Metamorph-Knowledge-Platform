@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from market_samples import build_record
+from market_samples import build_record, build_series
 from metamorph_market import (
     Bundle,
     BundleWriter,
@@ -13,6 +13,7 @@ from metamorph_market import (
     FileRef,
     LicensedEntityRecord,
     LicenseKind,
+    Snapshot,
     UnloadableBundle,
     to_json,
 )
@@ -112,3 +113,60 @@ def test_records_round_trip_through_json() -> None:
     assert from_json(to_json(record)) == record
     assert isinstance(from_json(to_json(record)).files[0], FileRef)
     assert isinstance(from_json(to_json(record)).entity.license.kind, LicenseKind)
+
+
+def test_series_and_licenses_share_a_bundle_and_round_trip(tmp_path: Path) -> None:
+    from metamorph_market import Observation, SeriesRecord, from_json
+
+    with BundleWriter(tmp_path, connector="ojk-stats", connector_version="0.1.0", run_id="run-1") as bundle:
+        sha = bundle.put_blob(b"<soap:Envelope/>")
+        series = build_series()
+        series = replace(
+            series,
+            files=tuple(replace(file, sha256=sha) for file in series.files),
+            observations=tuple(replace(observation, file=sha) for observation in series.observations),
+        )
+        bundle.add(series)
+
+    (entry,) = list(Bundle(tmp_path).entries())
+    assert entry.is_valid
+    assert isinstance(entry.record, SeriesRecord)
+    assert from_json(to_json(series)) == series
+    assert isinstance(entry.record.observations[0], Observation)
+
+
+def test_a_quarterly_series_round_trips_with_its_frequency_unit_and_marks() -> None:
+    from metamorph_market import Frequency, from_json
+
+    series = build_series()
+    series = replace(
+        series,
+        series=replace(series.series, industry=None, frequency=Frequency.QUARTERLY, unit="Miliar Rp"),
+        observations=(replace(series.observations[0], period="2026-Q2", provisional=True),),
+    )
+
+    back = from_json(to_json(series))
+    assert back == series
+    assert isinstance(back.series.frequency, Frequency)
+
+
+def test_a_bundle_may_carry_whole_datasets_only(tmp_path: Path) -> None:
+    with BundleWriter(
+        tmp_path, connector="ojk-stats", connector_version="0.1.0", run_id="run-1", snapshot=Snapshot.DATASETS
+    ) as bundle:
+        sha = bundle.put_blob(b"{}")
+        series = build_series()
+        bundle.add(
+            replace(
+                series,
+                files=tuple(replace(file, sha256=sha) for file in series.files),
+                observations=tuple(replace(observation, file=sha) for observation in series.observations),
+            )
+        )
+
+    assert Bundle(tmp_path).manifest.snapshot == Snapshot.DATASETS
+
+
+def test_a_bundle_is_a_full_snapshot_unless_said_otherwise(tmp_path: Path) -> None:
+    write(tmp_path, build_record())
+    assert Bundle(tmp_path).manifest.snapshot == Snapshot.FULL

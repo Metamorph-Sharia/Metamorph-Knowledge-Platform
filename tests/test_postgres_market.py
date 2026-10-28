@@ -5,7 +5,7 @@ from __future__ import annotations
 import psycopg
 import pytest
 from fakes import MemoryBlobStore
-from market_platform_samples import licensed, write_market_bundle
+from market_platform_samples import licensed, macro_series, series_record, write_market_bundle, write_series_bundle
 from metamorph_market import Bundle, LicenseKind
 
 from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, PostgresReviewQueue
@@ -122,3 +122,93 @@ def test_health_checks_each_register_s_newest_published_edition(tmp_path, db) ->
     stale = register_check()
     assert stale.severity == Severity.WARNING
     assert stale.detail.startswith(f"newest edition {MAR},")
+
+
+def series_snapshot():
+    return [
+        series_record("BU_Syariah_PosisiKeuangan", "110001010100", "003. 1. Kas dan Setara Kas",
+                      {"2025-12": 10.0, "2026-01": 12.0}),
+        series_record("LPBBTI_Syariah_PosisiKeuangan", "110001010100", "003. 1. Kas dan Setara Kas", {"2026-01": 1.0},
+                      industry="Layanan Pendanaan Bersama Berbasis Teknologi Informasi (LPBBTI) Syariah"),
+    ]
+
+
+def test_series_load_once_and_again_unchanged(tmp_path, db) -> None:
+    first = load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
+    again = load(db, write_series_bundle(tmp_path / "s2", series_snapshot(), run_id="run-2"))
+
+    assert (first.new, again.unchanged) == (2, 2)
+    assert db.execute("SELECT count(*), min(source) FROM market.series").fetchone() == (2, "ojk:portal")
+
+
+def test_series_are_published_with_their_industry_s_links(tmp_path, db) -> None:
+    load(db, write_market_bundle(tmp_path / "b1", snapshot()))
+    load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
+
+    report = publish(db)
+
+    assert (report.registers, report.datasets, report.series, report.observations) == (1, 2, 2, 3)
+    datasets = db.execute(
+        "SELECT id, register, governed_by, first_period::text, last_period::text FROM published_market.dataset "
+        "ORDER BY id"
+    ).fetchall()
+    assert datasets == [
+        ("ojk:portal:bu_syariah_posisikeuangan", None, ["id:uu:2008:21", "ojk:pojk:2022:16", "ojk:pojk:2023:12"],
+         "2025-12-01", "2026-01-01"),
+        ("ojk:portal:lpbbti_syariah_posisikeuangan", "ojk:lpbbti", ["ojk:pojk:2024:40", "ojk:seojk:2025:19"],
+         "2026-01-01", "2026-01-01"),
+    ]
+    observations = db.execute(
+        "SELECT o.period::text, o.value, o.storage_key IS NOT NULL FROM published_market.observation o "
+        "JOIN published_market.series s ON s.id = o.series_id WHERE s.dataset = 'ojk:portal:bu_syariah_posisikeuangan' "
+        "ORDER BY o.period"
+    ).fetchall()
+    assert observations == [("2025-12-01", 10.0, True), ("2026-01-01", 12.0, True)]
+
+
+def test_publishing_series_again_replaces_rather_than_adds(tmp_path, db) -> None:
+    load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
+    publish(db)
+    publish(db)
+
+    assert db.execute("SELECT count(*) FROM published_market.observation").fetchone() == (3,)
+
+
+def test_series_dropped_from_the_snapshot_are_missing(tmp_path, db) -> None:
+    load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
+    report = load(db, write_series_bundle(tmp_path / "s2", series_snapshot()[:1], run_id="run-2"))
+    publish(db)
+
+    assert report.missing == 1
+    assert db.execute("SELECT count(*) FROM published_market.series").fetchone() == (1,)
+
+
+def test_health_checks_each_statistics_source_s_newest_period(tmp_path, db) -> None:
+    from metamorph_platform.adapters.postgres.health import PostgresHealth
+    from metamorph_platform.application.check_health import CheckHealth
+    from metamorph_platform.domain.health import Severity
+
+    def source_check():  # noqa: ANN202
+        checks = CheckHealth(PostgresHealth(db), cadence={}).run().checks
+        return next(check for check in checks if check.name == "statistics ojk:portal")
+
+    assert source_check().detail == "no period published yet"
+    load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
+    publish(db)
+
+    stale = source_check()
+    assert stale.severity == Severity.WARNING
+    assert stale.detail.startswith("newest period ended 2026-01-31,")
+
+
+def test_a_macro_series_is_published_with_its_frequency_unit_marks_and_citation(tmp_path, db) -> None:
+    load(db, write_series_bundle(tmp_path / "s1", [macro_series({"2026-Q1": 783624.1, "2026-Q2": 889052.3})]))
+    publish(db)
+
+    assert db.execute(
+        "SELECT industry, citation FROM published_market.dataset WHERE id = 'bi:seki:tabel7_1'"
+    ).fetchone() == (None, "Bank Indonesia, Statistik Ekonomi dan Keuangan Indonesia (SEKI)")
+    assert db.execute("SELECT frequency, unit FROM published_market.series").fetchone() == ("quarterly", "Miliar Rp")
+    assert db.execute(
+        "SELECT period::text, provisional FROM published_market.observation ORDER BY period"
+    ).fetchall() == [("2026-01-01", False), ("2026-04-01", True)]

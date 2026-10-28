@@ -6,6 +6,7 @@
 
 The same guarantees as contract v2's bundle (metamorph_contract.bundle): a bundle without a complete manifest is
 never loaded, so a crashed export can't look like "these licenses disappeared from the register".
+A bundle may hold records of either kind.
 """
 
 from __future__ import annotations
@@ -15,17 +16,25 @@ import json
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from types import TracebackType
 
 from metamorph_market.codec import ContractViolation, from_json, to_json
-from metamorph_market.record import MARKET_CONTRACT_VERSION, LicensedEntityRecord
+from metamorph_market.record import MARKET_CONTRACT_VERSION, LicensedEntityRecord, MarketRecord
 from metamorph_market.schema import MANIFEST_SCHEMA, schema_problems
 from metamorph_market.validate import problems
 
 MANIFEST = "manifest.json"
 RECORDS = "records.jsonl"
 BLOBS = "blobs"
+
+
+class Snapshot(StrEnum):
+    """What absence from a bundle means."""
+
+    FULL = "full"  # every record the connector holds: a record not in the bundle is gone from the source
+    DATASETS = "datasets"  # every series of each dataset in the bundle; other datasets are untouched
 
 
 class UnloadableBundle(Exception):
@@ -41,14 +50,14 @@ class Manifest:
     records: int
     blobs: int
     complete: bool
-    snapshot: str = "full"  # every record the connector holds, so absence means "gone from the source"
+    snapshot: Snapshot = Snapshot.FULL
     contract_version: str = MARKET_CONTRACT_VERSION
 
 
 @dataclass(frozen=True)
 class BundleEntry:
     line: int
-    record: LicensedEntityRecord | None
+    record: MarketRecord | None
     problems: list[str] = field(default_factory=list)
     raw: str = ""  # the line as written, so a rejected one can be quarantined exactly as received
 
@@ -64,13 +73,22 @@ def blob_path(root: Path, sha256: str) -> Path:
 class BundleWriter:
     """Use as a context manager; the manifest is written on a clean exit only."""
 
-    def __init__(self, directory: Path, *, connector: str, connector_version: str, run_id: str) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        connector: str,
+        connector_version: str,
+        run_id: str,
+        snapshot: Snapshot = Snapshot.FULL,
+    ) -> None:
         if directory.exists() and any(directory.iterdir()):
             raise FileExistsError(f"{directory} is not empty: one bundle per directory")
         self.directory = directory
         self.connector = connector
         self.connector_version = connector_version
         self.run_id = run_id
+        self.snapshot = snapshot
         self._blobs: set[str] = set()
         self._source_ids: set[str] = set()
         (directory / BLOBS).mkdir(parents=True, exist_ok=True)
@@ -85,14 +103,14 @@ class BundleWriter:
             self._blobs.add(sha)
         return sha
 
-    def add(self, record: LicensedEntityRecord) -> None:
+    def add(self, record: MarketRecord) -> None:
         found = problems(record) + self._bundle_problems(record)
         if found:
             raise ContractViolation(found)
         self._records.write(to_json(record) + "\n")
         self._source_ids.add(record.source.source_id)
 
-    def _bundle_problems(self, record: LicensedEntityRecord) -> list[str]:
+    def _bundle_problems(self, record: MarketRecord) -> list[str]:
         found = []
         if record.source.connector != self.connector:
             found.append(f"source.connector: {record.source.connector!r} in a {self.connector!r} bundle")
@@ -120,6 +138,7 @@ class BundleWriter:
             records=len(self._source_ids),
             blobs=len(self._blobs),
             complete=True,
+            snapshot=self.snapshot,
         )
         (self.directory / MANIFEST).write_text(json.dumps(asdict(manifest), indent=2), encoding="utf-8")
 
@@ -158,8 +177,9 @@ def _read_manifest(directory: Path) -> Manifest:
     found = schema_problems(data, MANIFEST_SCHEMA)
     if found:
         raise UnloadableBundle(f"{directory}: manifest breaks the contract: {'; '.join(found)}")
-    return Manifest(**data)
+    return Manifest(**{**data, "snapshot": Snapshot(data["snapshot"])})
 
 
-def _referenced_blobs(record: LicensedEntityRecord) -> set[str]:
-    return {file.sha256 for file in record.files} | {listing.file for listing in record.listings}
+def _referenced_blobs(record: MarketRecord) -> set[str]:
+    pointers = record.listings if isinstance(record, LicensedEntityRecord) else record.observations
+    return {file.sha256 for file in record.files} | {pointer.file for pointer in pointers}

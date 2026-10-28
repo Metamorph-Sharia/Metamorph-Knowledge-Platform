@@ -10,12 +10,22 @@ from typing import Any
 from jsonschema import Draft202012Validator, ValidationError
 
 ENTITY_SCHEMA = "licensed-entity.schema.json"
+SERIES_SCHEMA = "series.schema.json"
 MANIFEST_SCHEMA = "market-manifest.schema.json"
+RECORD_SCHEMAS = {"licensed_entity": ENTITY_SCHEMA, "series": SERIES_SCHEMA}  # by the record's kind
 
 
 @cache
 def load_schema(name: str) -> dict[str, Any]:
     return json.loads(files("metamorph_market").joinpath("schemas", name).read_text(encoding="utf-8"))
+
+
+def record_problems(data: Any) -> list[str]:
+    """A record's schema is its kind's; a record without a known kind has only that problem."""
+    kind = data.get("kind") if isinstance(data, dict) else None
+    if kind not in RECORD_SCHEMAS:
+        return [f"kind: {kind!r} is not one of {sorted(RECORD_SCHEMAS)}"]
+    return schema_problems(data, RECORD_SCHEMAS[kind])
 
 
 def schema_problems(data: Any, schema: str = ENTITY_SCHEMA) -> list[str]:

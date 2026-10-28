@@ -67,7 +67,7 @@ def _parser() -> argparse.ArgumentParser:
     publish.add_argument("--all", action="store_true", help="republish every document")
     publish.set_defaults(run=_publish)
 
-    market = commands.add_parser("market", help="the market data layer: registers of licensed entities")
+    market = commands.add_parser("market", help="the market data layer: registers of licensed entities, statistics")
     market_actions = market.add_subparsers(required=True, metavar="ACTION")
     market_load = market_actions.add_parser("load", help="load a market connector's bundle (market contract)")
     market_load.add_argument("bundle", type=Path, help="the bundle directory (manifest.json, records.jsonl, blobs/)")

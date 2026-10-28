@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from metamorph_contract import Manifest, NormalizedDocument
-from metamorph_market import LicensedEntityRecord
+from metamorph_market import MarketRecord, SeriesRecord
 
 from metamorph_platform.application.ports import (
     BundleAlreadyLoaded,
@@ -309,14 +309,18 @@ class MemoryOpenReviews:
 
 
 class MemoryMarket:
-    """The market store: records as received, by (connector, source_id), and the registers it knows."""
+    """The market store: records as received, by (connector, source_id), and the registers and sources it knows."""
 
-    def __init__(self, registers: set[str] | None = None) -> None:
+    def __init__(self, registers: set[str] | None = None, sources: set[str] | None = None) -> None:
         self.known = registers if registers is not None else {"ojk:lpbbti"}
+        self.known_sources = sources if sources is not None else {"ojk:portal"}
         self.records: dict[tuple[str, str], dict[str, Any]] = {}
 
     def registers(self) -> set[str]:
         return self.known
+
+    def sources(self) -> set[str]:
+        return self.known_sources
 
     def package_hash(self, connector: str, source_id: str) -> str | None:
         record = self.records.get((connector, source_id))
@@ -325,7 +329,7 @@ class MemoryMarket:
     def seen_again(self, connector: str, source_id: str, bundle_id: int) -> None:
         self.records[(connector, source_id)].update(missing=False, bundle_id=bundle_id)
 
-    def save(self, record: LicensedEntityRecord, *, bundle_id: int, package_hash: str, files) -> SaveOutcome:
+    def save(self, record: MarketRecord, *, bundle_id: int, package_hash: str, files) -> SaveOutcome:
         key = (record.source.connector, record.source.source_id)
         outcome = SaveOutcome.CHANGED if key in self.records else SaveOutcome.NEW
         self.records[key] = {
@@ -337,10 +341,14 @@ class MemoryMarket:
         }
         return outcome
 
-    def mark_missing(self, connector: str, present: set[str]) -> int:
+    def mark_missing(self, connector: str, present: set[str], within: set[str] | None = None) -> int:
         newly = 0
         for (owner, source_id), record in self.records.items():
-            if owner == connector and source_id not in present and not record["missing"]:
-                record["missing"] = True
-                newly += 1
+            if owner != connector or source_id in present or record["missing"]:
+                continue
+            if within is not None and not (isinstance(record["record"], SeriesRecord)
+                                           and record["record"].series.dataset in within):
+                continue  # a bundle of whole datasets leaves the others as they are
+            record["missing"] = True
+            newly += 1
         return newly

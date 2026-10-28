@@ -19,8 +19,8 @@
     "blobs": { "type": "integer", "minimum": 0 },
     "complete": { "const": true, "description": "An unfinished export never writes a manifest; false is never valid." },
     "snapshot": {
-      "const": "full",
-      "description": "Every record the connector holds, so absence from a bundle means 'gone from the source'."
+      "enum": ["full", "datasets"],
+      "description": "full: every record the connector holds, so absence from a bundle means 'gone from the source'. datasets: every series of each dataset in the bundle; other datasets are untouched."
     }
   }
 }

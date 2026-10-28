@@ -55,7 +55,7 @@ class ConnectorJob:
     image: str
     schedule: str
     collect: str  # shell: the connector's own scheduled run
-    export: str  # shell, with {out} and {run_id}
+    export: str  # shell, with {out}, {run_id} and {since}: when the job's last successful run started, or ""
     fails_from: int = 2  # collect's exit codes from this one up fail the task (below it: alerts, partial runs)
     mounts: tuple[Mount, ...] = ()
     secrets: tuple[str, ...] = ()  # environment variables passed through, never logged
@@ -78,14 +78,14 @@ def bundle_path(connector: str, run_id: str) -> str:
     return f"{BUNDLES}/{connector}/{run_id}"
 
 
-def collect_command(job: ConnectorJob, run_id: str) -> list[str]:
+def collect_command(job: ConnectorJob, run_id: str, since: str = "") -> list[str]:
     out = bundle_path(job.connector, run_id)
     script = "\n".join(
         [
             f"( {job.collect} )",
             "rc=$?",
             f'rm -rf "{out}"',  # a retry starts from an empty bundle directory
-            f"{job.export.format(out=_quoted(out), run_id=run_id)} || exit {EXPORT_FAILED}",
+            f"{job.export.format(out=_quoted(out), run_id=run_id, since=_quoted(since))} || exit {EXPORT_FAILED}",
             f'[ "$rc" -lt {job.fails_from} ] || exit "$rc"',
         ]
     )
@@ -177,6 +177,47 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             secrets=("OJK_REGISTER_CONTACT",),  # added to the connector's User-Agent, if set
             description="OJK's register of licensed fintech lenders: new editions from OJK's directory, export",
             tags=("ojk", "market"),
+            layer=Layer.MARKET,
+        ),
+        ConnectorJob(
+            dag_id="ingest_ojk_stats",
+            connector="ojk-stats",
+            image="metamorph/ojk-stats:dev",
+            schedule="15 3 * * 1",  # weekly, Mondays, after the register: the portal updates its months on no fixed day
+            collect="ojk-stats collect",  # exits 2 on a refusal: the task fails, and nothing is worked around
+            export="ojk-stats export --out {out} --run-id {run_id}",
+            mounts=(data("OJK-Stats-Connector"), bundles),
+            secrets=("OJK_STATS_CONTACT",),  # added to the connector's User-Agent, if set
+            description="OJK's statistics from its data portal: fintech lending and sharia banking series, export",
+            tags=("ojk", "market"),
+            layer=Layer.MARKET,
+        ),
+        ConnectorJob(
+            dag_id="ingest_bi_seki",
+            connector="bi-stats",
+            image="metamorph/bi-stats:dev",
+            schedule="45 3 * * 1",  # weekly, Mondays: picks up the edition a curator dropped in the inbox
+            # bi.go.id refuses the connector, so a curator downloads each month's edition and drops it in
+            # BI-Stats-Connector/data/inbox/ (option A, 2026-10-28). An edition already read is all unchanged
+            collect="bi-stats import",
+            export="bi-stats export --out {out} --run-id {run_id}",
+            mounts=(data("BI-Stats-Connector"), bundles),
+            description="BI's SEKI tables, from the editions curators download: the macro backdrop as series, export",
+            tags=("bi", "market"),
+            layer=Layer.MARKET,
+        ),
+        ConnectorJob(
+            dag_id="ingest_bps_stats",
+            connector="bps-stats",
+            image="metamorph/bps-stats:dev",
+            schedule="15 4 * * 1",  # weekly, Mondays: only the tables BPS changed are asked again
+            collect="bps-stats collect",  # exits 2 on a refusal or challenge: the task fails, nothing is worked around
+            # BPS's tables hold millions of values: the bundle carries the tables collected since the last success
+            export="bps-stats export --out {out} --run-id {run_id} --since {since}",
+            mounts=(data("BPS-Stats-Connector"), bundles),
+            secrets=("BPS_STATS_CONTACT",),  # added to the connector's User-Agent, if set
+            description="BPS's dynamic tables from bps.go.id: population, labour, prices, regions, as series, export",
+            tags=("bps", "market"),
             layer=Layer.MARKET,
         ),
     ]

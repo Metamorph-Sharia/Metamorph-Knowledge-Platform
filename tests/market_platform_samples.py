@@ -1,4 +1,5 @@
-"""Market records and bundles for the platform's tests: licenses listed in given editions, each edition its PDF."""
+"""Market records and bundles for the platform's tests: licenses listed in given editions, each edition its PDF,
+and series observed in given months, each year its answer."""
 
 from __future__ import annotations
 
@@ -7,16 +8,21 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from market_samples import build_record
+from market_samples import build_record, build_series
 from metamorph_market import (
     BundleWriter,
     BusinessType,
+    Dimension,
     FileRef,
     FileRole,
+    Frequency,
     License,
     LicensedEntityRecord,
     LicenseKind,
     Listing,
+    Observation,
+    SeriesRecord,
+    Snapshot,
 )
 
 REGISTER = "ojk:lpbbti"
@@ -71,6 +77,77 @@ def write_market_bundle(directory: Path, records: Sequence[LicensedEntityRecord]
     with BundleWriter(directory, connector="ojk-register", connector_version="0.2.0", run_id=run_id) as bundle:
         for edition in sorted({file.edition for record in records for file in record.files}):
             bundle.put_blob(edition_pdf(edition))
+        for record in records:
+            bundle.add(record)
+    return directory
+
+
+PORTAL = "ojk:portal"
+BUS = "Bank Umum Syariah"
+
+
+def answer_xml(year: str) -> bytes:
+    return f"<soap:Envelope>{year}</soap:Envelope>".encode()
+
+
+def answer_sha(year: str) -> str:
+    return hashlib.sha256(answer_xml(year)).hexdigest()
+
+
+def series_record(
+    cube: str, key: str, label: str, values: dict[str, float], *, industry: str = BUS, edition: str = "2026-10-26"
+) -> SeriesRecord:
+    """One account of `cube`'s Posisi Keuangan: `values` by month (YYYY-MM), each year read from its own answer."""
+    record = build_series()
+    dataset = f"{PORTAL}:{cube.lower()}"
+    years = sorted({period[:4] for period in values})
+    return replace(
+        record,
+        source=replace(record.source, source_id=f"{cube}/[Measures].[Posisi Keuangan]/[Akun].[Akun].&[{key}]"),
+        series=replace(
+            record.series,
+            id=f"{dataset}:posisi-keuangan:akun={key}",
+            dataset=dataset,
+            industry=industry,
+            dimensions=(Dimension(name="Akun", key=key, label=label),),
+        ),
+        observations=tuple(
+            Observation(period=period, value=value, file=answer_sha(period[:4]))
+            for period, value in sorted(values.items())
+        ),
+        files=tuple(
+            FileRef(sha256=answer_sha(year), role=FileRole.SOURCE_ANSWER, media_type="text/xml",
+                    source_url=f"https://data.ojk.go.id/{cube}", edition=edition)
+            for year in years
+        ),
+    )
+
+
+def macro_series(periods: dict[str, float], frequency: Frequency = Frequency.QUARTERLY) -> SeriesRecord:
+    """A macro series shaped like SEKI's GDP row 1: no industry, a unit, periods of one kind, the newest provisional."""
+    record = series_record("TABEL7_1", "1", "PERTANIAN", {"2026-01": 0.0})
+    newest = max(periods)
+    return replace(
+        record,
+        source=replace(record.source, source_id=f"TABEL7_1/{frequency}/1"),
+        series=replace(record.series, id=f"bi:seki:tabel7_1:{frequency}:row=1", dataset="bi:seki:tabel7_1",
+                       industry=None, frequency=frequency, unit="Miliar Rp"),
+        observations=tuple(
+            Observation(period, value, answer_sha(period[:4]), provisional=period == newest)
+            for period, value in sorted(periods.items())
+        ),
+        files=tuple(replace(record.files[0], sha256=answer_sha(year)) for year in sorted({p[:4] for p in periods})),
+    )
+
+
+def write_series_bundle(
+    directory: Path, records: Sequence[SeriesRecord], run_id: str = "run-1", snapshot: Snapshot = Snapshot.FULL
+) -> Path:
+    with BundleWriter(
+        directory, connector="ojk-stats", connector_version="0.1.0", run_id=run_id, snapshot=snapshot
+    ) as bundle:
+        for year in sorted({observation.period[:4] for record in records for observation in record.observations}):
+            bundle.put_blob(answer_xml(year))
         for record in records:
             bundle.add(record)
     return directory

@@ -7,7 +7,13 @@ from dataclasses import asdict
 
 import psycopg
 
-from metamorph_platform.domain.health import ConnectorActivity, Health, HealthFacts, RegisterFreshness
+from metamorph_platform.domain.health import (
+    ConnectorActivity,
+    Health,
+    HealthFacts,
+    RegisterFreshness,
+    StatisticsFreshness,
+)
 
 _ACTIVITY = """
 SELECT connector,
@@ -29,6 +35,7 @@ class PostgresHealth:
             connectors=tuple(ConnectorActivity(*row) for row in self.connection.execute(_ACTIVITY)),
             open_reviews=dict(self.connection.execute(_OPEN_REVIEWS).fetchall()),
             registers=tuple(RegisterFreshness(*row) for row in self.connection.execute(_REGISTERS)),
+            statistics=tuple(StatisticsFreshness(*row) for row in self.connection.execute(_STATISTICS)),
         )
 
     def record(self, health: Health) -> None:
@@ -42,4 +49,19 @@ _REGISTERS = """
 SELECT r.id, p.newest_edition, r.fresh_days
 FROM market.register r LEFT JOIN published_market.register p ON p.id = r.id
 ORDER BY r.id
+"""
+
+# The last day of a statistics source's newest published period, by each series' frequency; none before a publish.
+_STATISTICS = """
+SELECT s.id,
+       max(p.last_period + CASE p.frequency WHEN 'quarterly' THEN interval '3 months'
+                                            WHEN 'semiannual' THEN interval '6 months'
+                                            WHEN 'annual' THEN interval '1 year'
+                                            ELSE interval '1 month' END - interval '1 day')::date,
+       s.fresh_days
+FROM market.statistics_source s
+LEFT JOIN published_market.dataset d ON d.source = s.id
+LEFT JOIN published_market.series p ON p.dataset = d.id
+GROUP BY s.id, s.fresh_days
+ORDER BY s.id
 """

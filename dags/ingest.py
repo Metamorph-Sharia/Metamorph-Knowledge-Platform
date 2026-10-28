@@ -27,6 +27,7 @@ from metamorph_pipeline.jobs import (
 
 REGISTRY = Dataset("metamorph://registry")
 RUN_ID = "{{ ts_nodash }}"
+SINCE = "{{ prev_start_date_success.isoformat() if prev_start_date_success else '' }}"  # a failed run widens it
 DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_callback": on_failure}
 
 
@@ -42,7 +43,7 @@ for job in ingest_jobs(host_path("METAMORPH_WORKSPACE"), ojk_credentials=host_pa
         tags=["ingest", *job.tags],
     ) as dag:
         collect = container(
-            "collect", job.image, collect_command(job, RUN_ID), mounts=job.mounts, secrets=passed_on(job),
+            "collect", job.image, collect_command(job, RUN_ID, SINCE), mounts=job.mounts, secrets=passed_on(job),
             execution_timeout=timedelta(hours=6),
         )  # fmt: skip
         load = platform(

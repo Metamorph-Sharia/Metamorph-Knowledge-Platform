@@ -5,6 +5,8 @@
     quarantine      warning while lines that broke the contract wait for a person
     a register      warning while its newest published edition is older than the register's bound, or it has none
                     (market.register.fresh_days: OJK publishes each list one to three months after its date)
+    statistics      warning while a source's newest published month ended longer ago than its bound, or it has none
+                    (market.statistics_source.fresh_days: OJK's portal shows a month about two months after it ends)
 
 The overall status is the worst check's.
 """
@@ -26,6 +28,9 @@ CADENCE = {
     "bi-website": timedelta(days=1),
     "dsn-fatwa": timedelta(days=7),
     "ojk-register": timedelta(days=7),
+    "ojk-stats": timedelta(days=7),
+    "bi-stats": timedelta(days=7),
+    "bps-stats": timedelta(days=7),
 }
 
 
@@ -54,11 +59,19 @@ class RegisterFreshness:
 
 
 @dataclass(frozen=True)
+class StatisticsFreshness:
+    source: str
+    newest_end: date | None  # the last day of its newest published period, whatever its frequency
+    fresh_days: int
+
+
+@dataclass(frozen=True)
 class HealthFacts:
     now: datetime
     connectors: tuple[ConnectorActivity, ...]
     open_reviews: Mapping[str, int]  # review kind → open items
     registers: tuple[RegisterFreshness, ...] = ()
+    statistics: tuple[StatisticsFreshness, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +93,7 @@ def assess(facts: HealthFacts, cadence: Mapping[str, timedelta] = CADENCE) -> He
         *(_connector(name, every, activity.get(name), facts.now) for name, every in cadence.items()),
         _quarantine(facts.open_reviews.get("quarantine", 0)),
         *(_register(register, facts.now.date()) for register in facts.registers),
+        *(_statistics(source, facts.now.date()) for source in facts.statistics),
     ]
     return Health(max((c.severity for c in checks), key=lambda s: s.rank), tuple(checks))
 
@@ -113,6 +127,15 @@ def _register(register: RegisterFreshness, today: date) -> Check:
     age = (today - register.newest_edition).days
     detail = f"newest edition {register.newest_edition}, {age} days old (fresh within {register.fresh_days})"
     return Check(name, Severity.WARNING if age > register.fresh_days else Severity.OK, detail)
+
+
+def _statistics(source: StatisticsFreshness, today: date) -> Check:
+    name = f"statistics {source.source}"
+    if source.newest_end is None:
+        return Check(name, Severity.WARNING, "no period published yet")
+    age = (today - source.newest_end).days
+    detail = f"newest period ended {source.newest_end:%Y-%m-%d}, {age} days ago (fresh within {source.fresh_days})"
+    return Check(name, Severity.WARNING if age > source.fresh_days else Severity.OK, detail)
 
 
 def _hours(span: timedelta) -> str:

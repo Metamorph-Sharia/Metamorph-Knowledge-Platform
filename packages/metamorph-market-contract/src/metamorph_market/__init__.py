@@ -1,18 +1,24 @@
-"""Market contract 1.0: what a Metamorph market connector emits (MARKET_CONTRACT.md)."""
+"""Market contract 1.0: what a Metamorph market connector emits, licensed entities and series (MARKET_CONTRACT.md)."""
 
-from metamorph_market.bundle import Bundle, BundleEntry, BundleWriter, Manifest, UnloadableBundle
+from metamorph_market.bundle import Bundle, BundleEntry, BundleWriter, Manifest, Snapshot, UnloadableBundle
 from metamorph_market.codec import ContractViolation, from_dict, from_json, to_dict, to_json
 from metamorph_market.record import (
     MARKET_CONTRACT_VERSION,
     BusinessType,
     Channel,
+    Dimension,
     Entity,
     FileRef,
     FileRole,
+    Frequency,
     License,
     LicensedEntityRecord,
     LicenseKind,
     Listing,
+    MarketRecord,
+    Observation,
+    Series,
+    SeriesRecord,
     SourceRef,
 )
 from metamorph_market.validate import problems
@@ -25,14 +31,21 @@ __all__ = [
     "BusinessType",
     "Channel",
     "ContractViolation",
+    "Dimension",
     "Entity",
     "FileRef",
     "FileRole",
+    "Frequency",
     "License",
     "LicensedEntityRecord",
     "LicenseKind",
     "Listing",
     "Manifest",
+    "MarketRecord",
+    "Observation",
+    "Series",
+    "SeriesRecord",
+    "Snapshot",
     "SourceRef",
     "UnloadableBundle",
     "from_dict",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fakes import MemoryHealth
 
@@ -94,3 +94,26 @@ def test_a_register_is_fresh_while_its_newest_edition_is_within_its_bound() -> N
     assert check(fresh).detail == "newest edition 2026-07-24, 88 days old (fresh within 90)"
     assert check(stale).severity == Severity.WARNING
     assert (check(empty).severity, check(empty).detail) == (Severity.WARNING, "no edition published yet")
+
+
+def test_a_statistics_source_is_fresh_while_its_newest_period_ended_within_its_bound() -> None:
+    from metamorph_platform.domain.health import StatisticsFreshness
+
+    def check(newest):  # noqa: ANN001, ANN202
+        source = StatisticsFreshness("ojk:portal", newest, fresh_days=120)
+        health = assess(HealthFacts(now=NOW, connectors=(), open_reviews={}, statistics=(source,)), {})
+        return next(found for found in health.checks if found.name == "statistics ojk:portal")
+
+    fresh = check(date(2026, 8, 31))  # the end of August, or of a quarter or year that ends then
+    assert (fresh.severity, fresh.detail) == (
+        Severity.OK, "newest period ended 2026-08-31, 50 days ago (fresh within 120)",
+    )
+    assert check(date(2026, 4, 30)).severity == Severity.WARNING  # 173 days before
+    assert (check(None).severity, check(None).detail) == (Severity.WARNING, "no period published yet")
+
+
+def test_the_statistics_connectors_load_weekly() -> None:
+    from metamorph_platform.domain.health import CADENCE
+
+    assert CADENCE["ojk-stats"] == timedelta(days=7)
+    assert CADENCE["bi-stats"] == CADENCE["bps-stats"] == timedelta(days=7)

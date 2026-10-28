@@ -79,6 +79,8 @@ services:
       METAMORPH_MINERU_API_KEY: ${METAMORPH_MINERU_API_KEY:-}
       METAMORPH_MINERU_CACHE: ${METAMORPH_MINERU_CACHE:-data/mineru-cache}   # in each connector's mounted data/
       OJK_REGISTER_CONTACT: ${OJK_REGISTER_CONTACT:-}   # optional: OJK-Register-Connector's User-Agent contact
+      OJK_STATS_CONTACT: ${OJK_STATS_CONTACT:-}         # optional: OJK-Stats-Connector's User-Agent contact
+      BPS_STATS_CONTACT: ${BPS_STATS_CONTACT:-}         # optional: BPS-Stats-Connector's User-Agent contact
     ports: ["${AIRFLOW_PORT:-8080}:8080"]
     volumes:
       - ./dags:/opt/airflow/dags
@@ -171,6 +173,18 @@ services:
     <<: *connector
     build: {context: .., dockerfile: OJK-Register-Connector/Dockerfile}
     image: metamorph/ojk-register:dev
+  ojk-stats:
+    <<: *connector
+    build: {context: .., dockerfile: OJK-Stats-Connector/Dockerfile}
+    image: metamorph/ojk-stats:dev
+  bi-stats:
+    <<: *connector
+    build: {context: .., dockerfile: BI-Stats-Connector/Dockerfile}
+    image: metamorph/bi-stats:dev
+  bps-stats:
+    <<: *connector
+    build: {context: .., dockerfile: BPS-Stats-Connector/Dockerfile}
+    image: metamorph/bps-stats:dev
 
 networks:
   default:

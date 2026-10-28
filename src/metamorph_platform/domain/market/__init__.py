@@ -1,4 +1,4 @@
-"""The market data layer's rules: standing on a register, companies, edition changes, review notes."""
+"""The market data layer's rules: standing on a register, companies, edition changes, review notes, statistics."""
 
 from metamorph_platform.domain.market.companies import Company, CompanyStatus, companies
 from metamorph_platform.domain.market.history import (
@@ -9,7 +9,7 @@ from metamorph_platform.domain.market.history import (
     review_notes,
     standing,
 )
-from metamorph_platform.domain.market.loading import market_package_hash, register_problems
+from metamorph_platform.domain.market.loading import market_package_hash, unknown_scope_problems
 
 __all__ = [
     "Company",
@@ -20,7 +20,7 @@ __all__ = [
     "companies",
     "edition_changes",
     "market_package_hash",
-    "register_problems",
     "review_notes",
     "standing",
+    "unknown_scope_problems",
 ]
