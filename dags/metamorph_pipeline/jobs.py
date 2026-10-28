@@ -207,6 +207,21 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             layer=Layer.MARKET,
         ),
         ConnectorJob(
+            dag_id="ingest_reports",
+            connector="reports",
+            image="metamorph/reports:dev",
+            schedule="45 4 * * 1",  # weekly, Mondays: OJK publishes LPKSI yearly, on no fixed day
+            # exits 2 on a refusal; a report MinerU can't read now is kept unread and read on a later run.
+            # KEKSI and the roadmaps are imported by hand (`reports import`), into the same data/
+            collect="reports sync",
+            export="reports export --out {out} --run-id {run_id}",
+            mounts=(data("Reports-Connector"), bundles),
+            secrets=("REPORTS_CONTACT",),  # added to the connector's User-Agent, if set
+            description="Regulators' reports (LPKSI, KEKSI, roadmaps): new LPKSI editions from OJK's listing, export",
+            tags=("ojk", "bi", "market"),
+            layer=Layer.MARKET,
+        ),
+        ConnectorJob(
             dag_id="ingest_bps_stats",
             connector="bps-stats",
             image="metamorph/bps-stats:dev",

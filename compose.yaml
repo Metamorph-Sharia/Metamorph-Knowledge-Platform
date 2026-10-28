@@ -81,6 +81,7 @@ services:
       OJK_REGISTER_CONTACT: ${OJK_REGISTER_CONTACT:-}   # optional: OJK-Register-Connector's User-Agent contact
       OJK_STATS_CONTACT: ${OJK_STATS_CONTACT:-}         # optional: OJK-Stats-Connector's User-Agent contact
       BPS_STATS_CONTACT: ${BPS_STATS_CONTACT:-}         # optional: BPS-Stats-Connector's User-Agent contact
+      REPORTS_CONTACT: ${REPORTS_CONTACT:-}             # optional: Reports-Connector's User-Agent contact
     ports: ["${AIRFLOW_PORT:-8080}:8080"]
     volumes:
       - ./dags:/opt/airflow/dags
@@ -185,6 +186,10 @@ services:
     <<: *connector
     build: {context: .., dockerfile: BPS-Stats-Connector/Dockerfile}
     image: metamorph/bps-stats:dev
+  reports:
+    <<: *connector
+    build: {context: .., dockerfile: Reports-Connector/Dockerfile}
+    image: metamorph/reports:dev
 
 networks:
   default:

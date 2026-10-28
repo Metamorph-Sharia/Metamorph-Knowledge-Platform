@@ -5,7 +5,14 @@ from __future__ import annotations
 import psycopg
 import pytest
 from fakes import MemoryBlobStore
-from market_platform_samples import licensed, macro_series, series_record, write_market_bundle, write_series_bundle
+from market_platform_samples import (
+    licensed,
+    macro_series,
+    series_record,
+    write_market_bundle,
+    write_report_bundle,
+    write_series_bundle,
+)
 from metamorph_market import Bundle, LicenseKind
 
 from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, PostgresReviewQueue
@@ -26,13 +33,20 @@ def db(database_url):
         yield connection
 
 
-def load(db, directory):
-    loader = LoadMarketBundle(PostgresIngestLedger(db), PostgresMarket(db), MemoryBlobStore(), PostgresReviewQueue(db))
+@pytest.fixture
+def blobs():
+    return MemoryBlobStore()  # the object store, shared by the loads and the publishes of one test
+
+
+def load(db, directory, blobs=None):
+    loader = LoadMarketBundle(
+        PostgresIngestLedger(db), PostgresMarket(db), blobs or MemoryBlobStore(), PostgresReviewQueue(db)
+    )
     return loader.run(Bundle(directory), uri=str(directory))
 
 
-def publish(db):
-    return PublishMarket(PostgresMarket(db), PostgresPublishedMarket(db)).run()
+def publish(db, blobs=None):
+    return PublishMarket(PostgresMarket(db), PostgresPublishedMarket(db), blobs or MemoryBlobStore()).run()
 
 
 def snapshot():
@@ -212,3 +226,56 @@ def test_a_macro_series_is_published_with_its_frequency_unit_marks_and_citation(
     assert db.execute(
         "SELECT period::text, provisional FROM published_market.observation ORDER BY period"
     ).fetchall() == [("2026-01-01", False), ("2026-04-01", True)]
+
+
+def _pages(*counts: int) -> str:
+    pages = [f"<!-- page {number} -->\n" + " ".join(["kata"] * count) for number, count in enumerate(counts, 1)]
+    return "\n\n".join(pages)
+
+
+def test_a_report_is_published_with_its_passages_and_its_pdf(tmp_path, db, blobs) -> None:
+    load(db, write_report_bundle(tmp_path / "r1", {"ojk:lpksi:2025": _pages(300, 300)}), blobs)
+
+    published = publish(db, blobs)
+
+    assert (published.reports, published.passages, published.held_back) == (1, 2, 0)
+    report = db.execute(
+        "SELECT family, edition, citation, pages, passages, method, storage_key IS NOT NULL "
+        "FROM published_market.report WHERE id = 'ojk:lpksi:2025'"
+    ).fetchone()
+    assert report == ("lpksi", "2025", "Otoritas Jasa Keuangan, Laporan Perkembangan Keuangan Syariah Indonesia 2025",
+                      244, 2, "ocr", True)
+    assert db.execute(
+        "SELECT address, page_start, page_end, words FROM published_market.report_passage ORDER BY ordinal"
+    ).fetchall() == [("p-1", 1, 1, 300), ("p-2", 2, 2, 300)]
+
+
+def test_a_report_loads_again_unchanged_and_goes_when_dropped(tmp_path, db, blobs) -> None:
+    both = {"ojk:lpksi:2024": _pages(300), "ojk:lpksi:2025": _pages(300)}
+    load(db, write_report_bundle(tmp_path / "r1", both), blobs)
+
+    again = load(db, write_report_bundle(tmp_path / "r2", {"ojk:lpksi:2025": both["ojk:lpksi:2025"]}, "run-2"), blobs)
+    publish(db, blobs)
+
+    assert (again.unchanged, again.missing) == (1, 1)
+    assert db.execute("SELECT id FROM published_market.report").fetchall() == [("ojk:lpksi:2025",)]
+
+
+
+def test_curated_links_name_the_published_reports_and_industries_are_published(tmp_path, db, blobs) -> None:
+    load(db, write_series_bundle(tmp_path / "s1", [series_record("BU_Syariah_PosisiKeuangan", "1", "Kas",
+                                                                 {"2026-01": 1.0})]), blobs)
+    load(db, write_report_bundle(tmp_path / "r1", {"ojk:lpksi:2025": _pages(300)}), blobs)
+
+    publish(db, blobs)
+
+    assert db.execute(
+        "SELECT reports FROM published_market.dataset WHERE id = 'ojk:portal:bu_syariah_posisikeuangan'"
+    ).fetchone() == (["ojk:lpksi:2025"],)
+    assert db.execute(
+        "SELECT governed_by, reports, datasets FROM published_market.industry "
+        "WHERE source = 'ojk:portal' AND name = 'Bank Umum Syariah'"
+    ).fetchone() == (["id:uu:2008:21", "ojk:pojk:2022:16", "ojk:pojk:2023:12"], ["ojk:lpksi:2025"],
+                     ["ojk:portal:bu_syariah_posisikeuangan"])
+    assert db.execute("SELECT count(*) FROM published_market.industry").fetchone() == (4,)
+    assert db.execute("SELECT reports FROM published_market.register WHERE id = 'ojk:lpbbti'").fetchone() == ([],)

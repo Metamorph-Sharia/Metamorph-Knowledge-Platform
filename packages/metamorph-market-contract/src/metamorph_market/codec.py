@@ -12,6 +12,7 @@ from metamorph_market.record import (
     Channel,
     Dimension,
     Entity,
+    Extraction,
     FileRef,
     FileRole,
     Frequency,
@@ -21,9 +22,13 @@ from metamorph_market.record import (
     Listing,
     MarketRecord,
     Observation,
+    Report,
+    ReportRecord,
+    ReportText,
     Series,
     SeriesRecord,
     SourceRef,
+    TextMethod,
 )
 from metamorph_market.schema import record_problems
 
@@ -59,6 +64,8 @@ def from_dict(data: Mapping[str, Any]) -> MarketRecord:
         raise ContractViolation(found)
     if data["kind"] == "series":
         return _series_record(data)
+    if data["kind"] == "report":
+        return _report_record(data)
     return LicensedEntityRecord(
         contract_version=data["contract_version"],
         kind=data["kind"],
@@ -84,6 +91,21 @@ def _series_record(data: Mapping[str, Any]) -> SeriesRecord:
             }
         ),
         observations=tuple(Observation(**observation) for observation in data["observations"]),
+        files=_files(data),
+        source_fields=data["source_fields"],
+    )
+
+
+def _report_record(data: Mapping[str, Any]) -> ReportRecord:
+    text = data["text"]
+    return ReportRecord(
+        contract_version=data["contract_version"],
+        kind=data["kind"],
+        source=SourceRef(**data["source"]),
+        report=Report(**data["report"]),
+        text=ReportText(
+            **{**text, "method": TextMethod(text["method"]), "extraction": Extraction(**text["extraction"])}
+        ),
         files=_files(data),
         source_fields=data["source_fields"],
     )

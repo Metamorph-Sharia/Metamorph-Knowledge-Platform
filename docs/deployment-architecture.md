@@ -54,7 +54,7 @@ This page describes the system as it is meant to run once MinerU reads every con
 
 **On AWS** ([aws-deployment-guide.md](aws-deployment-guide.md)), each box is an ECS service or task, and PostgreSQL is Aurora Serverless v2. The core (the web app, the API, the database) deploys first. The ingestion layer ([deploy/aws/ingestion](../deploy/aws/ingestion/README.md)) plugs into it later: Airflow runs every DAG task as an ECS task (`METAMORPH_TASK_LAUNCHER=ecs`), and each task definition holds its volumes (EFS) and settings (Parameter Store). The rings below don't change: only the outermost one, `dags/metamorph_pipeline/containers.py`, knows where a container runs.
 
-The Knowledge & Retrieval layer reads `published.*` only ([published-schema.md](published-schema.md)). It never sees which engine read a PDF, except through `published.text.extraction`.
+The Knowledge & Retrieval layer reads `published.*` only ([published-schema.md](published-schema.md)). It never sees which engine read a PDF, except through `published.text.extraction`. Its tools, which an answering agent calls, are drafted in [retrieval-tools-design.md](retrieval-tools-design.md).
 
 ## The rings in each package
 

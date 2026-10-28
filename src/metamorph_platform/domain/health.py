@@ -31,6 +31,7 @@ CADENCE = {
     "ojk-stats": timedelta(days=7),
     "bi-stats": timedelta(days=7),
     "bps-stats": timedelta(days=7),
+    "reports": timedelta(days=7),  # regulators' reports: LPKSI synced weekly, the rest imported from the inbox
 }
 
 

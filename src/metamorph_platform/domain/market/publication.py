@@ -15,6 +15,8 @@ from metamorph_market import LicensedEntityRecord, Listing
 
 from metamorph_platform.domain.market.companies import Company, companies
 from metamorph_platform.domain.market.history import HeldLicense, edition_changes, review_notes, standing
+from metamorph_platform.domain.market.links import PublishedIndustry
+from metamorph_platform.domain.market.reports import Reports
 from metamorph_platform.domain.market.statistics import Statistics
 
 
@@ -26,6 +28,7 @@ class RegisterInfo:
     issuer: str
     name: str
     governed_by: tuple[str, ...]
+    reports: tuple[str, ...] = ()  # its reports: IDs, or families (ojk:lpksi) for every edition
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,7 @@ class PublishedRegister:
     governed_by: tuple[str, ...]
     newest_edition: date | None
     editions: int
+    reports: tuple[str, ...] = ()  # the published reports its curated links name
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,8 @@ class MarketPublication:
     entities: tuple[PublishedEntity, ...]
     listings: tuple[PublishedListing, ...]
     statistics: Statistics = field(default_factory=lambda: Statistics((), (), ()))
+    reports: Reports = field(default_factory=Reports)
+    industries: tuple[PublishedIndustry, ...] = ()
 
 
 def publication(

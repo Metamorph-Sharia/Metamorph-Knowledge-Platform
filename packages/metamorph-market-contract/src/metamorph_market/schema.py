@@ -11,8 +11,9 @@ from jsonschema import Draft202012Validator, ValidationError
 
 ENTITY_SCHEMA = "licensed-entity.schema.json"
 SERIES_SCHEMA = "series.schema.json"
+REPORT_SCHEMA = "report.schema.json"
 MANIFEST_SCHEMA = "market-manifest.schema.json"
-RECORD_SCHEMAS = {"licensed_entity": ENTITY_SCHEMA, "series": SERIES_SCHEMA}  # by the record's kind
+RECORD_SCHEMAS = {"licensed_entity": ENTITY_SCHEMA, "series": SERIES_SCHEMA, "report": REPORT_SCHEMA}  # by kind
 
 
 @cache

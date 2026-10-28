@@ -1,8 +1,8 @@
-"""The records a market connector emits (market contract 1.0): licensed entities and series.
+"""The records a market connector emits (market contract 1.0): licensed entities, series and reports.
 
 Plain frozen dataclasses: they cross repository and process boundaries, so they hold values only.
-The files they were read from (register editions, the source's answers) travel as blobs referenced by sha256,
-never inline.
+The files they were read from (register editions, the source's answers, a report's PDF and its text) travel as
+blobs referenced by sha256, never inline.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ class FileRole(StrEnum):
     REGISTER_EDITION = "register_edition"  # one published edition of the register, e.g. OJK's list for July 2026
     SOURCE_ANSWER = "source_answer"  # one answer of a statistics source, e.g. a portal table for one year
     SOURCE_TABLE = "source_table"  # one table of a statistics source as downloaded, e.g. a SEKI workbook
+    SOURCE_REPORT = "source_report"  # a regulator's report as published, e.g. LPKSI 2025's PDF
 
 
 class Frequency(StrEnum):
@@ -151,4 +152,57 @@ class SeriesRecord:
     kind: str = "series"
 
 
-MarketRecord = LicensedEntityRecord | SeriesRecord
+class TextMethod(StrEnum):
+    """How a report's text was read: from the PDF's text layer only, or with OCR on some pages."""
+
+    TEXT_LAYER = "text_layer"
+    OCR = "ocr"
+
+
+@dataclass(frozen=True)
+class Report:
+    """A regulator's report, review, roadmap or masterplan. It has no legal force: never a rule."""
+
+    id: str  # {issuer}:{family}:{edition} or {issuer}:{family}:{year}:{name}: ojk:lpksi:2025, ojk:roadmap:2023:rp3si
+    issuer: str  # e.g. "ojk", "bi"
+    family: str  # e.g. "lpksi", "keksi", "roadmap"
+    edition: str  # as titled, e.g. "2025" or "2023-2027"
+    title: str  # as published
+    published_on: str | None  # ISO date, when known
+    language: str  # e.g. "id"
+
+
+@dataclass(frozen=True)
+class Extraction:
+    """How metamorph-pdf-text read the text, so it can be read again alike."""
+
+    engine: str  # e.g. "mineru"
+    engine_version: str
+    tier: str  # e.g. "standard"
+    ocr_mode: str  # e.g. "auto"
+    pages_ocrd: int
+    pages_fallen_back: int  # pages whose layout reading wasn't trusted, kept from the text layer
+
+
+@dataclass(frozen=True)
+class ReportText:
+    """The report's text, page by page ("<!-- page N -->" markers), as a blob: the platform cuts its passages."""
+
+    file: str  # the text's sha256
+    pages: int
+    method: TextMethod
+    extraction: Extraction
+
+
+@dataclass(frozen=True)
+class ReportRecord:
+    source: SourceRef
+    report: Report
+    text: ReportText
+    files: tuple[FileRef, ...]  # the PDF as published
+    source_fields: dict[str, Any] = field(default_factory=dict)  # what the source's page says of it, unchanged
+    contract_version: str = MARKET_CONTRACT_VERSION
+    kind: str = "report"
+
+
+MarketRecord = LicensedEntityRecord | SeriesRecord | ReportRecord

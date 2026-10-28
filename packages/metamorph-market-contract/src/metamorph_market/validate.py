@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from metamorph_market.codec import to_dict
-from metamorph_market.record import Frequency, LicensedEntityRecord, MarketRecord, SeriesRecord
+from metamorph_market.record import Frequency, LicensedEntityRecord, MarketRecord, ReportRecord, SeriesRecord
 from metamorph_market.schema import record_problems
 
 PERIOD_FORMS = {
@@ -20,7 +20,16 @@ def problems(record: MarketRecord) -> list[str]:
     found = record_problems(to_dict(record))
     if isinstance(record, SeriesRecord):
         return found + _series_problems(record)
+    if isinstance(record, ReportRecord):
+        return found + _report_problems(record)
     return found + _entity_problems(record)
+
+
+def _report_problems(record: ReportRecord) -> list[str]:
+    report = record.report
+    if not report.id.startswith(f"{report.issuer}:{report.family}:"):
+        return [f"report.id: {report.id!r} is not of issuer {report.issuer!r} and family {report.family!r}"]
+    return []
 
 
 def _entity_problems(record: LicensedEntityRecord) -> list[str]:

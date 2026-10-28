@@ -23,6 +23,7 @@ class IndustryLink:
     industry: str  # as the source names it, e.g. "Bank Umum Syariah"
     register: str | None  # the register of its licensed entities, e.g. "ojk:lpbbti"
     governed_by: tuple[str, ...]  # its regulations, when it has no register
+    reports: tuple[str, ...] = ()  # its reports: IDs, or families (ojk:lpksi) for every edition
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class PublishedDataset:
     updated: date | None  # when the source last updated the data, as its newest answer says
     url: str | None
     citation: str | None  # how its source asks to be cited, from market.statistics_source
+    reports: tuple[str, ...] = ()  # the published reports its industry's curated links name
 
 
 @dataclass(frozen=True)

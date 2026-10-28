@@ -160,14 +160,14 @@ def _market_load(settings: Settings, arguments: argparse.Namespace) -> int:
         report = wiring.load_market_bundle(connection, settings).run(bundle, uri=str(arguments.bundle.resolve()))
         result = {"bundle_id": report.bundle_id, "connector": report.connector, **report.counts()}
         if arguments.publish:
-            result["published"] = asdict(wiring.publish_market(connection).run())
+            result["published"] = asdict(wiring.publish_market(connection, settings).run())
     print(json.dumps(result, indent=2))
     return EXIT_OK
 
 
 def _market_publish(settings: Settings, _: argparse.Namespace) -> int:
     with wiring.connect(settings) as connection:
-        print(json.dumps(asdict(wiring.publish_market(connection).run()), indent=2))
+        print(json.dumps(asdict(wiring.publish_market(connection, settings).run()), indent=2))
     return EXIT_OK
 
 

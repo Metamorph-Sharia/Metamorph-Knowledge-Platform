@@ -11,8 +11,9 @@
 - **Phase 3, the macro backdrop, is live but for BPS's backfill (2026-10-28):** BI's SEKI tables (3a) and BPS's dynamic tables from its website (3b), both decided by the project owner. AWS (Step 9) is deferred with the others.
   - **Built:** the contract's frequencies, units and marks; `BI-Stats-Connector`; `BPS-Stats-Connector`; migration 0018, partial bundles and the two DAGs.
   - **SEKI is live:** bi.go.id refuses the connector, so a curator downloads each month's edition and `bi-stats import` reads it (option A). September 2026's edition is published: 107 tables, 6,919 series.
-  - **BPS is partly live:** 116 tables are published. Its first collection runs on (Step 12): BPS's server answers slowly and often fails, so it takes days.
+  - **BPS is partly live:** 116 tables are published. Its first collection runs on in its own container (`BPS-Stats-Connector/scripts/backfill`, Step 12): about 12–20 hours from 2026-10-28, since BPS's server answers slowly and often fails.
   - **Cross-checked:** BPS's inflation and GDP equal SEKI's to the digit.
+- **Phase 4, the regulators' reports, is live (2026-10-28):** 13 reports, 1,943 passages, linked to every sharia industry. AWS (Step 8) is deferred with the others. Earlier, it was planned as: LPKSI, KEKSI and two roadmaps as a reports module of their own in the market layer, kept out of the regulation layer (decided), collected by `reports sync` from OJK's LPKSI listing and by `reports import` for the rest (decided). The first reports are LPKSI 2016–2025, KEKSI, RP3SI and Roadmap LPBBTI (decided); building started 2026-10-28. The retrieval tools that serve both layers to an answering agent are drafted in [retrieval-tools-design.md](retrieval-tools-design.md).
 
 Decided on 2026-10-27:
 - **A separate repository** for the connector.
@@ -50,7 +51,7 @@ Each phase adds one source end to end: connector, contract, load, publish. The c
 | **1 (this plan)** | OJK's monthly LPBBTI directory | `licensed_entity` | Who lends online under an OJK license, which of them are sharia, and who entered or left |
 | 2 | OJK's statistics: fintech lending (Statistik LPBBTI) and sharia banking (SPS), from OJK's monthly workbooks and then its data portal | `series` | How big the market is, how fast it grows, and the sharia share |
 | 3 | BI's SEKI tables (3a), then BPS's dynamic tables (3b) | `series`, with quarters, years and units | The macro backdrop |
-| 4 | LPKSI, KEKSI, the sharia banking roadmap | report (possibly a non-legal document kind in the regulation layer) | What the regulators plan and report |
+| 4 | LPKSI, KEKSI, the sharia banking and fintech lending roadmaps | `report`: a record kind of the market layer, with chapters and passages (Phase 4) | What the regulators plan and report |
 | 5 | OJK press releases | `event` | What changed, with an official date |
 
 Phase 2 was to wait on two answers from OJK (layanan.data@ojk.go.id): may the portal's tables be exported automatically, and is there a bulk route? The portal's FAQ answers the second: there is no API yet. The first is still open, and it now decides only how the months after OJK's cutover are collected. The history before it comes from workbooks the connector can download (Phase 2: the sources).
@@ -619,6 +620,155 @@ Each source keeps its own figures. A GDP figure from SEKI and one from BPS are t
 | BPS redeploys its site | The actions' IDs change | They are found again by name in the page's scripts. A name that's gone stops the run |
 | BPS's volume: millions of values | Large bundles and publishes | Bundles carry only changed datasets. The publish is measured at Step 12 and made incremental if needed |
 
+## Phase 4: the sources
+
+Surveyed on 2026-10-28, with a client naming itself on ojk.go.id. bi.go.id was not asked: it refuses our connectors (Phase 3, Step 6).
+
+| Report | Issuer | How often | Where | Editions |
+|---|---|---|---|---|
+| **LPKSI**, *Laporan Perkembangan Keuangan Syariah Indonesia*: the sharia financial sector's year, sector by sector, with OJK's policy and outlook | OJK | Yearly, since 2013 | [OJK's LPKSI page](https://ojk.go.id/id/kanal/syariah/data-dan-statistik/laporan-perkembangan-keuangan-syariah-indonesia/Default.aspx) lists one page per edition, each linking its PDF | 2016–2025 listed (10). An English edition exists for some years |
+| **KEKSI**, *Kajian Ekonomi dan Keuangan Syariah Indonesia*: the sharia economy's year and BI's policy direction | BI | Yearly (KEKSI 2024: February 2025) | bi.go.id, e.g. [KEKSI 2024](https://www.bi.go.id/id/publikasi/laporan/Pages/KEKSI_2024.aspx) | To count by hand |
+| **RP3SI 2023–2027**, the sharia banking roadmap: five pillars, with work programmes | OJK | Once per period (succeeds RP2SI 2020–2025) | [its page](https://ojk.go.id/id/Publikasi/Roadmap-dan-Pedoman/Syariah/Perbankan-Syariah-Indonesia/Pages/Roadmap-Pengembangan-dan-Penguatan-Perbankan-Syariah-Indonesia-2023-2027.aspx) | 1 |
+| **Roadmap LPBBTI 2023–2028**, fintech lending: Phase 1's register | OJK | Once per period | [its page](https://ojk.go.id/id/Publikasi/Roadmap-dan-Pedoman/PVML/Pages/Roadmap-Pengembangan-dan-Penguatan-LPBBTI-2023-2028.aspx) | 1 |
+| *Candidates for later:* the financing companies' roadmap 2024–2028; the digital financial assets and crypto roadmap (IAKD) 2024–2028; MEKSI, the national sharia economy masterplan (2019–2024 from KNKS; 2025–2029 drafted by KNEKS, which is being replaced, and possibly set by Perpres, which would bring it in as a regulation); SNLIK, the literacy and inclusion survey (mostly figures, better as series) | | | | |
+
+**What a report is like (LPKSI 2025, measured):**
+- **Large and visual:** 244 pages, 135 MB. Every page carries images. The text layer holds about 55,000 words, roughly 225 a page; 22 pages hold fewer than 30 words: covers, dividers and full-page infographics.
+- **Chapters are numbered, nothing below them is.** `BAB 1`…`BAB 11` open the chapters. Sections are unnumbered headings set apart only by size (17 and 30 points against 9-point text). The few numbered lines (`2.1 Penguatan tata…`) sit inside diagrams.
+- **Two traps for a reader:** a table of contents that lists every chapter (pages 12–17), and a running head on every page (`BAB 2 - perbankan syariah`).
+- **Charts lose their figures.** Their titles and captions are text; the bars are images. Tables come through as rows.
+
+**What the platform already offers:**
+- **Extraction is shared.** The `metamorph-pdf-text` package turns a PDF into clean paged text: it reads the text layer, uses MinerU for OCR and layout, removes page furniture, and caches every reading. Every connector that reads PDFs uses it. The platform never reads a PDF itself, so reports need a connector to be read.
+- **The regulation layer is built for law.** `document.kind` decides an answer's legal weight; the parser's three grammars find BAB, Pasal and ayat; and the publish gate holds back a regulation with no article found.
+- **The market layer holds records** (registers, series), loaded from bundles that carry files as blobs, under the market contract.
+
+## Phase 4: the design
+
+**Decided (2026-10-28): reports are a module of their own in the market layer, kept out of the regulation layer.** That keeps the legal parser and gate purely legal, so a report can never come back from a legal search. It leaves the regulatory retrieval index as it is, and lets reports evolve on their own (charts, tables, English editions, other issuers). **It stays modular, not duplicated:** extraction is the shared `metamorph-pdf-text` package, and files go through the bundles' blobs.
+
+### The contract
+
+`metamorph-market-contract` grows in place at 1.0, as Phase 2 added `series`, with **a third record kind, `report`**:
+- **The report:** `id`, `issuer`, `family`, `edition`, `title`, `published_on`, `language`, `url`.
+- **Its text:** the paged text `metamorph-pdf-text` produced (`<!-- page N -->` markers), stored as a blob by sha256, with how it was read (`method`, and the `extraction` record: engine, tier, pages read by OCR).
+- **Its file:** the PDF as a blob, role `source_report`.
+- **No legal force:** a report is what a regulator reports or plans, never a rule.
+- **IDs:** `ojk:lpksi:2025` (the edition's year as titled); `bi:keksi:2024`; `ojk:roadmap:2023:rp3si`, `ojk:roadmap:2023:lpbbti` (the year it was launched, and its short name). **Families:** `lpksi`, `keksi`, `roadmap`, later `masterplan`.
+
+### Passages: the platform's `domain/market/reports.py`
+
+The connector exports the text; **the platform cuts it**, so a better rule re-derives every report without reading a PDF again.
+
+**Measured in Step 0b (2026-10-28): chapters can't be found by one general rule yet.**
+
+| Report | Pages | Words | Chapters in the text |
+|---|---|---|---|
+| LPKSI 2025 | 244 | 55,025 | `BAB n` only in the table of contents and the running head on every page |
+| LPKSI 2019 | 134 | 24,721 | None as words: `01`, `02` on title pages; the running head is the report's title |
+| RP3SI 2023–2027 | 171 | 21,880 | None |
+| Roadmap LPBBTI 2023–2028 | 84 | 17,178 | `Bab I`–`Bab VII`, with a table of contents |
+
+A rule that found the chapters of all four would be tuned to each edition. So **a report is cut into passages, each with its pages**, the unit readers cite ("LPKSI 2025, hlm. 31–32"):
+- **Paragraphs** are what `metamorph-pdf-text` wrote, separated by blank lines, in reading order across pages.
+- **A passage** gathers paragraphs until it reaches about 250 words, and never passes 400. A paragraph longer than 400 words, usually a table, is split at its line ends, then by words.
+- **A short tail** joins the passage before it when the two fit within 400 words.
+- **Addresses:** `p-1`, `p-2`… in reading order, with `page_start` and `page_end`. Page furniture is already gone: extraction removed it.
+- **A report with no text** is held back, as material corruption.
+
+Chapters wait for a need. Then the general way is extraction's: `metamorph-pdf-text` keeping MinerU's title blocks as heading lines, never a copy of the package or a rule per edition.
+
+### The connector: `Reports-Connector`
+
+A new repository (package `reports`, command `reports`), shaped like the others. Its only reading is extraction: `metamorph-pdf-text`, with MinerU for pages whose text layer is thin.
+- **`reports sync`** (decision 3): OJK's [LPKSI listing](https://ojk.go.id/id/kanal/syariah/data-dan-statistik/laporan-perkembangan-keuangan-syariah-indonesia/Default.aspx).
+  - It reads the listing's edition pages (one per year, `…/Pages/Laporan-Perkembangan-Keuangan-Syariah-Indonesia-2025.aspx`), takes each page's PDF link, and downloads only editions not kept.
+  - The edition's year comes from the page's title (`Laporan Perkembangan Keuangan Syariah Indonesia 2025` → `ojk:lpksi:2025`).
+  - Phase 1's access rules hold: a User-Agent naming the connector, one request every two seconds, only the links the pages show, and a refusal stops the run.
+  - A PDF is about 135 MB, so a download is resumed rather than restarted. An edition whose page and PDF are unchanged costs one request.
+- **`reports import FILE --id bi:keksi:2024 --title … --published YYYY-MM-DD --url …`:** a report downloaded by hand. That covers KEKSI, since bi.go.id refuses connectors, and the roadmaps, which come once per period. Files dropped in `data/inbox/` with the same details are imported by the weekly run.
+- **`export`:** a market bundle of `report` records, loaded by `metamorph market load` as the other market connectors' are.
+- **`status`** and **`health`**, as the others.
+
+### The platform
+
+| Piece | What |
+|---|---|
+| Market contract | The `report` kind; the role `source_report` |
+| Migration `0019_market_reports` | `market.report` (each record whole); `market.report_link` (curated: an industry or register → its reports; a report → the regulations it discusses); `published_market.report` and `report_passage` |
+| `domain/market/reports.py` | Passages with their pages; a report without text is held back |
+| Loader and publish | The loader takes the new kind. The publish rebuilds reports with registers and statistics, in its one transaction |
+| `published_market.report` | One row per report: `id`, `issuer`, `family`, `edition`, `title`, `published_on`, `language`, `url`, `citation`, `pages`, `passages`, `method`, `storage_key` (the PDF), `published_at` |
+| `published_market.report_passage` | One row per passage: `report`, `address` (`p-3`), `ordinal`, `page_start`, `page_end`, `text`, `words` |
+| Links (migration 0020) | `reports[]` on `published_market.register` and `dataset`, curated by report or family: RP3SI → sharia banks, Roadmap LPBBTI → `ojk:lpbbti`, LPKSI and KEKSI → every sharia industry. A report's `discusses[]` (the regulations it discusses) waits for curation |
+| `published_market.industry` | The curated industries, published: each with its registers, governing regulations, reports and datasets. The retrieval tools' bridge between the layers (`industry_context`, [retrieval-tools-design.md](retrieval-tools-design.md)) |
+| `published-market-schema.md` | Reports and passages, their addresses, and that they carry no legal force |
+| Health | The `reports` connector's weekly load, as the other connectors'. A report's own age isn't checked: they come yearly or once per period |
+| Airflow | `ingest_reports`, weekly: `sync` (LPKSI), then import (the inbox), export, `metamorph market load --publish`. AWS deferred |
+
+The console's reader shows legal documents only; a reader for reports joins the console's market pages (*The curation console*, below).
+
+## Phase 4: decisions
+
+**Decided by the project owner (2026-10-28):**
+1. **Reports are a module of their own in the market layer** (option B), kept out of the regulation layer. Option A, `kind = report` in the regulation layer, was chosen first and reversed the same day:
+   - **Why:** the legal parser and gate stay purely legal, and a report can never be returned as law. The regulatory index being prototyped stays untouched, and reports evolve on their own.
+   - **The condition:** the project owner takes it on that the module stays modular, with shared packages rather than copies.
+
+   Behind the retrieval tools, the agent still has one text search (retrieval-tools-design.md).
+3. **They arrive by `sync` for OJK's LPKSI listing, and by `reports import` for the rest:** KEKSI, since bi.go.id refuses connectors, and the roadmaps.
+
+2. **The first reports** (as recommended): **LPKSI 2016–2025, KEKSI's editions, RP3SI 2023–2027 and Roadmap LPBBTI 2023–2028**, about 25 documents. Indonesian editions only. The candidates wait.
+
+## Phase 4: steps
+
+| # | Step | Done when |
+|---|---|---|
+| 0 ✓ | **Check before building (2026-10-28):** the sources above; LPKSI 2025 measured | The survey above |
+| 0b ✓ | **Measured 2026-10-28:** LPKSI 2019 and 2025, RP3SI, Roadmap LPBBTI (KEKSI waits for a hand download, since bi.go.id refuses connectors). Chapters vary by edition, so reports are cut into passages with their pages (*Passages*, above) | Passage rule settled |
+| 1 ✓ | Market contract: the `report` kind (report, text with how it was read, PDF) and `source_report` (2026-10-28) | 62 contract tests pass, including drift; Phases 1–3's bundles read as before |
+| 2 ✓ | `domain/market/reports.py`: passages, tests first (2026-10-28) | Every passage within 400 words, in order, with its pages |
+| 3 ✓ | Migration 0019, the loader (a report's text kept as a blob beside its PDF), the publish (texts read back through the blob store, passages cut each time), health's `reports` cadence, `published-market-schema.md`. **0019 applied live 2026-10-28**, after a backup (`backups/2026-10-28-before-market-reports`) | 794 platform tests pass with the database and object store |
+| 4 ✓ | `Reports-Connector` 0.1.0: `sync` (OJK's LPKSI listing, replayed from saved pages), `import`, `read` (reports kept unread while MinerU was down), `export`, `status`, `health`; extraction through `metamorph-pdf-text` with MinerU's basic tier; the image `metamorph/reports:dev` | 39 tests; a synced store exports a bundle whose every record is valid |
+| 5 ✓ | **The backfill, 2026-10-28,** on the Mac's MinerU (basic tier), after a backup:<br>• `reports sync` took LPKSI 2016–2025 from OJK's listing: ten editions, 1,922 pages, 87 minutes;<br>• `reports import` took KEKSI 2024 (downloaded by the project owner, since bi.go.id refuses connectors), RP3SI and Roadmap LPBBTI;<br>• every report read; 83–100% of the text layer's words kept. The rest is page furniture, chart axes and labels inside diagrams (MinerU reads a diagram as an image);<br>• LPKSI 2024's Rp2.883,67 triliun is found as printed | Every report in scope published |
+| 6 ✓ | Links (2026-10-28): migration 0020, applied live. `market.register.reports` and `market.industry.reports` are curated by report or by family (`ojk:lpksi`: every edition), resolved against what is published into `reports[]` on registers, datasets and the new `published_market.industry`. A report's `discusses[]` waits for curation | 801 platform tests pass; each sharia industry and the register name their reports |
+| 7 ✓ | Airflow `ingest_reports` (Mondays 04:45 UTC: `reports sync`, export, `metamorph market load --publish`), compose service `reports`. **`dags test`, 2026-10-28:** the sync found every edition kept, and 13 reports loaded and published as 1,943 passages, none held back; a second run loaded all 13 unchanged. Health `reports` ok | A `dags test` run loads and publishes |
+| 8 | AWS | Deferred with the other phases |
+
+## Phase 4: validation
+
+**Gates:**
+- **The PDF's words are kept:** the text layer's words appear in the passages, apart from page furniture.
+- **OCR is good enough** on the pages MinerU reads (infographics, scanned pages).
+- **Passages are intact:** none exceeds 400 words, they follow the reading order, and each carries its pages.
+- **No page noise:** running heads and page numbers are absent.
+- **Figures quoted in text survive:** LPKSI 2024's sharia financial assets, Rp2,883.67 trillion, are found as printed.
+- **The regulation layer is unchanged:** its tests pass, and no report appears in `published`.
+- **Operations:**
+  - a second load is all unchanged;
+  - every file is processed;
+  - a refusal stops the sync;
+  - rollback is exact.
+
+**Monitored:** pages with almost no text; chart-only pages.
+
+**Found in the backfill, recorded, not fixed** (by the engineering principles: they cost typography, not wording that matters):
+- **OCR is forced on born-digital reports.** `metamorph-pdf-text`'s quality check counts a page noisy by a vocabulary built from legal texts, so a report's economic and English terms push it past the 20% bar, and MinerU OCRs pages whose text layer was clean (KEKSI 2024: 204 of 212 pages). The cost: a stray character now and then (at most 11 in 66,000 words), a misread word, words run together. If it matters, the fix is general and in the package (a vocabulary that includes reports, or the policy by role), never per report.
+- **Zero-width spaces** stay in some texts (RP3SI), from the PDFs themselves.
+
+## Phase 4: risks
+
+| Risk | What happens | What to do |
+|---|---|---|
+| A report is quoted as if it were law | A wrong answer about what's required | A legal search can't return a report. The retrieval tools mark report passages `legal_force: none`, and the read contract says so |
+| Reports and regulations drift apart in their conventions | Two ways to store, cite or index text | Shared packages (`metamorph-pdf-text`, the bundles' blobs); one `ref` format and one retrieval convention (retrieval-tools-design.md) |
+| Layouts differ across editions and issuers | Chapters can't be found alike (Step 0b) | Passages by page, for every report. Chapters wait for MinerU's title blocks |
+| Very large PDFs (135 MB, 244 pages) | Slow downloads and MinerU runs | Measured in Step 0b; OCR only for thin pages; downloads resume |
+| Charts carry the figures | Numbers in charts are lost | Accepted: captions and text stay. The figures that matter are in Phases 2–3's series |
+| bi.go.id refuses connectors | KEKSI cannot be synced | By hand, as SEKI |
+| OJK changes the LPKSI listing or its pages | `sync` finds no edition, or stops | It stops at the first unexpected page; editions can still be imported by hand |
+| MEKSI's owner changes (KNEKS is being replaced) | Its address moves | By hand; a Perpres would arrive through the regulation connectors |
+
 ## The curation console: market pages (to design)
 
 The [curation console](../../Metamorph-Curation-Web/README.md) has no market pages yet. What they must do is gathered here as it comes up, and settled when they are designed.
@@ -629,5 +779,7 @@ The [curation console](../../Metamorph-Curation-Web/README.md) has no market pag
 - **whether it's current:** the newest edition imported and the newest period, with `metamorph health`'s `statistics bi:seki`, so a missed month shows.
 
 To decide then: the addresses are kept as data, for example beside `market.statistics_source`'s `bi:seki` row, so a curator can correct them without a deploy. The console reads them through the curation API, as it reads everything.
+
+**2. A reader for reports** (Phase 4). Reports stay out of the regulation layer, so the console's legal reader doesn't show them. A curator needs to read a report's chapters and passages with their pages, and to see its review notes.
 
 **Also to weigh then,** from what the plan already reports: tables noted unreadable (SEKI's V.18) or unanswered (BPS), SEKI rows relabelled under the same number, and market records in the review queue.

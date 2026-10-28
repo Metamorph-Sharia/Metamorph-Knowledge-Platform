@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from market_samples import build_record, build_series
+from market_samples import build_record, build_report, build_series
 from metamorph_market import (
     Bundle,
     BundleWriter,
@@ -170,3 +170,36 @@ def test_a_bundle_may_carry_whole_datasets_only(tmp_path: Path) -> None:
 def test_a_bundle_is_a_full_snapshot_unless_said_otherwise(tmp_path: Path) -> None:
     write(tmp_path, build_record())
     assert Bundle(tmp_path).manifest.snapshot == Snapshot.FULL
+
+
+def _report_in(bundle: BundleWriter) -> object:
+    record = build_report()
+    pdf, text = bundle.put_blob(b"%PDF-1.7 a report"), bundle.put_blob(b"<!-- page 1 -->\nBAB 1\n")
+    return replace(
+        record,
+        files=tuple(replace(file, sha256=pdf) for file in record.files),
+        text=replace(record.text, file=text),
+    )
+
+
+def test_a_report_carries_its_pdf_and_its_text_as_blobs_and_round_trips(tmp_path: Path) -> None:
+    from metamorph_market import ReportRecord, TextMethod, from_json
+
+    with BundleWriter(tmp_path, connector="reports", connector_version="0.1.0", run_id="run-1") as bundle:
+        report = _report_in(bundle)
+        bundle.add(report)
+
+    (entry,) = list(Bundle(tmp_path).entries())
+    assert entry.is_valid
+    assert isinstance(entry.record, ReportRecord)
+    assert entry.record == report == from_json(to_json(report))
+    assert isinstance(entry.record.text.method, TextMethod)
+    assert Bundle(tmp_path).blob_path(report.text.file).read_bytes().startswith(b"<!-- page 1 -->")
+
+
+def test_a_report_must_not_reference_a_text_left_out(tmp_path: Path) -> None:
+    writer = BundleWriter(tmp_path, connector="reports", connector_version="0.1.0", run_id="run-1")
+    with pytest.raises(ContractViolation, match="was not put into this bundle"), writer as bundle:
+        report = _report_in(bundle)
+        bundle.add(replace(report, text=replace(report.text, file="f" * 64)))
+

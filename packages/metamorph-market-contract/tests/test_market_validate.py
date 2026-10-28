@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from market_samples import EDITION_SHA, build_record, build_series
+from market_samples import EDITION_SHA, build_record, build_report, build_series
 from metamorph_market import Frequency, Listing, SeriesRecord, problems
 
 
@@ -117,3 +117,30 @@ def test_an_observation_may_be_provisional() -> None:
     record = build_series()
     provisional = replace(record.observations[1], provisional=True)
     assert problems(replace(record, observations=(record.observations[0], provisional))) == []
+
+
+def test_a_valid_report_has_no_problems() -> None:
+    assert problems(build_report()) == []
+
+
+def test_a_report_id_names_its_issuer_and_family() -> None:
+    record = build_report()
+    record = replace(record, report=replace(record.report, id="bi:keksi:2024"))
+
+    assert problems(record) == ["report.id: 'bi:keksi:2024' is not of issuer 'ojk' and family 'lpksi'"]
+
+
+def test_a_roadmap_id_may_carry_the_year_and_a_short_name() -> None:
+    record = build_report()
+    report = replace(record.report, id="ojk:roadmap:2023:rp3si", family="roadmap", edition="2023-2027")
+
+    assert problems(replace(record, report=report)) == []
+
+
+def test_a_report_has_pages() -> None:
+    record = build_report()
+
+    assert problems(replace(record, text=replace(record.text, pages=0))) == [
+        "text.pages: 0 is less than the minimum of 1"
+    ]
+

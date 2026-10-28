@@ -11,6 +11,7 @@ from metamorph_market import (
     Channel,
     Dimension,
     Entity,
+    Extraction,
     FileRef,
     FileRole,
     Frequency,
@@ -19,16 +20,22 @@ from metamorph_market import (
     LicenseKind,
     Listing,
     Observation,
+    Report,
+    ReportRecord,
+    ReportText,
     Series,
     SeriesRecord,
     SourceRef,
+    TextMethod,
 )
-from metamorph_market.schema import ENTITY_SCHEMA, MANIFEST_SCHEMA, SERIES_SCHEMA, load_schema
+from metamorph_market.schema import ENTITY_SCHEMA, MANIFEST_SCHEMA, REPORT_SCHEMA, SERIES_SCHEMA, load_schema
 
 RECORD = load_schema(ENTITY_SCHEMA)
 DEFINITIONS = RECORD["$defs"]
 SERIES = load_schema(SERIES_SCHEMA)
 SERIES_DEFINITIONS = SERIES["$defs"]
+REPORT = load_schema(REPORT_SCHEMA)
+REPORT_DEFINITIONS = REPORT["$defs"]
 
 OBJECTS = {
     LicensedEntityRecord: RECORD,
@@ -41,19 +48,24 @@ OBJECTS = {
     Series: SERIES_DEFINITIONS["series"],
     Dimension: SERIES_DEFINITIONS["dimension"],
     Observation: SERIES_DEFINITIONS["observation"],
+    ReportRecord: REPORT,
+    Report: REPORT_DEFINITIONS["report"],
+    ReportText: REPORT_DEFINITIONS["text"],
+    Extraction: REPORT_DEFINITIONS["extraction"],
 }
 
-SHARED = ("source", "file")  # one type each, so both schemas must define them alike, apart from the file roles
+SHARED = ("source", "file")  # one type each, so every kind's schema must define them alike, apart from the file roles
 
 VOCABULARIES = {
     BusinessType: DEFINITIONS["entity"]["properties"]["business_type"],
     Channel: DEFINITIONS["entity"]["properties"]["channels"]["items"],
     LicenseKind: DEFINITIONS["license"]["properties"]["kind"],
     Frequency: SERIES_DEFINITIONS["series"]["properties"]["frequency"],
+    TextMethod: REPORT_DEFINITIONS["text"]["properties"]["method"],
 }
 
 
-@pytest.mark.parametrize("schema", [ENTITY_SCHEMA, SERIES_SCHEMA, MANIFEST_SCHEMA])
+@pytest.mark.parametrize("schema", [ENTITY_SCHEMA, SERIES_SCHEMA, REPORT_SCHEMA, MANIFEST_SCHEMA])
 def test_each_schema_is_valid_json_schema(schema: str) -> None:
     Draft202012Validator.check_schema(load_schema(schema))
 
@@ -71,20 +83,19 @@ def test_each_vocabulary_matches_the_schema(vocabulary: type[StrEnum]) -> None:
 
 
 def test_each_kinds_file_roles_are_file_roles() -> None:
-    roles = [schema["$defs"]["file"]["properties"]["role"]["enum"] for schema in (RECORD, SERIES)]
+    roles = [schema["$defs"]["file"]["properties"]["role"]["enum"] for schema in (RECORD, SERIES, REPORT)]
     assert {member.value for member in FileRole} == {role for kind in roles for role in kind}
 
 
 @pytest.mark.parametrize("name", SHARED)
-def test_both_kinds_define_the_shared_types_alike(name: str) -> None:
-    def without_roles(definition: dict) -> dict:
-        return {**definition, "properties": {k: v for k, v in definition["properties"].items() if k != "role"}}
-
-    assert set(DEFINITIONS[name]["properties"]) == set(SERIES_DEFINITIONS[name]["properties"])
-    assert without_roles(DEFINITIONS[name])["required"] == without_roles(SERIES_DEFINITIONS[name])["required"]
+def test_every_kind_defines_the_shared_types_alike(name: str) -> None:
+    for other in (SERIES_DEFINITIONS, REPORT_DEFINITIONS):
+        assert set(DEFINITIONS[name]["properties"]) == set(other[name]["properties"])
+        assert DEFINITIONS[name]["required"] == other[name]["required"]
 
 
 def test_the_version_is_the_schemas() -> None:
     assert RECORD["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
     assert SERIES["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
+    assert REPORT["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
     assert load_schema(MANIFEST_SCHEMA)["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION

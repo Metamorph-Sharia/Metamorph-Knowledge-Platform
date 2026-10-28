@@ -1,5 +1,5 @@
-"""Market records and bundles for the platform's tests: licenses listed in given editions, each edition its PDF,
-and series observed in given months, each year its answer."""
+"""Market records and bundles for the platform's tests: licenses listed in given editions, each edition its PDF;
+series observed in given months, each year its answer; and reports, each with its PDF and its text."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from market_samples import build_record, build_series
+from market_samples import build_record, build_report, build_series
 from metamorph_market import (
     BundleWriter,
     BusinessType,
@@ -21,6 +21,7 @@ from metamorph_market import (
     LicenseKind,
     Listing,
     Observation,
+    ReportRecord,
     SeriesRecord,
     Snapshot,
 )
@@ -151,3 +152,32 @@ def write_series_bundle(
         for record in records:
             bundle.add(record)
     return directory
+
+
+REPORT_PDF = b"%PDF-1.7 LPKSI 2025"
+
+
+def report_record(text: str | None = None, report_id: str = "ojk:lpksi:2025") -> ReportRecord:
+    """LPKSI 2025: when `text` is given, the record points at its blob and the PDF's (write_report_bundle)."""
+    record = build_report()
+    record = replace(record, report=replace(record.report, id=report_id, edition=report_id.rsplit(":", 1)[-1]),
+                     source=replace(record.source, source_id=report_id))
+    if text is None:
+        return record
+    pdf = hashlib.sha256(REPORT_PDF).hexdigest()
+    return replace(
+        record,
+        text=replace(record.text, file=hashlib.sha256(text.encode()).hexdigest()),
+        files=tuple(replace(file, sha256=pdf) for file in record.files),
+    )
+
+
+def write_report_bundle(directory: Path, texts: dict[str, str], run_id: str = "run-1") -> Path:
+    """One report per ID, each with its text, all sharing one PDF's bytes."""
+    with BundleWriter(directory, connector="reports", connector_version="0.1.0", run_id=run_id) as bundle:
+        bundle.put_blob(REPORT_PDF)
+        for report_id, text in texts.items():
+            bundle.put_blob(text.encode())
+            bundle.add(report_record(text, report_id))
+    return directory
+

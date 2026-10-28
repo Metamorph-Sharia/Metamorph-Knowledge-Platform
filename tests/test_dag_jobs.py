@@ -26,7 +26,7 @@ WORKSPACE = "/Users/someone/Metamorph-Sharia"
 # Images whose ECS task definition waits: the market data layer joins the AWS ingestion layer after every phase is
 # built (docs/market-data-layer-plan.md, Step 10, deferred by the project owner on 2026-10-27).
 ECS_DEFERRED = {"metamorph/ojk-register:dev", "metamorph/ojk-stats:dev", "metamorph/bi-stats:dev",
-                "metamorph/bps-stats:dev"}
+                "metamorph/bps-stats:dev", "metamorph/reports:dev"}
 CREDENTIALS = "/Users/someone/.config/ojk-connector/credentials"
 
 
@@ -38,10 +38,10 @@ def jobs() -> dict[str, ConnectorJob]:
 def test_every_connector_has_a_scheduled_job(jobs) -> None:
     assert sorted(jobs) == [
         "ingest_bi", "ingest_bi_seki", "ingest_bpk", "ingest_bps_stats", "ingest_dsn_fatwa", "ingest_dsn_fatwa_full",
-        "ingest_ojk", "ingest_ojk_register", "ingest_ojk_stats",
+        "ingest_ojk", "ingest_ojk_register", "ingest_ojk_stats", "ingest_reports",
     ]
     assert {job.connector for job in jobs.values()} == {
-        "ojk", "bpk", "bi-website", "dsn-fatwa", "ojk-register", "ojk-stats", "bi-stats", "bps-stats",
+        "ojk", "bpk", "bi-website", "dsn-fatwa", "ojk-register", "ojk-stats", "bi-stats", "bps-stats", "reports",
     }
 
 
@@ -194,3 +194,13 @@ def test_a_failure_message_names_the_task_and_its_log() -> None:
     assert failure_message(context) == (
         "Metamorph: ingest_ojk.collect failed (run scheduled__2026-10-15, try 2): exit 2 — http://airflow/log"
     )
+
+
+def test_the_reports_job_syncs_lpksi_and_loads_into_the_market_layer(jobs) -> None:
+    reports = jobs["ingest_reports"]
+
+    assert (reports.image, reports.layer, reports.collect) == ("metamorph/reports:dev", Layer.MARKET, "reports sync")
+    assert reports.export == "reports export --out {out} --run-id {run_id}"
+    assert [m.source for m in reports.mounts] == [f"{WORKSPACE}/Reports-Connector/data", "metamorph-bundles"]
+    assert {"METAMORPH_MINERU_URL", "REPORTS_CONTACT"} <= set(passed_on(reports))
+

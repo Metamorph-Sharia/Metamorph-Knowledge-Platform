@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:metamorph:market:1.0:report",
+  "title": "Report (market contract 1.0)",
+  "description": "One line of records.jsonl: a regulator's report, review, roadmap or masterplan, with its text as read. It has no legal force.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "kind",
+    "source",
+    "report",
+    "text",
+    "files",
+    "source_fields"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "market-1.0"
+    },
+    "kind": {
+      "const": "report"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "report": {
+      "$ref": "#/$defs/report"
+    },
+    "text": {
+      "$ref": "#/$defs/text"
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "description": "The report as published: its PDF."
+    },
+    "source_fields": {
+      "type": "object",
+      "description": "What the source's page says of the report, unchanged."
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connector",
+        "connector_version",
+        "source_id",
+        "url",
+        "fetched_at"
+      ],
+      "properties": {
+        "connector": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "connector_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The report's key as the source gives it, e.g. its page's name."
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The page that lists the report, when known."
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "issuer",
+        "family",
+        "edition",
+        "title",
+        "published_on",
+        "language"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+:[a-z0-9]+(:[a-z0-9][a-z0-9._-]*){1,2}$",
+          "description": "{issuer}:{family}:{edition}, or {issuer}:{family}:{year}:{name}, e.g. ojk:lpksi:2025 or ojk:roadmap:2023:rp3si."
+        },
+        "issuer": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+$",
+          "description": "e.g. ojk or bi."
+        },
+        "family": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+$",
+          "description": "e.g. lpksi, keksi or roadmap."
+        },
+        "edition": {
+          "type": "string",
+          "minLength": 1,
+          "description": "As titled, e.g. 2025 or 2023-2027."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "As published."
+        },
+        "published_on": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "When it was published, when known."
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2}$",
+          "description": "e.g. id."
+        }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "pages",
+        "method",
+        "extraction"
+      ],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/sha256",
+          "description": "The text, page by page with <!-- page N --> markers, as a blob."
+        },
+        "pages": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "method": {
+          "enum": [
+            "text_layer",
+            "ocr"
+          ],
+          "description": "ocr when any page kept was read by OCR."
+        },
+        "extraction": {
+          "$ref": "#/$defs/extraction"
+        }
+      }
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "engine_version",
+        "tier",
+        "ocr_mode",
+        "pages_ocrd",
+        "pages_fallen_back"
+      ],
+      "properties": {
+        "engine": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engine_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ocr_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pages_ocrd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pages_fallen_back": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "How metamorph-pdf-text read the text, so it can be read again alike."
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "role",
+        "media_type",
+        "source_url",
+        "edition"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "role": {
+          "enum": [
+            "source_report"
+          ]
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edition": {
+          "type": "string",
+          "format": "date",
+          "description": "When the report was published, or fetched when that isn't known."
+        }
+      }
+    }
+  }
+}

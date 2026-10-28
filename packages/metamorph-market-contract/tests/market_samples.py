@@ -9,6 +9,7 @@ from metamorph_market import (
     Channel,
     Dimension,
     Entity,
+    Extraction,
     FileRef,
     FileRole,
     License,
@@ -16,9 +17,13 @@ from metamorph_market import (
     LicenseKind,
     Listing,
     Observation,
+    Report,
+    ReportRecord,
+    ReportText,
     Series,
     SeriesRecord,
     SourceRef,
+    TextMethod,
 )
 
 EDITION_SHA = "a" * 64
@@ -105,3 +110,55 @@ def build_series(**changes: object) -> SeriesRecord:
         source_fields={"cube": "BU_Syariah_PosisiKeuangan", "catalog": "PORTALSJKCUBE_PERBANKAN"},
     )
     return replace(record, **changes)
+
+
+REPORT_PDF_SHA = "d" * 64
+REPORT_TEXT_SHA = "e" * 64
+
+
+def build_report(**changes: object) -> ReportRecord:
+    record = ReportRecord(
+        source=SourceRef(
+            connector="reports",
+            connector_version="0.1.0",
+            source_id="Laporan-Perkembangan-Keuangan-Syariah-Indonesia-2025",
+            url="https://ojk.go.id/id/kanal/syariah/data-dan-statistik/laporan-perkembangan-keuangan-syariah-indonesia/"
+            "Pages/Laporan-Perkembangan-Keuangan-Syariah-Indonesia-2025.aspx",
+            fetched_at="2026-10-28T09:00:00+00:00",
+        ),
+        report=Report(
+            id="ojk:lpksi:2025",
+            issuer="ojk",
+            family="lpksi",
+            edition="2025",
+            title="Laporan Perkembangan Keuangan Syariah Indonesia 2025",
+            published_on=None,
+            language="id",
+        ),
+        text=ReportText(
+            file=REPORT_TEXT_SHA,
+            pages=244,
+            method=TextMethod.OCR,
+            extraction=Extraction(
+                engine="mineru",
+                engine_version="4.0.12",
+                tier="standard",
+                ocr_mode="auto",
+                pages_ocrd=22,
+                pages_fallen_back=3,
+            ),
+        ),
+        files=(
+            FileRef(
+                sha256=REPORT_PDF_SHA,
+                role=FileRole.SOURCE_REPORT,
+                media_type="application/pdf",
+                source_url="https://ojk.go.id/id/kanal/syariah/data-dan-statistik/laporan-perkembangan-keuangan-syariah-"
+                "indonesia/Documents/Laporan%20Perkembangan%20Keuangan%20Syariah%20Indonesia%20%28LPKSI%29%202025.pdf",
+                edition="2026-10-28",
+            ),
+        ),
+        source_fields={"page_title": "Laporan Perkembangan Keuangan Syariah Indonesia 2025"},
+    )
+    return replace(record, **changes)
+

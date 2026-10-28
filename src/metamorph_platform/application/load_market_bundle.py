@@ -14,7 +14,7 @@ from metamorph_market import Bundle, BundleEntry, SeriesRecord, Snapshot
 
 from metamorph_platform.application.ports import BlobStore, IngestLedger, MarketStore, ReviewQueue
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
-from metamorph_platform.domain.market import market_package_hash, unknown_scope_problems
+from metamorph_platform.domain.market import kept_files, market_package_hash, unknown_scope_problems
 
 
 @dataclass
@@ -77,8 +77,8 @@ class LoadMarketBundle:
             report.unchanged += 1
             return
         files = {
-            file.sha256: self.blobs.store(file.sha256, bundle.blob_path(file.sha256), file.media_type)
-            for file in record.files
+            sha: self.blobs.store(sha, bundle.blob_path(sha), media_type)
+            for sha, media_type in kept_files(record).items()
         }
         outcome = self.market.save(record, bundle_id=report.bundle_id, package_hash=fingerprint, files=files)
         report.new += outcome is SaveOutcome.NEW

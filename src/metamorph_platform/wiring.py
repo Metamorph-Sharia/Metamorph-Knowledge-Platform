@@ -61,8 +61,10 @@ def load_market_bundle(connection: psycopg.Connection, settings: Settings) -> Lo
     )
 
 
-def publish_market(connection: psycopg.Connection) -> PublishMarket:
-    return PublishMarket(source=PostgresMarket(connection), published=PostgresPublishedMarket(connection))
+def publish_market(connection: psycopg.Connection, settings: Settings) -> PublishMarket:
+    return PublishMarket(
+        source=PostgresMarket(connection), published=PostgresPublishedMarket(connection), blobs=blob_store(settings)
+    )
 
 
 def publish(connection: psycopg.Connection, settings: Settings) -> Publish:

@@ -6,7 +6,14 @@ import json
 
 import pytest
 from fakes import MemoryBlobStore, MemoryLedger, MemoryMarket, MemoryReviewQueue
-from market_platform_samples import licensed, series_record, write_market_bundle, write_series_bundle
+from market_platform_samples import (
+    licensed,
+    report_record,
+    series_record,
+    write_market_bundle,
+    write_report_bundle,
+    write_series_bundle,
+)
 from metamorph_market import Bundle, Snapshot
 
 from metamorph_platform.application.load_market_bundle import LoadMarketBundle
@@ -129,3 +136,26 @@ def test_a_bundle_of_whole_datasets_leaves_the_datasets_it_does_not_carry(tmp_pa
     assert report.missing == 1
     assert records[("ojk-stats", giro.source.source_id)]["missing"]  # gone from Cube_A, which the bundle carries
     assert not records[("ojk-stats", other.source.source_id)]["missing"]  # Cube_B: not in the bundle, untouched
+
+
+def test_a_report_keeps_its_pdf_and_its_text(tmp_path, ports) -> None:
+    _, market, blobs, _ = ports
+    text = "<!-- page 1 -->\nKeuangan syariah tumbuh."
+
+    report = load(ports, write_report_bundle(tmp_path / "r1", {"ojk:lpksi:2025": text}))
+
+    record = report_record(text)
+    assert (report.new, report.quarantined) == (1, 0)
+    assert set(blobs.blobs) == {record.text.file, record.files[0].sha256}
+    assert set(market.records[("reports", "ojk:lpksi:2025")]["files"]) == {record.text.file, record.files[0].sha256}
+
+
+def test_a_report_no_longer_sent_goes_missing(tmp_path, ports) -> None:
+    two_editions = {"ojk:lpksi:2024": "<!-- page 1 -->\nA", "ojk:lpksi:2025": "<!-- page 1 -->\nB"}
+    load(ports, write_report_bundle(tmp_path / "r1", two_editions))
+
+    newest = {"ojk:lpksi:2025": two_editions["ojk:lpksi:2025"]}
+    report = load(ports, write_report_bundle(tmp_path / "r2", newest, "run-2"))
+
+    assert (report.unchanged, report.missing) == (1, 1)
+

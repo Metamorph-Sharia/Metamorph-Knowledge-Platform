@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from metamorph_contract import Manifest, NormalizedDocument
-from metamorph_market import LicensedEntityRecord, MarketRecord, SeriesRecord
+from metamorph_market import LicensedEntityRecord, MarketRecord, ReportRecord, SeriesRecord
 
 from metamorph_platform.domain.citations import TextCitation
 from metamorph_platform.domain.curation import ActiveOverride
@@ -131,8 +131,12 @@ class MarketSource(Protocol):
         """Every series the connectors' latest snapshots still send."""
         ...
 
+    def current_reports(self) -> list[ReportRecord]:
+        """Every report the connectors' latest snapshots still send."""
+        ...
+
     def storage_keys(self) -> dict[str, str]:
-        """Where each file (by sha256: register editions, source answers) is kept in the object store."""
+        """Where each file (by sha256: register editions, source answers, reports and their texts) is kept."""
         ...
 
     def citations(self) -> dict[str, str]:

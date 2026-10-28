@@ -1,17 +1,19 @@
-# Market contract 1.0: licensed entities and series
+# Market contract 1.0: licensed entities, series and reports
 
 **Version 1.0 · 2026-10-27** · package `metamorph-market-contract` (module `metamorph_market`; Python ≥ 3.11; depends on `jsonschema`)
 
-The market data layer's counterpart to [contract v2](../metamorph-contract/CONTRACT_V2.md). Contract v2 describes a legal document. This contract describes market records, one kind at a time, as each source arrives ([docs/market-data-layer-plan.md](../../docs/market-data-layer-plan.md)). Version 1.0 has two kinds:
+The market data layer's counterpart to [contract v2](../metamorph-contract/CONTRACT_V2.md). Contract v2 describes a legal document. This contract describes market records, one kind at a time, as each source arrives ([docs/market-data-layer-plan.md](../../docs/market-data-layer-plan.md)). Version 1.0 has three kinds:
 - **`licensed_entity`:** one license on a regulator's register;
-- **`series`:** one statistic a regulator publishes, over time.
+- **`series`:** one statistic a regulator publishes, over time;
+- **`report`:** a regulator's report, review, roadmap or masterplan, with its text as read (2026-10-28, Phase 4).
 
-**The formal contract is three JSON Schemas (draft 2020-12):**
+**The formal contract is four JSON Schemas (draft 2020-12):**
 
 | Schema | Describes |
 |---|---|
 | [`licensed-entity.schema.json`](src/metamorph_market/schemas/licensed-entity.schema.json) (`urn:metamorph:market:1.0:licensed-entity`) | One line of `records.jsonl` |
 | [`series.schema.json`](src/metamorph_market/schemas/series.schema.json) (`urn:metamorph:market:1.0:series`) | One line of `records.jsonl`, of kind `series` |
+| [`report.schema.json`](src/metamorph_market/schemas/report.schema.json) (`urn:metamorph:market:1.0:report`) | One line of `records.jsonl`, of kind `report` |
 | [`market-manifest.schema.json`](src/metamorph_market/schemas/market-manifest.schema.json) (`urn:metamorph:market:1.0:manifest`) | `manifest.json` |
 
 The Python types mirror them exactly, and a test fails on any drift.
@@ -72,6 +74,30 @@ The same rules hold:
 - every observation's file is in `files`;
 - every period has its series' frequency's form;
 - no period is observed twice.
+
+## The report
+
+```text
+ReportRecord
+  contract_version   "market-1.0"
+  kind               "report"
+  source             connector, connector_version, source_id (the source's key, e.g. its page's name),
+                     url (the page that lists it), fetched_at
+  report             id {issuer}:{family}:{edition} or {issuer}:{family}:{year}:{name}
+                     (ojk:lpksi:2025, ojk:roadmap:2023:rp3si), issuer, family, edition (as titled),
+                     title, published_on (when known), language
+  text               file (sha256 of the text: page by page, "<!-- page N -->" markers, as metamorph-pdf-text
+                     wrote it), pages, method (text_layer | ocr), extraction (engine, engine_version, tier,
+                     ocr_mode, pages_ocrd, pages_fallen_back)
+  files[]            sha256, role (source_report), media_type, source_url, edition (published, or fetched)
+  source_fields      what the source's page says of it, unchanged
+```
+
+- **A report has no legal force.** It says what a regulator reports or plans, never a rule.
+- **The connector reads the PDF; the platform cuts the text** into chapters and passages. A better rule re-derives every report without reading a PDF again.
+- **Both the PDF and the text are blobs**, referenced by sha256.
+
+`problems(record)` checks that the ID names the report's issuer and family.
 
 ## Writing a bundle
 

@@ -116,4 +116,4 @@ def test_the_statistics_connectors_load_weekly() -> None:
     from metamorph_platform.domain.health import CADENCE
 
     assert CADENCE["ojk-stats"] == timedelta(days=7)
-    assert CADENCE["bi-stats"] == CADENCE["bps-stats"] == timedelta(days=7)
+    assert CADENCE["bi-stats"] == CADENCE["bps-stats"] == CADENCE["reports"] == timedelta(days=7)
