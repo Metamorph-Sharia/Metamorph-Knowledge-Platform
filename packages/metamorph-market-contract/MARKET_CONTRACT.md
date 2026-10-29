@@ -1,19 +1,21 @@
-# Market contract 1.0: licensed entities, series and reports
+# Market contract 1.0: licensed entities, series, reports and releases
 
 **Version 1.0 · 2026-10-27** · package `metamorph-market-contract` (module `metamorph_market`; Python ≥ 3.11; depends on `jsonschema`)
 
-The market data layer's counterpart to [contract v2](../metamorph-contract/CONTRACT_V2.md). Contract v2 describes a legal document. This contract describes market records, one kind at a time, as each source arrives ([docs/market-data-layer-plan.md](../../docs/market-data-layer-plan.md)). Version 1.0 has three kinds:
+The market data layer's counterpart to [contract v2](../metamorph-contract/CONTRACT_V2.md). Contract v2 describes a legal document. This contract describes market records, one kind at a time, as each source arrives ([docs/market-data-layer-plan.md](../../docs/market-data-layer-plan.md)). Version 1.0 has four kinds:
 - **`licensed_entity`:** one license on a regulator's register;
 - **`series`:** one statistic a regulator publishes, over time;
-- **`report`:** a regulator's report, review, roadmap or masterplan, with its text as read (2026-10-28, Phase 4).
+- **`report`:** a regulator's report, review, roadmap or masterplan, with its text as read (2026-10-28, Phase 4);
+- **`release`:** a regulator's press release, with its words (2026-10-28, Phase 5).
 
-**The formal contract is four JSON Schemas (draft 2020-12):**
+**The formal contract is five JSON Schemas (draft 2020-12):**
 
 | Schema | Describes |
 |---|---|
 | [`licensed-entity.schema.json`](src/metamorph_market/schemas/licensed-entity.schema.json) (`urn:metamorph:market:1.0:licensed-entity`) | One line of `records.jsonl` |
 | [`series.schema.json`](src/metamorph_market/schemas/series.schema.json) (`urn:metamorph:market:1.0:series`) | One line of `records.jsonl`, of kind `series` |
 | [`report.schema.json`](src/metamorph_market/schemas/report.schema.json) (`urn:metamorph:market:1.0:report`) | One line of `records.jsonl`, of kind `report` |
+| [`release.schema.json`](src/metamorph_market/schemas/release.schema.json) (`urn:metamorph:market:1.0:release`) | One line of `records.jsonl`, of kind `release` |
 | [`market-manifest.schema.json`](src/metamorph_market/schemas/market-manifest.schema.json) (`urn:metamorph:market:1.0:manifest`) | `manifest.json` |
 
 The Python types mirror them exactly, and a test fails on any drift.
@@ -98,6 +100,30 @@ ReportRecord
 - **Both the PDF and the text are blobs**, referenced by sha256.
 
 `problems(record)` checks that the ID names the report's issuer and family.
+
+## The release
+
+```text
+ReleaseRecord
+  contract_version   "market-1.0"
+  kind               "release"
+  source             connector, connector_version, source_id (the page's name), url (the release's page), fetched_at
+  release            id {issuer}:siaran-pers:{year}:{name}, the name being the page's in lower case
+                     (ojk:siaran-pers:2026:ojk-cabut-izin-usaha-pt-porto-ventura-kapital), issuer,
+                     number (as printed, e.g. "SP 188/DKPU/OJK/X/2026", or null), title (as listed),
+                     published_on (as the listing dates it), language
+  text               its words, paragraphs separated by blank lines
+  files[]            sha256, role (source_page: the release's body as the page published it), media_type,
+                     source_url, edition (its date)
+  source_fields      what the source says of it, unchanged (its PDF's address)
+```
+
+- **A release has no legal force.** It says what a regulator announced. A release announcing a regulation is not the regulation.
+- **Its words travel inline:** a release is a page or two, read from its HTML, not from a PDF. The page's body is kept as a blob.
+- **Numbers aren't keys:** OJK's numbers start again each year, and some releases have none. The page's name is.
+- **The connector reads the page; the platform cuts the text** into passages and finds the regulations and companies it names.
+
+`problems(record)` checks that the ID names the release's issuer and the year of its date.
 
 ## Writing a bundle
 

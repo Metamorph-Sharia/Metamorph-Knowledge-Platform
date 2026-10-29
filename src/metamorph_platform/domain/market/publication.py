@@ -9,15 +9,19 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from metamorph_market import LicensedEntityRecord, Listing
 
 from metamorph_platform.domain.market.companies import Company, companies
 from metamorph_platform.domain.market.history import HeldLicense, edition_changes, review_notes, standing
 from metamorph_platform.domain.market.links import PublishedIndustry
+from metamorph_platform.domain.market.releases import Releases
 from metamorph_platform.domain.market.reports import Reports
 from metamorph_platform.domain.market.statistics import Statistics
+
+if TYPE_CHECKING:
+    from metamorph_platform.domain.market.mentions import Mention  # mentions find published companies
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,8 @@ class MarketPublication:
     statistics: Statistics = field(default_factory=lambda: Statistics((), (), ()))
     reports: Reports = field(default_factory=Reports)
     industries: tuple[PublishedIndustry, ...] = ()
+    releases: Releases = field(default_factory=Releases)
+    mentions: tuple[Mention, ...] = ()  # what each passage of a report or a release names
 
 
 def publication(

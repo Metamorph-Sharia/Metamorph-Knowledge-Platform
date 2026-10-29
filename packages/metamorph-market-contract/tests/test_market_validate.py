@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from market_samples import EDITION_SHA, build_record, build_report, build_series
+from market_samples import EDITION_SHA, build_record, build_release, build_report, build_series
 from metamorph_market import Frequency, Listing, SeriesRecord, problems
 
 
@@ -144,3 +144,31 @@ def test_a_report_has_pages() -> None:
         "text.pages: 0 is less than the minimum of 1"
     ]
 
+
+
+def test_a_valid_release_has_no_problems() -> None:
+    assert problems(build_release()) == []
+
+
+def test_a_release_id_names_its_issuer_and_year() -> None:
+    record = build_release()
+    release = replace(record.release, id="ojk:siaran-pers:2025:ojk-cabut-izin-usaha-pt-porto-ventura-kapital")
+
+    assert problems(replace(record, release=release)) == [
+        "release.id: 'ojk:siaran-pers:2025:ojk-cabut-izin-usaha-pt-porto-ventura-kapital' is not of issuer 'ojk' "
+        "and year 2026"
+    ]
+
+
+def test_a_release_without_a_number_or_text_is_still_a_release() -> None:
+    record = build_release()
+
+    assert problems(replace(record, release=replace(record.release, number=None), text="")) == []
+
+
+def test_a_release_is_dated() -> None:
+    record = build_release()
+
+    assert problems(replace(record, release=replace(record.release, published_on="8 Oktober 2026"))) == [
+        "release.published_on: '8 Oktober 2026' is not a 'date'"
+    ]

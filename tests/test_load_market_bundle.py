@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
 from fakes import MemoryBlobStore, MemoryLedger, MemoryMarket, MemoryReviewQueue
 from market_platform_samples import (
+    RELEASE_BODY,
     licensed,
+    release_record,
     report_record,
     series_record,
     write_market_bundle,
+    write_release_bundle,
     write_report_bundle,
     write_series_bundle,
 )
@@ -159,3 +163,15 @@ def test_a_report_no_longer_sent_goes_missing(tmp_path, ports) -> None:
 
     assert (report.unchanged, report.missing) == (1, 1)
 
+
+
+def test_a_release_keeps_its_body_and_belongs_to_no_register(tmp_path, ports) -> None:
+    _, market, blobs, _ = ports
+    record = release_record("SIARAN PERS\n\nOJK mencabut izin usaha.")
+
+    report = load(ports, write_release_bundle(tmp_path / "s1", [record]))
+
+    body = hashlib.sha256(RELEASE_BODY).hexdigest()
+    assert (report.new, report.quarantined) == (1, 0)
+    assert set(blobs.blobs) == {body}
+    assert set(market.records[("reports", record.source.source_id)]["files"]) == {body}

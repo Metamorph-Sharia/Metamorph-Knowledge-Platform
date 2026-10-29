@@ -17,6 +17,8 @@ from metamorph_market import (
     LicenseKind,
     Listing,
     Observation,
+    Release,
+    ReleaseRecord,
     Report,
     ReportRecord,
     ReportText,
@@ -162,3 +164,41 @@ def build_report(**changes: object) -> ReportRecord:
     )
     return replace(record, **changes)
 
+
+
+RELEASE_PAGE_SHA = "f" * 64
+RELEASE_PAGE = "https://ojk.go.id/id/berita-dan-kegiatan/siaran-pers/Pages/OJK-Cabut-Izin-Usaha-PT-Porto-Ventura-Kapital.aspx"
+
+
+def build_release(**changes: object) -> ReleaseRecord:
+    record = ReleaseRecord(
+        source=SourceRef(
+            connector="reports",
+            connector_version="0.2.0",
+            source_id="OJK-Cabut-Izin-Usaha-PT-Porto-Ventura-Kapital",
+            url=RELEASE_PAGE,
+            fetched_at="2026-10-28T09:00:00+00:00",
+        ),
+        release=Release(
+            id="ojk:siaran-pers:2026:ojk-cabut-izin-usaha-pt-porto-ventura-kapital",
+            issuer="ojk",
+            number="SP 188/DKPU/OJK/X/2026",
+            title="Siaran Pers: OJK Cabut Izin Usaha PT Porto Ventura Kapital",
+            published_on="2026-10-08",
+            language="id",
+        ),
+        text="SP 188/DKPU/OJK/X/2026\n\nSIARAN PERS\n\nOJK CABUT IZIN USAHA PT PORTO VENTURA KAPITAL\n\n"
+        "Jakarta, 8 Oktober 2026. Otoritas Jasa Keuangan (OJK) mencabut izin usaha PT Porto Ventura Kapital.",
+        files=(
+            FileRef(
+                sha256=RELEASE_PAGE_SHA,
+                role=FileRole.SOURCE_PAGE,
+                media_type="text/html; charset=utf-8",
+                source_url=RELEASE_PAGE,
+                edition="2026-10-08",
+            ),
+        ),
+        source_fields={"pdf": "https://ojk.go.id/id/berita-dan-kegiatan/siaran-pers/Documents/Pages/"
+                       "OJK-Cabut-Izin-Usaha-PT-Porto-Ventura-Kapital/SP%20188.pdf"},
+    )
+    return replace(record, **changes)

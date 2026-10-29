@@ -41,9 +41,19 @@ class _Piece:
 
 
 def passages(text: str) -> tuple[Passage, ...]:
+    """A report's passages: its text is paged ("<!-- page N -->")."""
+    return _gathered(_pieces(split_pages(text)))
+
+
+def unpaged_passages(text: str) -> tuple[Passage, ...]:
+    """A text without pages, such as a release's, cut by the same rule; every passage is on page 1."""
+    return _gathered(_pieces([(1, text)]))
+
+
+def _gathered(pieces: Iterator[_Piece]) -> tuple[Passage, ...]:
     gathered: list[list[_Piece]] = []
     current: list[_Piece] = []
-    for piece in _pieces(text):
+    for piece in pieces:
         if current and _words(current) + piece.words > MAX_WORDS:
             gathered.append(current)
             current = []
@@ -58,8 +68,8 @@ def passages(text: str) -> tuple[Passage, ...]:
     return tuple(_passage(ordinal, pieces) for ordinal, pieces in enumerate(gathered, start=1))
 
 
-def _pieces(text: str) -> Iterator[_Piece]:
-    for page, content in split_pages(text):
+def _pieces(pages: Sequence[tuple[int, str]]) -> Iterator[_Piece]:
+    for page, content in pages:
         for paragraph in content.split("\n\n"):
             for chunk in _within_limit(paragraph.strip()):
                 if words := len(chunk.split()):

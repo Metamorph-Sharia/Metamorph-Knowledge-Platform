@@ -8,8 +8,10 @@ from fakes import MemoryBlobStore
 from market_platform_samples import (
     licensed,
     macro_series,
+    release_record,
     series_record,
     write_market_bundle,
+    write_release_bundle,
     write_report_bundle,
     write_series_bundle,
 )
@@ -188,6 +190,33 @@ def test_publishing_series_again_replaces_rather_than_adds(tmp_path, db) -> None
     assert db.execute("SELECT count(*) FROM published_market.observation").fetchone() == (3,)
 
 
+def test_series_published_in_parts_of_one_dataset_are_published_whole(tmp_path, db) -> None:
+    load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
+
+    report = PublishMarket(PostgresMarket(db), PostgresPublishedMarket(db), MemoryBlobStore(), series_per_part=1).run()
+
+    assert (report.datasets, report.series, report.observations) == (2, 2, 3)
+    assert db.execute("SELECT count(*) FROM published_market.dataset").fetchone() == (2,)
+    assert db.execute("SELECT count(*) FROM published_market.observation").fetchone() == (3,)
+
+
+class FailingAfterOnePart(PostgresMarket):
+    def current_series(self):  # noqa: ANN201
+        yield from list(super().current_series())[:1]
+        raise RuntimeError("the store went away")
+
+
+def test_a_publish_that_fails_between_parts_leaves_published_market_as_it_was(tmp_path, db) -> None:
+    load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
+    publish(db)
+
+    with pytest.raises(RuntimeError, match="went away"):
+        PublishMarket(FailingAfterOnePart(db), PostgresPublishedMarket(db), MemoryBlobStore(), series_per_part=1).run()
+
+    assert db.execute("SELECT count(*) FROM published_market.dataset").fetchone() == (2,)
+    assert db.execute("SELECT count(*) FROM published_market.observation").fetchone() == (3,)
+
+
 def test_series_dropped_from_the_snapshot_are_missing(tmp_path, db) -> None:
     load(db, write_series_bundle(tmp_path / "s1", series_snapshot()))
     report = load(db, write_series_bundle(tmp_path / "s2", series_snapshot()[:1], run_id="run-2"))
@@ -279,3 +308,42 @@ def test_curated_links_name_the_published_reports_and_industries_are_published(t
                      ["ojk:portal:bu_syariah_posisikeuangan"])
     assert db.execute("SELECT count(*) FROM published_market.industry").fetchone() == (4,)
     assert db.execute("SELECT reports FROM published_market.register WHERE id = 'ojk:lpbbti'").fetchone() == ([],)
+
+
+RELEASE_TEXT = ("SP 188/DKPU/OJK/X/2026\n\nSIARAN PERS\n\nJakarta, 8 Oktober 2026. OJK mencabut izin usaha "
+                "PT FINTECH BINA BANGSA sesuai Peraturan Otoritas Jasa Keuangan Nomor 40 Tahun 2024.")
+
+
+def test_a_release_is_published_with_its_passages_and_what_they_name(tmp_path, db, blobs) -> None:
+    load(db, write_market_bundle(tmp_path / "b1", snapshot()))
+    load(db, write_release_bundle(tmp_path / "s1", [release_record(RELEASE_TEXT)]), blobs)
+
+    published = publish(db, blobs)
+
+    assert (published.releases, published.release_passages, published.mentions) == (1, 1, 2)
+    release = db.execute(
+        "SELECT number, published_on::text, citation, passages, storage_key IS NOT NULL FROM published_market.release"
+    ).fetchone()
+    assert release == ("SP 188/DKPU/OJK/X/2026", "2026-10-08", "Siaran Pers OJK SP 188/DKPU/OJK/X/2026, 8 Oktober 2026",
+                       1, True)
+    assert db.execute("SELECT address, words FROM published_market.release_passage").fetchall() == [("p-1", 25)]
+    assert db.execute(
+        "SELECT kind, address, target_kind, target, words FROM published_market.mention ORDER BY target_kind DESC"
+    ).fetchall() == [
+        ("release", "p-1", "regulation", "ojk:pojk:2024:40", "Peraturan Otoritas Jasa Keuangan Nomor 40 Tahun 2024"),
+        ("release", "p-1", "company", db.execute("SELECT id FROM published_market.company WHERE legal_name = "
+                                                 "'PT Fintech Bina Bangsa'").fetchone()[0], "PT FINTECH BINA BANGSA"),
+    ]
+
+
+def test_a_release_loads_again_unchanged_and_goes_when_dropped(tmp_path, db, blobs) -> None:
+    older = release_record("Teks lama.", name="lama", published_on="2020-02-04", number=None)
+    load(db, write_release_bundle(tmp_path / "s1", [older, release_record(RELEASE_TEXT)]), blobs)
+
+    again = load(db, write_release_bundle(tmp_path / "s2", [release_record(RELEASE_TEXT)], "run-2"), blobs)
+    publish(db, blobs)
+
+    assert (again.unchanged, again.missing) == (1, 1)
+    assert db.execute("SELECT count(*) FROM published_market.release").fetchone() == (1,)
+    publish(db, blobs)
+    assert db.execute("SELECT count(*) FROM published_market.mention").fetchone() == (1,)  # replaced, not added

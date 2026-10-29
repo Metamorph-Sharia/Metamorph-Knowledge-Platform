@@ -6,12 +6,14 @@
 - **The answering agent is not ours.** We build a retrieval layer that exposes its capabilities as tools. An answering agent calls them, orchestrates them, and writes the final response.
 - **Reports are a module of their own, in the market layer.** OJK's and BI's reports and roadmaps (LPKSI, KEKSI, RP3SI, …) are kept out of the regulation layer, published as `published_market.report` and `report_passage` ([market-data-layer-plan.md](market-data-layer-plan.md), Phase 4). Behind the tools, the agent still has one text search over regulations and reports.
 - **OJK's LPKSI listing is synced** by the reports connector. Other reports are imported by hand.
+- **OJK's press releases since 2020 are a record kind of their own** (`published_market.release` and `release_passage`, Phase 5), kept by the same connector. The regulations and companies each report or release passage names are published as `published_market.mention`.
 
 ## Where it sits
 
 ```
  Connectors ─► Platform ─► published         (legal documents: regulations, fatwas)
-                       └─► published_market  (registers, companies, statistics; reports and their passages)
+                       └─► published_market  (registers, companies, statistics; reports, releases, their passages
+                                              and what they name)
                                   │  read only
                                   ▼
              Retrieval layer (this design; its own repository)
@@ -39,12 +41,12 @@
 
 | Tool | Answers | Reads |
 |---|---|---|
-| `search_documents` | Which passages of regulations, fatwas or reports speak to this? | `published.provision_unit` and `published_market.report_passage`, through two indexes |
-| `get_provision` | The whole article, a document's outline, or a report's passage in context | `published.document`, `provision`; `published_market.report`, `report_passage` |
-| `follow_links` | What amends, revokes, implements or cites this, and what it rests on | `published.edge`, `status_event` |
+| `search_documents` | Which passages of regulations, fatwas, reports or press releases speak to this? | `published.provision_unit`, and `published_market.report_passage` and `release_passage`, through two indexes |
+| `get_provision` | The whole article, a document's outline, or a report's or a release's passage in context | `published.document`, `provision`; `published_market.report`, `report_passage`, `release`, `release_passage` |
+| `follow_links` | What amends, revokes, implements or cites this, and what it rests on; which reports and releases name it | `published.edge`, `status_event`; `published_market.mention` |
 | `find_series` | Which statistics measure this? | `published_market.dataset`, `series` |
 | `get_observations` | The figures of these series over these periods | `published_market.observation` |
-| `find_companies` | Who is licensed, registered or gone, and since when | `published_market.company`, `entity`, `register` |
+| `find_companies` | Who is licensed, registered or gone, and since when; what OJK announced about them | `published_market.company`, `entity`, `register`; `mention`, `release` |
 | `industry_context` | For an industry: its registers, governing regulations, reports and datasets | `published_market.industry` (published since 2026-10-28) |
 
 ### `search_documents`
@@ -52,22 +54,23 @@
 **Input:**
 - `query`: the question, in Indonesian or English;
 - filters, all optional:
-  - `kind[]`: `law`, `regulation`, `implementing_rule`, `fatwa`, `guideline`, `circular`, `explanatory`, `report`;
+  - `kind[]`: `law`, `regulation`, `implementing_rule`, `fatwa`, `guideline`, `circular`, `explanatory`, `report`, `release`;
   - `issuer[]`, `family[]`, `document_ids[]` (for example, the regulations `industry_context` named);
   - `in_force_on`: a date. It keeps documents in force on that day and units whose `valid_to` is later;
+  - `published_from`, `published_to`: dates. They keep reports and releases published between them ("what did OJK announce this year");
   - `legal_force[]`;
 - `limit` (default 8, at most 25), `cursor`.
 
 **Each result:**
-- `ref`: a stable key to cite and to pass to other tools, e.g. `doc:ojk:pojk:2024:40#pasal-5/ayat-1`, or `report:ojk:lpksi:2025#p-12`;
-- `citation`, e.g. `POJK 40 Tahun 2024, Pasal 5 ayat (1)`, or `LPKSI 2025, hlm. 31–32`;
+- `ref`: a stable key to cite and to pass to other tools, e.g. `doc:ojk:pojk:2024:40#pasal-5/ayat-1`, `report:ojk:lpksi:2025#p-12`, or `release:ojk:siaran-pers:2026:ojk-cabut-izin-usaha-pt-porto-ventura-kapital#p-1`;
+- `citation`, e.g. `POJK 40 Tahun 2024, Pasal 5 ayat (1)`, `LPKSI 2025, hlm. 31–32`, or `Siaran Pers OJK SP 188/DKPU/OJK/X/2026, 8 Oktober 2026`;
 - `title`, `heading_path`, `wording` (the unit's words, capped), `pages`;
 - `kind`, `legal_force`, `status`, `effective_on`, `valid_to`, `under_review`;
 - `score`, and `matched_by` (`semantic`, `words`, or both).
 
 **How it ranks:**
-- **Two indexes, one tool.** Legal units and report passages are indexed apart, each through its own adapter, with the same embedding conventions and the same `ref` and result shapes. A `kind` filter selects either one; without it, both are searched and their rankings fused. A report passage always carries `legal_force: none`.
-- **Hybrid search in each.** Embeddings and full-text matching, fused by reciprocal rank fusion. For legal units, the embedding input is the one the read contract recommends (`"{citation}, {heading_path}\n{wording}"`). For report passages, it is `"{report} ({issuer}), hlm. {pages}\n{text}"`.
+- **Two indexes, one tool.** Legal units are indexed apart from report and release passages, each through its own adapter, with the same embedding conventions and the same `ref` and result shapes. A `kind` filter selects either one; without it, both are searched and their rankings fused. A report or release passage always carries `legal_force: none`.
+- **Hybrid search in each.** Embeddings and full-text matching, fused by reciprocal rank fusion. For legal units, the embedding input is the one the read contract recommends (`"{citation}, {heading_path}\n{wording}"`). For report passages, it is `"{report} ({issuer}), hlm. {pages}\n{text}"`; for release passages, `"{citation}: {title}\n{text}"`.
 - **Filters first, ranking second,** both in SQL, so a filter never empties a page of results after the fact.
 - **Optional reranking** by a cross-encoder, kept only if the evaluation set shows it helps.
 
@@ -76,13 +79,15 @@
 **Input:** a `ref`.
 - **A legal document's `ref`** returns its card (citation, title, kind, status, dates, legal force) and its outline to two levels.
 - **A provision's `ref`** returns its full wording, its children, its elucidation (`penjelasan/…`) if published, and the provisions it refers to.
-- **A report's `ref`** returns its card (title, issuer, edition, published date, pages, passages). **A passage's `ref`** returns the passage with the passages either side of it.
+- **A report's `ref`** returns its card (title, issuer, edition, published date, pages, passages); **a release's `ref`** returns its card (title, number, date, citation, passages). **A passage's `ref`** returns the passage with the passages either side of it.
 
 ### `follow_links`
 
 **Input:** a `ref`; `direction` (`outgoing`, `incoming`, or both); `types[]` from the contract's vocabulary: `legal_basis`, `implements`, `amends`, `supersedes`, `revokes`, `partly_revokes`, `adopts_fatwa`, `changes_fatwa`, `refers_to`.
 
 **Each result:** the link's type, both ends as `ref`s with their citations, `effective_on` and `confidence`. Then the document's `status_event` history, so "is this still the rule?" is one call.
+
+**Named by:** with `named_by = true`, also the report and release passages that name a regulation (`published_market.mention`), newest first, as passage `ref`s with their citations and dates. A mention means "names": the passage's words say whether it announced, explained or merely cited the regulation. A release announcing a regulation is not the regulation.
 
 ### `find_series`
 
@@ -102,7 +107,7 @@
 
 **Input:** optional `register`, `query` (a legal or platform name), `status` (`licensed`, `registered`, `left`), `business_type` (`sharia`, `conventional`); `limit`, `cursor`.
 
-**Each result:** the company with its `legal_name`, other `names`, `status`, `business_type`, `first_listed` and `left_after`. Then its records: each license or registration (`kind`, number, date), and its `review_notes`. With `history = true`, also the editions that listed it.
+**Each result:** the company with its `legal_name`, other `names`, `status`, `business_type`, `first_listed` and `left_after`. Then its records: each license or registration (`kind`, number, date), and its `review_notes`. With `history = true`, also the editions that listed it. With `announcements = true`, also the release passages that name it by its legal name, newest first: an official date and OJK's own words (a revocation, a sanction) beside the register's "left the list".
 
 ### `industry_context`: where the two layers meet
 
@@ -126,7 +131,7 @@ Derived by the retrieval layer, from `document.kind` for legal documents and fro
 | `binding` | `law`, `regulation`, `implementing_rule` | What is required, citing the provision and its validity |
 | `sharia` | `fatwa`, `guideline`, `circular` (DSN-MUI) | What sharia principles require. A regulation that adopts a fatwa makes it binding (`adopts_fatwa`) |
 | `explanatory` | `explanatory` | How the issuer explains a rule; never the rule itself |
-| `none` | Report passages, and every statistic and company record | What a regulator reports, plans or counts. Never a requirement |
+| `none` | Report and release passages, and every statistic and company record | What a regulator reports, plans, announces or counts. Never a requirement |
 
 Every result also carries what qualifies it:
 - **For documents:** `status`, `valid_to` and `under_review`.
@@ -172,10 +177,11 @@ The retrieval layer is judged on its own, apart from the agent's answers. That w
 *"Is sharia P2P lending worth entering, and what does it take?"* An agent might call:
 1. `industry_context("sharia fintech lending")` → `ojk:lpbbti`; POJK 40/2024 and SEOJK 19/2025; the LPBBTI roadmap; the portal's LPBBTI Syariah datasets.
 2. `find_series` within those datasets, then `get_observations` for outstanding financing, three years by month: growth, with provisional marks.
-3. `find_companies(register: ojk:lpbbti, business_type: sharia)` → who is licensed, who entered, who left.
+3. `find_companies(register: ojk:lpbbti, business_type: sharia, announcements: true)` → who is licensed, who entered, who left, and what OJK announced about those who left.
 4. `search_documents("persyaratan perizinan penyelenggara", document_ids: the regulations, in_force_on: today)` → the licensing articles.
 5. `follow_links` on them, to confirm nothing amends them since.
 6. `search_documents("arah pengembangan LPBBTI syariah", kind: report)` → the roadmap's direction, with `legal_force: none`.
+7. `search_documents("pendanaan bersama syariah", kind: release, published_from: a year ago)` → what OJK announced lately, dated.
 
 The agent writes the answer from these results, citing each `ref` and series, and adds news from its own search.
 
@@ -185,7 +191,9 @@ The agent writes the answer from these results, citing each `ref` and series, an
 |---|---|---|
 | Reports and their passages: `published_market.report`, `report_passage` | Reports in `search_documents` and `get_provision` | [market-data-layer-plan.md](market-data-layer-plan.md), Phase 4 |
 | `published_market.industry`: each curated industry with its registers, regulations, reports and datasets | `industry_context` | **Done** (Phase 4, Step 6, migration 0020) |
-| `reports[]` on `published_market.register` and `dataset`; a report's `discusses[]` | Reports from the market side, and from a report to the regulations it discusses | `reports[]` **done** (migration 0020); `discusses[]` waits for curation |
+| `reports[]` on `published_market.register` and `dataset`; a report's `discusses[]` | Reports from the market side, and from a report to the regulations it discusses | `reports[]` **done** (migration 0020). `discusses[]` is curation's; mentions (below) give the regulations a passage names |
+| Releases and their passages: `published_market.release`, `release_passage` | Releases in `search_documents` and `get_provision` | **Done** (Phase 5, migration 0021) |
+| `published_market.mention`: the regulations and companies each report or release passage names | `follow_links` with `named_by`; `find_companies` with `announcements` | **Done** (Phase 5, migration 0021) |
 
 ## Open questions
 

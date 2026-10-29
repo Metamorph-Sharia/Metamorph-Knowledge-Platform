@@ -1,6 +1,6 @@
 # Plan: the market data layer, starting with OJK's register of licensed fintech lenders
 
-**Status (2026-10-28):** **Phase 1 is closed:** Steps 1–9 are done, and Step 10 (AWS) is deferred until every phase is built.
+**Status (2026-10-29):** **Phase 1 is closed:** Steps 1–9 are done, and Step 10 (AWS) is deferred until every phase is built.
 - **The connector:** `OJK-Register-Connector` 0.2.0's `ojk-register sync` downloads the lists. The backfill holds 70 editions, December 2019 to July 2026: 68 read whole, and two lose a few rows at a page foot (Step 7).
 - **The platform:** it loads the export (243 records) and publishes 166 companies, joining each registration to the license that followed. The read contract is [published-market-schema.md](published-market-schema.md).
 - **The pipeline:** `ingest_ojk_register` runs weekly on the local stack, and `metamorph health` checks both the load and the register's freshness.
@@ -8,12 +8,13 @@
   - **The connector:** `OJK-Stats-Connector` 0.1.0 collects 78 of the portal's 86 tables, using the requests its own page makes (decision B).
   - **The platform:** it publishes 2,182 series and 90,677 observations, with each industry linked to its regulations.
   - **The pipeline:** `ingest_ojk_stats` runs weekly on the local stack (paused, like the others), and `metamorph health` checks both the load and the newest month.
-- **Phase 3, the macro backdrop, is live but for BPS's backfill (2026-10-28):** BI's SEKI tables (3a) and BPS's dynamic tables from its website (3b), both decided by the project owner. AWS (Step 9) is deferred with the others.
+- **Phase 3, the macro backdrop, is closed (2026-10-29) on BPS's partial first collection:** BI's SEKI tables (3a) and BPS's dynamic tables from its website (3b), both decided by the project owner. AWS (Step 9) is deferred with the others.
   - **Built:** the contract's frequencies, units and marks; `BI-Stats-Connector`; `BPS-Stats-Connector`; migration 0018, partial bundles and the two DAGs.
   - **SEKI is live:** bi.go.id refuses the connector, so a curator downloads each month's edition and `bi-stats import` reads it (option A). September 2026's edition is published: 107 tables, 6,919 series.
-  - **BPS is partly live:** 116 tables are published. Its first collection runs on in its own container (`BPS-Stats-Connector/scripts/backfill`, Step 12): about 12–20 hours from 2026-10-28, since BPS's server answers slowly and often fails.
+  - **BPS is live on what is collected:** 1,205 tables, 229,500 series and 3,634,515 observations are published from the 1,269 of 1,758 tables kept (60% of the table-years). The rest comes from `ingest_bps_stats`, an hour a week, or sooner from the backfill container (`BPS-Stats-Connector/scripts/backfill start`, about 9 hours at its last pace), resumed by the project owner.
   - **Cross-checked:** BPS's inflation and GDP equal SEKI's to the digit.
 - **Phase 4, the regulators' reports, is live (2026-10-28):** 13 reports, 1,943 passages, linked to every sharia industry. AWS (Step 8) is deferred with the others. Earlier, it was planned as: LPKSI, KEKSI and two roadmaps as a reports module of their own in the market layer, kept out of the regulation layer (decided), collected by `reports sync` from OJK's LPKSI listing and by `reports import` for the rest (decided). The first reports are LPKSI 2016–2025, KEKSI, RP3SI and Roadmap LPBBTI (decided); building started 2026-10-28. The retrieval tools that serve both layers to an answering agent are drafted in [retrieval-tools-design.md](retrieval-tools-design.md).
+- **Phase 5, OJK's press releases, is live (2026-10-28):** 1,178 releases since 2020, 3,685 passages, and 2,232 mentions of regulations and companies across reports and releases. It brings a `release` record kind, `Reports-Connector` 0.2.0, and migration 0021. `ingest_reports` loads and publishes them weekly, and a second run is unchanged. AWS (Step 7) is deferred with the others.
 
 Decided on 2026-10-27:
 - **A separate repository** for the connector.
@@ -52,7 +53,7 @@ Each phase adds one source end to end: connector, contract, load, publish. The c
 | 2 | OJK's statistics: fintech lending (Statistik LPBBTI) and sharia banking (SPS), from OJK's monthly workbooks and then its data portal | `series` | How big the market is, how fast it grows, and the sharia share |
 | 3 | BI's SEKI tables (3a), then BPS's dynamic tables (3b) | `series`, with quarters, years and units | The macro backdrop |
 | 4 | LPKSI, KEKSI, the sharia banking and fintech lending roadmaps | `report`: a record kind of the market layer, with chapters and passages (Phase 4) | What the regulators plan and report |
-| 5 | OJK press releases | `event` | What changed, with an official date |
+| 5 | OJK press releases since 2020 | `release`, with the regulations and companies its passages name (Phase 5) | What changed, with an official date |
 
 Phase 2 was to wait on two answers from OJK (layanan.data@ojk.go.id): may the portal's tables be exported automatically, and is there a bulk route? The portal's FAQ answers the second: there is no API yet. The first is still open, and it now decides only how the months after OJK's cutover are collected. The history before it comes from workbooks the connector can download (Phase 2: the sources).
 
@@ -584,8 +585,8 @@ Each source keeps its own figures. A GDP figure from SEKI and one from BPS are t
 | 9 | AWS | Deferred with Phases 1 and 2 |
 | 10 ✓ | `BPS-Stats-Connector`: skeleton, the page's data object, keys built from BPS's lists, kinds of period (a parenthetical note, such as `Semester 1 (Maret)`, set aside); the adapter (the index, a table page, a year, the actions found by name in the page's scripts, a challenge or refusal), replayed from saved files | 45 tests |
 | 11 ✓ | BPS `collect` (resumable, only changed tables, noted tables' pages asked again), `export --since` (whole datasets), `status`, `health`; the image `metamorph/bps-stats:dev` | A collected store exports a bundle whose every record `is_valid` |
-| 12 … | **BPS's first collection, running since 2026-10-27.** bps.go.id serves the connector, but slowly: about 280 answers an hour, so the 17,700 table-years take days. Its server fails often, with a `504`, a `520` or a timeout every few minutes. **From 2026-10-28 a server failure is not a refusal:** the table is noted and asked again next run, keeping the years it has, and the run goes on. Three tables failed in a row stop it. A refusal (`403`, `429`, `503`, a challenge) still stops it. 117 tables were kept by then.<br>**Cross-checked against SEKI, 2026-10-28:**<br>• BPS's year-on-year inflation, January to September 2026 (table 2263, Indonesia), equals SEKI's VIII.1 row 39 in all nine months;<br>• BPS's GDP at current prices by expenditure for Q1 and Q2 2026 (table 1955, Rp 6,187,598.6 and 6,552,068.0 billion) equals SEKI's VII.3 row 12, which SEKI marks provisional | Every dynamic table read or noted |
-| 13 … | Airflow `ingest_bps_stats` on the local stack. **2026-10-28: the 116 tables collected so far were exported and loaded live** (`metamorph market load --publish`, 34 s): 2,045 series, whole datasets. The `dags test` run waits for the backfill, since its collect would resume the same days-long collection | A `dags test` run loads and publishes |
+| 12 … | **BPS's first collection, running since 2026-10-27.** bps.go.id serves the connector, but slowly: about 280 answers an hour, so the 17,700 table-years take days. Its server fails often, with a `504`, a `520` or a timeout every few minutes. **From 2026-10-28 a server failure is not a refusal:** the table is noted and asked again next run, keeping the years it has, and the run goes on. Three tables failed in a row stop it. A refusal (`403`, `429`, `503`, a challenge) still stops it. 117 tables were kept by then.<br>**Cross-checked against SEKI, 2026-10-28:**<br>• BPS's year-on-year inflation, January to September 2026 (table 2263, Indonesia), equals SEKI's VIII.1 row 39 in all nine months;<br>• BPS's GDP at current prices by expenditure for Q1 and Q2 2026 (table 1955, Rp 6,187,598.6 and 6,552,068.0 billion) equals SEKI's VII.3 row 12, which SEKI marks provisional.<br>**Closed on partial data, 2026-10-29 (the project owner's call):** 1,269 of 1,758 tables kept, 10,738 of about 17,700 table-years (60%); 17 tables to ask again after a server failure, 47 noted for another reason. The rest is collected later, and nothing waits on it: `bps-stats collect --for MINUTES` stops before its next table once the minutes are spent, and the next run goes on from there. Airflow collects for 60 minutes a week (about 740 answers), and the backfill container, when resumed, finishes sooner | Every dynamic table read or noted, or left to the weekly run |
+| 13 ✓ | Airflow `ingest_bps_stats` on the local stack, 2026-10-29, after a backup (`backups/2026-10-29-before-bps-load`). **A `dags test` run:**<br>• collected for its hour (101 more tables, 17 noted "server failed", none in a row), then exported every kept table;<br>• loaded 229,500 records, 227,455 new and the 2,045 loaded on 2026-10-28 unchanged, none quarantined (20 min: one query per record);<br>• published 1,205 BPS datasets, 229,500 series and 3,634,515 observations, 1955 to 2035 (projections) (3.4 min, about 4.8 GB of memory at its peak, since published in parts: see the risks);<br>• health: `bps-stats` and `statistics bps:table` ok | A `dags test` run loads and publishes |
 
 ## Phase 3: validation
 
@@ -618,7 +619,7 @@ Each source keeps its own figures. A GDP figure from SEKI and one from BPS are t
 | BPS's bot management blocks the connector | The run stops with exit 2 and a failed task | Nothing is worked around. SEKI still carries BPS's GDP and CPI. Registering for the WebAPI is the fallback |
 | BPS's server fails often | Tables are noted "server failed" | They are asked again next run. Three in a row stop the run, and the next week resumes |
 | BPS redeploys its site | The actions' IDs change | They are found again by name in the page's scripts. A name that's gone stops the run |
-| BPS's volume: millions of values | Large bundles and publishes | Bundles carry only changed datasets. The publish is measured at Step 12 and made incremental if needed |
+| BPS's volume: millions of values | Large bundles and publishes | Bundles carry only changed datasets. **Measured 2026-10-29 at 60% of BPS:** the publish read every current series at once, and peaked at about 5 GB of the local Docker's 7.75 GB; whole, BPS would have needed about 8 GB. **Fixed the same day:** series are read through a server-side cursor, ordered by dataset, and published in parts of whole datasets (at least 5,000 series each) inside the one transaction. On the live data: a peak of 458 MB against 5,166 MB, 214 s against 206 s, and the eight tables compared (datasets, series, observations, industries, companies, report passages, releases, mentions) identical but for `published_at`. A part's size follows the largest dataset (about 10,000 series), not the corpus |
 
 ## Phase 4: the sources
 
@@ -768,6 +769,172 @@ The console's reader shows legal documents only; a reader for reports joins the 
 | bi.go.id refuses connectors | KEKSI cannot be synced | By hand, as SEKI |
 | OJK changes the LPKSI listing or its pages | `sync` finds no edition, or stops | It stops at the first unexpected page; editions can still be imported by hand |
 | MEKSI's owner changes (KNEKS is being replaced) | Its address moves | By hand; a Perpres would arrive through the regulation connectors |
+
+## Phase 5: the source
+
+Surveyed on 2026-10-28 with a client naming itself, one request every two seconds (about 45 requests).
+
+**OJK's press releases,** [Siaran Pers](https://ojk.go.id/id/berita-dan-kegiatan/siaran-pers/Default.aspx):
+- **The listing:**
+  - Ten releases a page, newest first, each with its date, title and summary.
+  - About 165 pages, back to February 2014: roughly **1,650 releases**.
+  - OJK reached number 191 by mid-October 2026, so about 230 releases a year, four or five a week.
+- **Paging is a postback.** The pager's links call ASP.NET's `__doPostBack`, which posts the page's form back to `Default.aspx`, carrying about 180 KB of page state. The address has no page number. There is no RSS feed, and no robots.txt (404). Page 1 is a plain GET.
+- **A release's page** holds the release as HTML, in `<div id="summary">`, in this order:
+  - its number, on recent releases (`SP 188/DKPU/OJK/X/2026`; the 2014 releases checked have none);
+  - its title;
+  - a date line (`Jakarta, 8 Oktober 2026.`, or in 2014 `Otoritas Jasa Keuangan, 8 April 2014:`);
+  - the body;
+  - OJK's press contact.
+
+  It's born-digital, so neither OCR nor MinerU is needed. The page also links a PDF of the same release.
+- **Sizes:** most releases run 300–600 words. The monthly board meeting's release (RDK) runs to about 9,500 words, with tables and with infographics as images. Each page weighs about 390 KB, mostly the site's menus, so the backfill downloads about 700 MB once.
+- **What they announce** (page 2, 5–18 October 2026):
+  - a license revoked (PT Porto Ventura Kapital, under POJK 49/2024 as amended by POJK 25/2025);
+  - a POJK issued (17/2026);
+  - capital-market sanctions;
+  - the monthly RDK;
+  - a report launched;
+  - forums and literacy events.
+
+  They cover every sector, not only sharia.
+
+**What the platform already offers:**
+- **Reports' machinery (Phase 4):** passages with their pages, text kept as blobs, `published_market.report` and `report_passage`.
+- **The reference finder** `domain/references.py`, the regulation layer's: it turns a mention into an ID (`Peraturan Otoritas Jasa Keuangan Nomor 49 Tahun 2024` → `ojk:pojk:2024:49`).
+  - On four releases it found 33 distinct references, 28 of them in one RDK.
+  - It misses a parenthesised abbreviation, `Peraturan Otoritas Jasa Keuangan (POJK) Nomor 17 Tahun 2026`, and the short form `Peraturan OJK Nomor 4/POJK.04/2014`.
+- **Published companies** (Phase 1), with their legal names.
+
+## Phase 5: the design
+
+The phase was named for **events**: what changed, with an official date. A press release is that statement in OJK's own words. **Each release is kept whole, as dated text, with the regulations and companies it names. It isn't classified into event types.**
+- Typing events (license revoked, POJK issued, sanction) needs either a rule per phrase or a generative model at ingest. The engineering principles warn against the first, and the retrieval tools are deterministic.
+- The agent reads the passage and tells a revocation from a launch. If a typed event earns its place later, it can be derived from what is stored, without collecting again.
+
+**Decided (2026-10-28): a release is a record kind of its own, `release`** (option B), built on reports' machinery: the passage rule, blobs, the bundle and the connector. The options weighed:
+
+| Option | What | For | Against |
+|---|---|---|---|
+| A | A report of family `siaran-pers` | Nothing new to store, publish or search | "Report" is a broad name for a two-page statement |
+| **B (decided)** | **A record kind of its own, `release`, using reports' machinery** | A clear name, and a release's own fields: its number, its date as the key's year | A fourth kind: its schema, codec and tables |
+| C | Typed events (kind, subject, date) | Answers "which licenses were revoked in 2025" with a query | A rule per phrase or a model at ingest; the typing misses what it wasn't told |
+
+### The contract
+
+`metamorph-market-contract` grows in place at 1.0 with **a fourth kind, `release`** ([MARKET_CONTRACT.md](../packages/metamorph-market-contract/MARKET_CONTRACT.md)):
+- **The release:**
+  - `id`: `{issuer}:siaran-pers:{year}:{name}`, the name being OJK's page name in lower case, letters and digits between single hyphens (`ojk:siaran-pers:2026:ojk-cabut-izin-usaha-pt-porto-ventura-kapital`);
+  - `number`: as printed (`SP 188/DKPU/OJK/X/2026`), or null. Numbers repeat each year, so the page name is the key;
+  - `title`: as listed;
+  - `published_on`: the listing's date. The ID's year must be its year;
+  - `language`.
+- **Its words travel inline** (`text`, paragraphs separated by blank lines): a release is a page or two, read from HTML, not from a PDF.
+- **Its file:** the release's body as the page published it, as a blob, role `source_page`. The PDF's address is in `source_fields`, and the PDF isn't downloaded: it is the same release.
+
+### Mentions: the platform's `domain/market/mentions.py`
+
+Derived by the platform for **every report and every release**: LPKSI names POJKs too.
+- **Regulations:** `references()` on each passage, the regulation layer's one reference grammar. A miss is fixed there, which helps both layers.
+- **Companies:** a published company's full legal name found in a passage, whatever the case or punctuation (`PT. INVESTREE RADHIKA JAYA`), never inside a longer name. An abbreviation (`PT PVK`) or a platform name is never matched. Every legal name on the register has at least three words (`PT Tri Digi Fin`), so a whole name doesn't match by chance.
+- **A mention says "names", never "revokes" or "issues".** What the release did is in its words.
+- Published as `published_market.mention`: the document's kind and ID, the passage's address, the target's kind (`regulation` or `company`) and ID, and the words as written. Each target is mentioned once a passage. A regulation that isn't published is still a mention, as the regulation layer keeps an unresolved reference.
+- This feeds the retrieval tools:
+  - `find_companies` lists the releases that name a company: an official date and a reason beside the register's "left the list";
+  - `follow_links` lists the passages that name a regulation;
+  - `search_documents` gains a date filter.
+
+### The connector: `Reports-Connector` 0.2.0
+
+- **`reports sync` adds OJK's press releases**, after LPKSI:
+  - It reads page 1 with a GET and older pages with the pager's own postback, as a person clicking it would. A pager that doesn't move forward stops the run.
+  - It keeps every release listed since `RELEASES_SINCE` (2020-01-01, decision 2), and stops at the first release before it. The history is then whole.
+  - After that, a sync stops at the first page with nothing new. A weekly run costs a page or two and the new releases.
+  - Until the history is whole, kept releases cost only their listing page, so a walk a refusal stopped goes on where it stopped.
+- **The backfill:** about 118 listing pages and 1,180 releases, roughly 80–90 minutes at one request every two seconds. It runs in its own container (`scripts/backfill start|status|log|stop`).
+- **Text from the page** comes from one general rule on the body's HTML (`adapters/web/release_html.py`):
+  - block elements become paragraphs, separated by blank lines;
+  - line breaks, table rows and list items end lines, so a table or a list stays one paragraph;
+  - within a list item a block ends a line, and within a cell it is a space;
+  - a row's cells are joined by ` | `;
+  - what the page hides (`display:none`) and images are dropped.
+
+  The press contact at the end stays: it's about 20 words, and removing it would need a rule.
+- **The date** is the listing's. The release's own date line isn't checked (Step 0b): it is a day earlier in about one in seven, an evening release, so a check would only warn on harmless cases.
+- **The number** is the line that opens the release, when one of its first three lines has the form `SP n/…/yyyy`.
+- **One client for ojk.go.id** (`adapters/web/ojk_site.py`) serves LPKSI and releases, so both keep one pace. Phase 1's access rules hold: a User-Agent naming the connector, one request every two seconds, only what the pages themselves ask for, and a refusal stops the run.
+
+### The platform
+
+| Piece | What |
+|---|---|
+| Market contract | The `release` kind; role `source_page` |
+| `domain/market/releases.py` | Releases cut by reports' passage rule, without pages (`unpaged_passages`); cited `Siaran Pers OJK SP 188/DKPU/OJK/X/2026, 8 Oktober 2026`; a release with no words held back |
+| `domain/market/mentions.py` | Regulations and companies named in each passage of every report and release |
+| Migration `0021_market_releases` | `market.release` (each record whole); `published_market.release`, `release_passage` and `mention` |
+| Loader and publish | The loader takes the new kind; a release belongs to no register. The publish rebuilds releases and mentions with everything else, in the one transaction |
+| `published-market-schema.md` | Releases, their citation and date; mentions, and that they mean "names" |
+| Health and Airflow | `ingest_reports` runs the sync weekly, releases included, and the `reports` check covers it. The connector's own health warns while the release history isn't whole |
+| `retrieval-tools-design.md` | The date filter; releases in `find_companies` and `follow_links` |
+
+## Phase 5: decisions
+
+**Decided by the project owner (2026-10-28):**
+1. **A release is a record kind of its own** (option B), built on reports' machinery.
+2. **Scope: every release since 2020, every sector.** About 1,180 releases. Keeping only sharia or fintech lending releases would need a word list.
+3. **`Reports-Connector` grows:** the same site, access rules, store and bundle.
+4. **Older pages come through the pager's postback,** the page's own request.
+5. **Weekly,** with the other connectors.
+
+## Phase 5: steps
+
+| # | Step | Done when |
+|---|---|---|
+| 0 ✓ | **The survey (2026-10-28):** the listing and its depth, four releases from 2014 and 2026, the reference finder on them | The survey above |
+| 0b ✓ | **Measured 36 releases, August 2020 to October 2026 (2026-10-28),** three from every tenth listing page, through the pager:<br>• the body (`<div id="summary">`) is found in all 36: 197–1,959 words, 11–32 paragraphs, a PDF linked from each;<br>• a number opens 35 of them, in varying forms (`SP-157/…`, `SP 60 /…`). The one without is a joint KSSK statement;<br>• the date line matches the listing's in 29, is a day earlier in 5 and absent in 2, so it isn't checked;<br>• references are found in 12 of 36. No tables in this sample; the monthly RDK releases have them | The HTML-to-text, number and date rules settled |
+| 1 ✓ | Contract: the `release` kind and `source_page`, tests first (2026-10-28) | 71 contract tests pass, including drift; Phases 1–4's bundles read as before |
+| 2 ✓ | `Reports-Connector` 0.2.0 (2026-10-28): the release listing and its pager, a release's HTML to text, `SyncReleases`, the store, the export, status and health, `scripts/backfill`. Replayed from pages saved on 2026-10-28; the LPKSI adapter now shares the one site client | 84 connector tests pass; a synced store exports a bundle whose every record is valid |
+| 3 ✓ | Platform (2026-10-28): `releases.py`, `mentions.py`, migration 0021, the loader and the publish, `published-market-schema.md`. **0021 applied live**, after a backup (`backups/2026-10-28-before-market-releases`) | 825 platform tests pass with the database and object store |
+| 4 ✓ | **The backfill, 2026-10-28,** in its own container (`scripts/backfill`): 08:41 to 09:29 UTC. **1,178 releases**, 2 January 2020 to 27 October 2026, the listing walked whole back to 2020-01-01. None noted: no date unread, no page without a release, no ID shared. 63 (5%) have no number, 4 link no PDF. By year: 100–105 in 2020–2022, 201–240 since 2023 | Every listed release since 2020 kept and published |
+| 5 ✓ | **Airflow, 2026-10-28.**<br>• **The first run quarantined every release:** its load step ran `metamorph-platform:dev` as built before the `release` kind. The 1,178 quarantine rows and their review items were marked resolved and dismissed with a note, kept rather than deleted. The image was rebuilt (`docker compose build migrate`), and **a contract change now means rebuilding the platform image before a DAG runs**.<br>• **The second run** loaded 1,178 releases new and the 13 reports unchanged, and published 3,685 release passages (median 276 words, none over 400, none held back) and **2,232 mentions**.<br>• **The third run was all unchanged** (1,191 records).<br>• Health: `reports` ok; the connector's own health ok, the history whole | A `dags test` run loads and publishes |
+| 6 ✓ | `retrieval-tools-design.md` (2026-10-28): `release` in `search_documents`' kinds, `published_from`/`published_to`, release `ref`s and citations; `follow_links` with `named_by`, `find_companies` with `announcements` | The draft updated |
+| 7 | AWS | Deferred with the other phases |
+
+## Phase 5: validation
+
+**Gates:**
+- **Every listed release is kept:** the count equals the listing's.
+- **The words are kept:** the page body's words appear in the passages.
+- **Dates:** each release carries the listing's date, and its ID the same year.
+- **Passages are intact:** none exceeds 400 words, and they follow the reading order.
+- **Mentions:** on Step 0b's sample, the regulations found match a count by hand. Misses are recorded and fixed only in `references.py`, as a general rule.
+- **The regulation layer is unchanged:** its tests pass, and no release appears in `published`.
+- **Operations:**
+  - a second sync costs one listing page;
+  - a refusal stops the run;
+  - a second load is all unchanged;
+  - rollback is exact.
+
+**Monitored:** releases with almost no text (an infographic only); releases without a number; mentions whose target isn't published.
+
+**Found in the backfill (2026-10-28):**
+- **Mentions:**
+  - **Regulations:** 1,552 in 412 of 1,178 releases, and 629 in the 13 reports. 720 distinct regulations are named, and 613 of them (85%) are published in the regulation layer. The rest are mostly older instruments and other issuers' rules the corpus doesn't hold.
+  - **Companies:** 40 in 34 releases, naming 14 licensed fintech lenders, each a real enforcement story: PT Dana Syariah Indonesia's special examination handed to Bareskrim (22 July 2026), sanctions on PT Indosaku Digital Teknologi for collection practices, and the criminal cases against PT Investree Radhika Jaya and PT Crowde Membangun Bangsa. In reports, 11, mostly the LPBBTI roadmap's list of lenders.
+  - **What isn't found:** a company named only in short (`Investree`, `KoinP2P`) has no mention. That is by design: the title and words still find it in search.
+- **Passages:** a release's opening paragraph can stand alone when the next is long, and a closing contact line can make a passage of a few words (KSSK's releases). It's the passage rule at work, as in reports, not a defect.
+
+## Phase 5: risks
+
+| Risk | What happens | What to do |
+|---|---|---|
+| OJK changes the site, or the postback's page state expires | The sync stops at older pages | Page 1 is a plain GET, so new releases still come. The history is collected once |
+| A postback is refused | The backfill stops | Nothing is worked around. Decide with OJK; page 1 stays |
+| A release is quoted as the rule it announces | A wrong answer about what's required | `legal_force: none`. Its mention leads to the regulation itself |
+| Releases outnumber reports in search | Search results favour releases | Their own kind, so `search_documents` can filter by `kind[]` and date. Each passage carries its date |
+| Mentions miss a form of reference | A link is lost | Recorded. The fix goes in `references.py`, for both layers |
+| A company's name is abbreviated or shared | A mention is missed or wrong | Only full legal names are matched. Misses are accepted; the text stays searchable |
+| Page weight (390 KB) | About 700 MB for the backfill | Once only; later runs fetch a handful of pages |
 
 ## The curation console: market pages (to design)
 

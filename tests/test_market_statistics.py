@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
 from market_platform_samples import answer_sha, macro_series, series_record
 from metamorph_market import Frequency
 
-from metamorph_platform.domain.market.statistics import IndustryLink, source_of, statistics
+from metamorph_platform.domain.market.statistics import IndustryLink, in_datasets, source_of, statistics
 
 LPBBTI_SYARIAH = "Layanan Pendanaan Bersama Berbasis Teknologi Informasi (LPBBTI) Syariah"
 LINKS = [
@@ -93,3 +94,23 @@ def test_a_period_is_published_as_its_first_day() -> None:
     years = statistics([], {}, [macro_series({"2025": 1.0}, Frequency.ANNUAL)], KEYS).observations
 
     assert [o.period for o in halves + years] == [date(2026, 7, 1), date(2025, 1, 1)]
+
+
+def test_series_come_in_parts_of_whole_datasets_each_at_least_the_size_asked() -> None:
+    kas, piutang, lpbbti = records()
+
+    parts = list(in_datasets([kas, piutang, lpbbti], size=1))
+
+    assert parts == [[kas, piutang], [lpbbti]]  # a dataset is never split: its summary needs every series
+
+
+def test_parts_gather_datasets_until_the_size_is_reached() -> None:
+    assert [len(part) for part in in_datasets(records(), size=3)] == [3]
+    assert list(in_datasets([], size=3)) == []
+
+
+def test_series_out_of_dataset_order_stop_the_publish() -> None:
+    kas, piutang, lpbbti = records()
+
+    with pytest.raises(ValueError, match="not ordered by dataset: ojk:portal:bu_syariah_posisikeuangan"):
+        list(in_datasets([kas, lpbbti, piutang], size=1))

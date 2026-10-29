@@ -1,26 +1,37 @@
 """PostgreSQL side of the market data layer: market (records as received) and published_market (the read contract).
 
-Licensed entities are kept in market.entity, series in market.series and reports in market.report; a connector
-sends one kind.
+Licensed entities are kept in market.entity, series in market.series, reports in market.report and releases in
+market.release. A connector sends one kind, or (the reports connector) reports and releases.
 
 The connection runs in autocommit mode; every operation that must be atomic opens its own transaction.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import astuple
 
 import psycopg
-from metamorph_market import LicensedEntityRecord, MarketRecord, ReportRecord, SeriesRecord, from_dict, to_dict
+from metamorph_market import (
+    LicensedEntityRecord,
+    MarketRecord,
+    ReleaseRecord,
+    ReportRecord,
+    SeriesRecord,
+    from_dict,
+    to_dict,
+)
 from psycopg.types.json import Jsonb
 
 from metamorph_platform.application.ports import StoredBlob
 from metamorph_platform.domain.loading import SaveOutcome
 from metamorph_platform.domain.market.publication import MarketPublication, RegisterInfo
-from metamorph_platform.domain.market.statistics import IndustryLink, source_of
+from metamorph_platform.domain.market.statistics import IndustryLink, Statistics, source_of
 
-RECORD_TABLES = ("market.entity", "market.series", "market.report")  # fixed names, never input
+RECORD_TABLES = ("market.entity", "market.series", "market.report", "market.release")  # fixed names, never input
+PUBLISHED_ROOTS = ("register", "dataset", "report", "release", "mention", "industry")  # deleting them cascades
+SERIES_PER_FETCH = 1_000
 
 
 class PostgresMarket:
@@ -39,8 +50,9 @@ class PostgresMarket:
         row = self.connection.execute(
             "SELECT package_hash FROM market.entity WHERE connector = %s AND source_id = %s "
             "UNION ALL SELECT package_hash FROM market.series WHERE connector = %s AND source_id = %s "
-            "UNION ALL SELECT package_hash FROM market.report WHERE connector = %s AND source_id = %s",
-            (connector, source_id) * 3,
+            "UNION ALL SELECT package_hash FROM market.report WHERE connector = %s AND source_id = %s "
+            "UNION ALL SELECT package_hash FROM market.release WHERE connector = %s AND source_id = %s",
+            (connector, source_id) * 4,
         ).fetchone()
         return row[0] if row else None
 
@@ -68,6 +80,9 @@ class PostgresMarket:
                                     source_of(record.series.dataset), record, bundle_id, package_hash)
             if isinstance(record, ReportRecord):
                 return self._upsert("market.report", "issuer", record.report.id, record.report.issuer, record,
+                                    bundle_id, package_hash)
+            if isinstance(record, ReleaseRecord):
+                return self._upsert("market.release", "issuer", record.release.id, record.release.issuer, record,
                                     bundle_id, package_hash)
             return self._upsert("market.entity", "register", record.entity.id, record.entity.register, record,
                                 bundle_id, package_hash)
@@ -120,12 +135,22 @@ class PostgresMarket:
         rows = self.connection.execute("SELECT record FROM market.entity WHERE missing_since IS NULL ORDER BY id")
         return [from_dict(record) for (record,) in rows]
 
-    def current_series(self) -> list[SeriesRecord]:
-        rows = self.connection.execute("SELECT record FROM market.series WHERE missing_since IS NULL ORDER BY id")
-        return [from_dict(record) for (record,) in rows]
+    def current_series(self) -> Iterator[SeriesRecord]:
+        """Through a server-side cursor, SERIES_PER_FETCH at a time; held over commits, so it reads alike inside or
+        outside a transaction."""
+        with self.connection.cursor(name="current_series", withhold=True) as cursor:
+            cursor.itersize = SERIES_PER_FETCH
+            cursor.execute("SELECT record FROM market.series WHERE missing_since IS NULL "
+                           "ORDER BY record->'series'->>'dataset', id")
+            for (record,) in cursor:
+                yield from_dict(record)
 
     def current_reports(self) -> list[ReportRecord]:
         rows = self.connection.execute("SELECT record FROM market.report WHERE missing_since IS NULL ORDER BY id")
+        return [from_dict(record) for (record,) in rows]
+
+    def current_releases(self) -> list[ReleaseRecord]:
+        rows = self.connection.execute("SELECT record FROM market.release WHERE missing_since IS NULL ORDER BY id")
         return [from_dict(record) for (record,) in rows]
 
     def storage_keys(self) -> dict[str, str]:
@@ -140,60 +165,89 @@ class PostgresPublishedMarket:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
 
-    def replace_all(self, publication: MarketPublication) -> None:
-        """One transaction: deleting the registers, datasets and reports cascades to everything published under them."""
+    @contextmanager
+    def replacing(self) -> Iterator[PostgresMarketWriter]:
+        """One transaction: deleting the registers, datasets, reports and releases cascades to everything published
+        under them, and what is added inside takes their place."""
         with self.connection.transaction(), self.connection.cursor() as cursor:
-            cursor.execute("DELETE FROM published_market.register")
-            cursor.execute("DELETE FROM published_market.dataset")
-            cursor.execute("DELETE FROM published_market.report")
-            cursor.execute("DELETE FROM published_market.industry")
-            cursor.executemany(
-                "INSERT INTO published_market.register (id, issuer, name, governed_by, newest_edition, editions, "
-                "reports) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                [_row(register) for register in publication.registers],
-            )
-            cursor.executemany(
-                'INSERT INTO published_market.edition (register, edition, listed, joined, "left", sha256, source_url, '
-                "storage_key) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                [_row(edition) for edition in publication.editions],
-            )
-            cursor.executemany(
-                "INSERT INTO published_market.company (id, register, legal_name, names, business_type, status, "
-                "first_listed, left_after) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                [_row(company) for company in publication.companies],
-            )
-            cursor.executemany(
-                "INSERT INTO published_market.entity (id, company_id, register, kind, license_number, license_date, "
-                "legal_name, names, business_type, website, channels, first_listed, last_listed, on_newest_list, "
-                "left_after, review_notes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                [_row(entity) for entity in publication.entities],
-            )
-            cursor.executemany(
-                "INSERT INTO published_market.listing (entity_id, edition, legal_name, page, row_number, cells) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                [(*_row(listing)[:-1], Jsonb(dict(listing.cells))) for listing in publication.listings],
-            )
-            self._replace_statistics(cursor, publication)
-            cursor.executemany(
-                "INSERT INTO published_market.report (id, issuer, family, edition, title, published_on, language, url, "
-                "citation, pages, passages, method, storage_key) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                "%s, %s)",
-                [_row(report) for report in publication.reports.reports],
-            )
-            cursor.executemany(
-                "INSERT INTO published_market.report_passage (report, address, ordinal, page_start, page_end, text, "
-                "words) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                [_row(passage) for passage in publication.reports.passages],
-            )
-            cursor.executemany(
-                "INSERT INTO published_market.industry (source, name, register, governed_by, reports, datasets) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                [_row(industry) for industry in publication.industries],
-            )
+            for root in PUBLISHED_ROOTS:
+                cursor.execute(f"DELETE FROM published_market.{root}")
+            yield PostgresMarketWriter(cursor)
+
+
+class PostgresMarketWriter:
+    def __init__(self, cursor: psycopg.Cursor) -> None:
+        self.cursor = cursor
+
+    def add_statistics(self, part: Statistics) -> None:
+        self._replace_statistics(self.cursor, part)
+
+    def add(self, publication: MarketPublication) -> None:
+        cursor = self.cursor
+        cursor.executemany(
+            "INSERT INTO published_market.register (id, issuer, name, governed_by, newest_edition, editions, "
+            "reports) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            [_row(register) for register in publication.registers],
+        )
+        cursor.executemany(
+            'INSERT INTO published_market.edition (register, edition, listed, joined, "left", sha256, source_url, '
+            "storage_key) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [_row(edition) for edition in publication.editions],
+        )
+        cursor.executemany(
+            "INSERT INTO published_market.company (id, register, legal_name, names, business_type, status, "
+            "first_listed, left_after) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [_row(company) for company in publication.companies],
+        )
+        cursor.executemany(
+            "INSERT INTO published_market.entity (id, company_id, register, kind, license_number, license_date, "
+            "legal_name, names, business_type, website, channels, first_listed, last_listed, on_newest_list, "
+            "left_after, review_notes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            [_row(entity) for entity in publication.entities],
+        )
+        cursor.executemany(
+            "INSERT INTO published_market.listing (entity_id, edition, legal_name, page, row_number, cells) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            [(*_row(listing)[:-1], Jsonb(dict(listing.cells))) for listing in publication.listings],
+        )
+        cursor.executemany(
+            "INSERT INTO published_market.report (id, issuer, family, edition, title, published_on, language, url, "
+            "citation, pages, passages, method, storage_key) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "%s, %s)",
+            [_row(report) for report in publication.reports.reports],
+        )
+        cursor.executemany(
+            "INSERT INTO published_market.report_passage (report, address, ordinal, page_start, page_end, text, "
+            "words) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            [_row(passage) for passage in publication.reports.passages],
+        )
+        self._replace_releases(cursor, publication)
+        cursor.executemany(
+            "INSERT INTO published_market.industry (source, name, register, governed_by, reports, datasets) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            [_row(industry) for industry in publication.industries],
+        )
 
     @staticmethod
-    def _replace_statistics(cursor: psycopg.Cursor, publication: MarketPublication) -> None:
-        found = publication.statistics
+    def _replace_releases(cursor: psycopg.Cursor, publication: MarketPublication) -> None:
+        cursor.executemany(
+            "INSERT INTO published_market.release (id, issuer, number, title, published_on, language, url, citation, "
+            "passages, storage_key) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            [_row(release) for release in publication.releases.releases],
+        )
+        cursor.executemany(
+            "INSERT INTO published_market.release_passage (release, address, ordinal, text, words) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            [_row(passage) for passage in publication.releases.passages],
+        )
+        cursor.executemany(
+            "INSERT INTO published_market.mention (kind, document, address, target_kind, target, words) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            [_row(mention) for mention in publication.mentions],
+        )
+
+    @staticmethod
+    def _replace_statistics(cursor: psycopg.Cursor, found: Statistics) -> None:
         cursor.executemany(
             'INSERT INTO published_market.dataset (id, source, industry, "group", metric, register, governed_by, '
             "series, first_period, last_period, updated, url, citation, reports) "

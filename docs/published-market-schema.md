@@ -6,12 +6,14 @@ The Knowledge and Retrieval layer reads market data **only** from `published_mar
 - **edition changes:** what each edition added and removed;
 - **statistics:** each dataset linked to the regulations that govern its industry, and each series with its periods: months, quarters, half-years or years;
 - **reports:** regulators' reports, roadmaps and masterplans, cut into passages with their pages. **A report has no legal force.**
+- **releases:** OJK's press releases since 2020, cut into passages. **A release has no legal force.**
+- **mentions:** the regulations and companies each passage of a report or a release names.
 
-What the registers and statistics say comes from the market connectors under the [market contract](../packages/metamorph-market-contract/MARKET_CONTRACT.md): `ojk-register` for the register, `ojk-stats` for OJK's portal statistics, `bi-stats` for BI's SEKI tables and `bps-stats` for BPS's dynamic tables, and `reports` for regulators' reports (LPKSI, KEKSI, roadmaps). The plan behind it is [market-data-layer-plan.md](market-data-layer-plan.md).
+What the registers and statistics say comes from the market connectors under the [market contract](../packages/metamorph-market-contract/MARKET_CONTRACT.md): `ojk-register` for the register, `ojk-stats` for OJK's portal statistics, `bi-stats` for BI's SEKI tables and `bps-stats` for BPS's dynamic tables, and `reports` for regulators' reports (LPKSI, KEKSI, roadmaps) and OJK's press releases. The plan behind it is [market-data-layer-plan.md](market-data-layer-plan.md).
 
 ## How it is refreshed
 
-`metamorph market publish` rebuilds the whole schema in one transaction, registers and statistics together, from every record the connectors' latest snapshots still send. Readers see the old schema or the new one, never a mix. A register holds hundreds of records, and a company or a standing depends on every record of its register, so there is no per-row change log. `register.published_at` says when the schema was last rebuilt: re-read after it changes. BPS's connector sends only the tables BPS changed, each whole; the others stay as last loaded.
+`metamorph market publish` rebuilds the whole schema in one transaction, registers, statistics, reports, releases and mentions together, from every record the connectors' latest snapshots still send. Readers see the old schema or the new one, never a mix. A register holds hundreds of records, and a company or a standing depends on every record of its register, so there is no per-row change log. `register.published_at` says when the schema was last rebuilt: re-read after it changes. BPS's connector sends only the tables BPS changed, each whole; the others stay as last loaded.
 
 ## Tables
 
@@ -27,6 +29,9 @@ What the registers and statistics say comes from the market connectors under the
 | `industry` | industry as a statistics source names it, curated | `source`, `name`, `register`, `governed_by[]` (its register's regulations, or its own), `reports[]`, `datasets[]`, `published_at`. **The bridge from a market question to the law and the reports** |
 | `report` | regulator's report, roadmap or masterplan | `id` (`ojk:lpksi:2025`, `ojk:roadmap:2023:rp3si`), `issuer`, `family` (`lpksi`, `keksi`, `roadmap`), `edition` (as titled), `title`, `published_on`, `language`, `url` (the page that lists it), `citation` (the issuer and the title), `pages`, `passages`, `method` (`text_layer`, or `ocr` when any page was read by OCR), `storage_key` (the PDF), `published_at` |
 | `report_passage` | passage of a report: what to read, cite and embed | `report`, `address` (`p-1`, `p-2`… in reading order), `ordinal`, `page_start`, `page_end`, `text` (about 250 to 400 words), `words` |
+| `release` | regulator's press release | `id` (`ojk:siaran-pers:2026:ojk-cabut-izin-usaha-pt-porto-ventura-kapital`), `issuer`, `number` (as printed, e.g. `SP 188/DKPU/OJK/X/2026`; null when it has none), `title` (as listed), `published_on`, `language`, `url` (its page), `citation`, `passages`, `storage_key` (its body as published), `published_at` |
+| `release_passage` | passage of a release | `release`, `address` (`p-1`…), `ordinal`, `text` (at most 400 words), `words`. A release has no pages |
+| `mention` | a regulation or a company a passage names | `kind` (`report` or `release`), `document` (its ID), `address` (the passage's), `target_kind` (`regulation` or `company`), `target` (a regulation's ID, as in `published.document`, or a `company.id`), `words` (as written) |
 | `observation` | a series' value for one period | `series_id`, `period` (the period's first day: `2026-Q2` is `2026-04-01`), `value` (as the source gives it), `provisional` (the source marks the period so, e.g. SEKI's `Aug*`), `storage_key` (the answer or workbook it was read from) |
 
 ## Values
@@ -57,6 +62,9 @@ What the registers and statistics say comes from the market connectors under the
   - sharia fintech lending: LPKSI, the LPBBTI roadmap and KEKSI;
   - conventional fintech lending, and the register `ojk:lpbbti`: the LPBBTI roadmap.
 - **A report has no legal force.** Quote it as what the regulator reports or plans ("OJK reports…", "the roadmap aims to…"), never as what is required. For a requirement, cite the regulation in `published`.
+- **A release has no legal force,** like a report. Quote it as what the regulator announced ("OJK announced…", "OJK revoked…, it said on 8 October 2026"). A release announcing a regulation is not the regulation: follow its mention to `published`.
+- **A release is dated by OJK's listing.** Its own date line is a day earlier in about one in seven (an evening release). Its `number` repeats each year, so it is never a key. Cite it by its `citation`: `Siaran Pers OJK SP 188/DKPU/OJK/X/2026, 8 Oktober 2026`.
+- **A mention means "names", never "revokes" or "issues":** what a passage did is in its words, which the reader reads. Regulations are found by the regulation layer's reference grammar; a `target` may not be published yet. Companies are found by their full legal names, whatever the case or punctuation, never by an abbreviation (`PT PVK`) or a platform name. So a company only on another register, or named only in short, has no mention.
 - **A report passage** is cut from the text the connector read: paragraphs gathered to about 250 words, never more than 400, each with the pages it spans. Cite it with its report's `citation` and its pages: `Otoritas Jasa Keuangan, Laporan Perkembangan Keuangan Syariah Indonesia 2025, hlm. 31–32`. Charts are images; their titles and captions are text.
 
 ## Identifiers
@@ -123,6 +131,26 @@ SELECT r.citation, p.page_start, p.page_end, p.text
 FROM published_market.report_passage p JOIN published_market.report r ON r.id = p.report
 WHERE r.family = 'lpksi' AND p.text ILIKE '%pendanaan bersama%'
 ORDER BY r.edition DESC, p.ordinal;
+```
+
+What OJK announced about a licensed fintech lender, newest first:
+
+```sql
+SELECT r.citation, p.text
+FROM published_market.mention m
+JOIN published_market.release r ON r.id = m.document
+JOIN published_market.release_passage p ON p.release = m.document AND p.address = m.address
+WHERE m.target_kind = 'company' AND m.target = 'ojk:lpbbti:kep-49-d.05-2017'
+ORDER BY r.published_on DESC;
+```
+
+The releases that name a regulation, such as POJK 40/2024 on fintech lending:
+
+```sql
+SELECT DISTINCT r.published_on, r.citation, r.title
+FROM published_market.mention m JOIN published_market.release r ON r.id = m.document
+WHERE m.kind = 'release' AND m.target_kind = 'regulation' AND m.target = 'ojk:pojk:2024:40'
+ORDER BY r.published_on DESC;
 ```
 
 The statistics for an industry, beside its licensed companies and the regulations that govern both:

@@ -5,13 +5,14 @@ Each port has a PostgreSQL or S3 implementation in `adapters/` and an in-memory 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from metamorph_contract import Manifest, NormalizedDocument
-from metamorph_market import LicensedEntityRecord, MarketRecord, ReportRecord, SeriesRecord
+from metamorph_market import LicensedEntityRecord, MarketRecord, ReleaseRecord, ReportRecord, SeriesRecord
 
 from metamorph_platform.domain.citations import TextCitation
 from metamorph_platform.domain.curation import ActiveOverride
@@ -20,7 +21,7 @@ from metamorph_platform.domain.gate import HoldReason
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
 from metamorph_platform.domain.market.publication import MarketPublication, RegisterInfo
-from metamorph_platform.domain.market.statistics import IndustryLink
+from metamorph_platform.domain.market.statistics import IndustryLink, Statistics
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
 from metamorph_platform.domain.structure import Structure
 from metamorph_platform.domain.validity import DatedLink, ProvisionExpiry, StatusChange
@@ -127,16 +128,22 @@ class MarketSource(Protocol):
         """Every licensed entity the connectors' latest snapshots still send."""
         ...
 
-    def current_series(self) -> list[SeriesRecord]:
-        """Every series the connectors' latest snapshots still send."""
+    def current_series(self) -> Iterable[SeriesRecord]:
+        """Every series the connectors' latest snapshots still send, ordered by dataset and read a few at a time:
+        they are millions of values."""
         ...
 
     def current_reports(self) -> list[ReportRecord]:
         """Every report the connectors' latest snapshots still send."""
         ...
 
+    def current_releases(self) -> list[ReleaseRecord]:
+        """Every press release the connectors' latest snapshots still send."""
+        ...
+
     def storage_keys(self) -> dict[str, str]:
-        """Where each file (by sha256: register editions, source answers, reports and their texts) is kept."""
+        """Where each file (by sha256: register editions, source answers, reports and their texts, releases' bodies)
+        is kept."""
         ...
 
     def citations(self) -> dict[str, str]:
@@ -144,9 +151,20 @@ class MarketSource(Protocol):
         ...
 
 
+class PublishedMarketWriter(Protocol):
+    def add_statistics(self, part: Statistics) -> None:
+        """Whole datasets with their series and observations; a publish adds them part by part."""
+        ...
+
+    def add(self, publication: MarketPublication) -> None:
+        """Everything else, after the statistics: its own statistics are only the datasets, for the industries."""
+        ...
+
+
 class PublishedMarketStore(Protocol):
-    def replace_all(self, publication: MarketPublication) -> None:
-        """Atomic: readers see the old published_market or the new one, never a mix."""
+    def replacing(self) -> AbstractContextManager[PublishedMarketWriter]:
+        """Atomic: what is added inside replaces published_market whole, so readers see the old one or the new one,
+        never a mix."""
         ...
 
 

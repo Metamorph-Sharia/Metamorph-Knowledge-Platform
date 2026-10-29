@@ -8,7 +8,7 @@ A period is published as its first day (2026-Q2 → 2026-04-01), beside its seri
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 
@@ -102,6 +102,29 @@ def statistics(
             for observation in record.observations
         ),
     )
+
+
+def in_datasets(records: Iterable[SeriesRecord], size: int) -> Iterator[list[SeriesRecord]]:
+    """Series ordered by dataset, in parts of whole datasets of at least `size` series (the last may be smaller).
+
+    A dataset's summary needs every one of its series, so a dataset is never split; a part is published before the
+    next is read, so a publish holds one part, never the corpus. Series out of dataset order would publish a dataset
+    twice, so they stop the publish.
+    """
+    part: list[SeriesRecord] = []
+    done: set[str] = set()
+    for record in records:
+        dataset = record.series.dataset
+        if dataset in done:
+            raise ValueError(f"series not ordered by dataset: {dataset}")
+        if part and part[-1].series.dataset != dataset:
+            done.add(part[-1].series.dataset)
+            if len(part) >= size:
+                yield part
+                part = []
+        part.append(record)
+    if part:
+        yield part
 
 
 def _dataset(

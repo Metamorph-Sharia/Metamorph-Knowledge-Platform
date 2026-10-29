@@ -1,4 +1,4 @@
-"""The records a market connector emits (market contract 1.0): licensed entities, series and reports.
+"""The records a market connector emits (market contract 1.0): licensed entities, series, reports and releases.
 
 Plain frozen dataclasses: they cross repository and process boundaries, so they hold values only.
 The files they were read from (register editions, the source's answers, a report's PDF and its text) travel as
@@ -40,6 +40,7 @@ class FileRole(StrEnum):
     SOURCE_ANSWER = "source_answer"  # one answer of a statistics source, e.g. a portal table for one year
     SOURCE_TABLE = "source_table"  # one table of a statistics source as downloaded, e.g. a SEKI workbook
     SOURCE_REPORT = "source_report"  # a regulator's report as published, e.g. LPKSI 2025's PDF
+    SOURCE_PAGE = "source_page"  # a part of a source's web page as published, e.g. a press release's body
 
 
 class Frequency(StrEnum):
@@ -205,4 +206,27 @@ class ReportRecord:
     kind: str = "report"
 
 
-MarketRecord = LicensedEntityRecord | SeriesRecord | ReportRecord
+@dataclass(frozen=True)
+class Release:
+    """A regulator's press release: what it announced, in its own words, on its date. No legal force: never a rule."""
+
+    id: str  # {issuer}:siaran-pers:{year}:{name}, the name being the page's: ojk:siaran-pers:2026:ojk-cabut-izin-…
+    issuer: str  # e.g. "ojk"
+    number: str | None  # as printed, e.g. "SP 188/DKPU/OJK/X/2026"; numbers repeat across years, and some have none
+    title: str  # as listed
+    published_on: str  # ISO date, as the source's listing dates it
+    language: str  # e.g. "id"
+
+
+@dataclass(frozen=True)
+class ReleaseRecord:
+    source: SourceRef
+    release: Release
+    text: str  # its words, paragraphs separated by blank lines: the platform cuts its passages
+    files: tuple[FileRef, ...]  # the release's body as the page published it
+    source_fields: dict[str, Any] = field(default_factory=dict)  # what the source says of it, unchanged
+    contract_version: str = MARKET_CONTRACT_VERSION
+    kind: str = "release"
+
+
+MarketRecord = LicensedEntityRecord | SeriesRecord | ReportRecord | ReleaseRecord

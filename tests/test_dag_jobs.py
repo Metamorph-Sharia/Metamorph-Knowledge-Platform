@@ -167,7 +167,8 @@ def test_the_macro_jobs_load_into_the_market_layer(jobs) -> None:
 
     assert (seki.image, seki.layer, seki.collect) == ("metamorph/bi-stats:dev", Layer.MARKET, "bi-stats import")
     assert seki.export == "bi-stats export --out {out} --run-id {run_id}"
-    assert (bps.image, bps.layer, bps.collect) == ("metamorph/bps-stats:dev", Layer.MARKET, "bps-stats collect")
+    assert (bps.image, bps.layer) == ("metamorph/bps-stats:dev", Layer.MARKET)
+    assert bps.collect == "bps-stats collect --for 60"  # an hour a week, so a first collection ends over weeks
     assert bps.export == "bps-stats export --out {out} --run-id {run_id} --since {since}"
     assert [m.source for m in bps.mounts] == [f"{WORKSPACE}/BPS-Stats-Connector/data", "metamorph-bundles"]
     assert "BPS_STATS_CONTACT" in passed_on(bps)

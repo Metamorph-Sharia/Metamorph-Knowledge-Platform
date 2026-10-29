@@ -22,6 +22,8 @@ from metamorph_market.record import (
     Listing,
     MarketRecord,
     Observation,
+    Release,
+    ReleaseRecord,
     Report,
     ReportRecord,
     ReportText,
@@ -66,6 +68,8 @@ def from_dict(data: Mapping[str, Any]) -> MarketRecord:
         return _series_record(data)
     if data["kind"] == "report":
         return _report_record(data)
+    if data["kind"] == "release":
+        return _release_record(data)
     return LicensedEntityRecord(
         contract_version=data["contract_version"],
         kind=data["kind"],
@@ -106,6 +110,18 @@ def _report_record(data: Mapping[str, Any]) -> ReportRecord:
         text=ReportText(
             **{**text, "method": TextMethod(text["method"]), "extraction": Extraction(**text["extraction"])}
         ),
+        files=_files(data),
+        source_fields=data["source_fields"],
+    )
+
+
+def _release_record(data: Mapping[str, Any]) -> ReleaseRecord:
+    return ReleaseRecord(
+        contract_version=data["contract_version"],
+        kind=data["kind"],
+        source=SourceRef(**data["source"]),
+        release=Release(**data["release"]),
+        text=data["text"],
         files=_files(data),
         source_fields=data["source_fields"],
     )

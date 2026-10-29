@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from market_samples import build_record, build_report, build_series
+from market_samples import build_record, build_release, build_report, build_series
 from metamorph_market import (
     Bundle,
     BundleWriter,
@@ -203,3 +203,24 @@ def test_a_report_must_not_reference_a_text_left_out(tmp_path: Path) -> None:
         report = _report_in(bundle)
         bundle.add(replace(report, text=replace(report.text, file="f" * 64)))
 
+
+
+def test_a_release_carries_its_page_as_a_blob_and_its_text_inline(tmp_path: Path) -> None:
+    from metamorph_market import ReleaseRecord, from_json
+
+    with BundleWriter(tmp_path, connector="reports", connector_version="0.2.0", run_id="run-1") as bundle:
+        record = build_release()
+        page = bundle.put_blob(b'<div id="summary"><p>SIARAN PERS</p></div>')
+        release = replace(record, files=tuple(replace(file, sha256=page) for file in record.files))
+        bundle.add(release)
+
+    (entry,) = list(Bundle(tmp_path).entries())
+    assert entry.is_valid
+    assert isinstance(entry.record, ReleaseRecord)
+    assert entry.record == release == from_json(to_json(release))
+
+
+def test_a_release_must_not_reference_a_page_left_out(tmp_path: Path) -> None:
+    writer = BundleWriter(tmp_path, connector="reports", connector_version="0.2.0", run_id="run-1")
+    with pytest.raises(ContractViolation, match="was not put into this bundle"), writer as bundle:
+        bundle.add(build_release())

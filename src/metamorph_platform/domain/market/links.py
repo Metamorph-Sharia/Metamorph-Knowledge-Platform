@@ -59,18 +59,26 @@ def industries(
     )
 
 
+def linked_datasets(
+    datasets: Sequence[PublishedDataset], links: Sequence[IndustryLink], published_reports: Sequence[str]
+) -> tuple[PublishedDataset, ...]:
+    """Each dataset with the published reports its industry's curated links name."""
+    by_industry = {(link.source, link.industry): link.reports for link in links}
+    return tuple(
+        replace(dataset, reports=linked_reports(by_industry.get((dataset.source, dataset.industry), ()),
+                                                published_reports))
+        for dataset in datasets
+    )
+
+
 def with_links(
     publication: MarketPublication, registers: Sequence[RegisterInfo], links: Sequence[IndustryLink]
 ) -> MarketPublication:
     """The publication with each register's and dataset's reports, and the industries, from the curated links."""
     published = [report.id for report in publication.reports.reports]
     by_register = {register.id: register.reports for register in registers}
-    by_industry = {(link.source, link.industry): link.reports for link in links}
     statistics = publication.statistics
-    datasets = tuple(
-        replace(dataset, reports=linked_reports(by_industry.get((dataset.source, dataset.industry), ()), published))
-        for dataset in statistics.datasets
-    )
+    datasets = linked_datasets(statistics.datasets, links, published)
     return replace(
         publication,
         registers=tuple(replace(register, reports=linked_reports(by_register.get(register.id, ()), published))

@@ -21,7 +21,13 @@ from pathlib import Path
 from types import TracebackType
 
 from metamorph_market.codec import ContractViolation, from_json, to_json
-from metamorph_market.record import MARKET_CONTRACT_VERSION, LicensedEntityRecord, MarketRecord, ReportRecord
+from metamorph_market.record import (
+    MARKET_CONTRACT_VERSION,
+    LicensedEntityRecord,
+    MarketRecord,
+    ReleaseRecord,
+    ReportRecord,
+)
 from metamorph_market.schema import MANIFEST_SCHEMA, schema_problems
 from metamorph_market.validate import problems
 
@@ -184,5 +190,7 @@ def _referenced_blobs(record: MarketRecord) -> set[str]:
     files = {file.sha256 for file in record.files}
     if isinstance(record, ReportRecord):
         return files | {record.text.file}
+    if isinstance(record, ReleaseRecord):
+        return files
     pointers = record.listings if isinstance(record, LicensedEntityRecord) else record.observations
     return files | {pointer.file for pointer in pointers}

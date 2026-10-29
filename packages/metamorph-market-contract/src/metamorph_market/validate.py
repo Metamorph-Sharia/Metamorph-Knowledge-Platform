@@ -5,9 +5,17 @@ from __future__ import annotations
 import re
 
 from metamorph_market.codec import to_dict
-from metamorph_market.record import Frequency, LicensedEntityRecord, MarketRecord, ReportRecord, SeriesRecord
+from metamorph_market.record import (
+    Frequency,
+    LicensedEntityRecord,
+    MarketRecord,
+    ReleaseRecord,
+    ReportRecord,
+    SeriesRecord,
+)
 from metamorph_market.schema import record_problems
 
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}$")
 PERIOD_FORMS = {
     Frequency.MONTHLY: re.compile(r"\d{4}-\d{2}"),
     Frequency.QUARTERLY: re.compile(r"\d{4}-Q\d"),
@@ -22,6 +30,8 @@ def problems(record: MarketRecord) -> list[str]:
         return found + _series_problems(record)
     if isinstance(record, ReportRecord):
         return found + _report_problems(record)
+    if isinstance(record, ReleaseRecord):
+        return found + _release_problems(record)
     return found + _entity_problems(record)
 
 
@@ -29,6 +39,16 @@ def _report_problems(record: ReportRecord) -> list[str]:
     report = record.report
     if not report.id.startswith(f"{report.issuer}:{report.family}:"):
         return [f"report.id: {report.id!r} is not of issuer {report.issuer!r} and family {report.family!r}"]
+    return []
+
+
+def _release_problems(record: ReleaseRecord) -> list[str]:
+    release = record.release
+    year = release.published_on[:4]
+    if not DATE.match(release.published_on):
+        return []  # the schema reports the date
+    if not release.id.startswith(f"{release.issuer}:siaran-pers:{year}:"):
+        return [f"release.id: {release.id!r} is not of issuer {release.issuer!r} and year {year}"]
     return []
 
 

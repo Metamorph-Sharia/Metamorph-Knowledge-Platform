@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:metamorph:market:1.0:release",
+  "title": "Release (market contract 1.0)",
+  "description": "One line of records.jsonl: a regulator's press release, with its words. It has no legal force.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "kind",
+    "source",
+    "release",
+    "text",
+    "files",
+    "source_fields"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "market-1.0"
+    },
+    "kind": {
+      "const": "release"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "release": {
+      "$ref": "#/$defs/release"
+    },
+    "text": {
+      "type": "string",
+      "description": "Its words, paragraphs separated by blank lines. The platform cuts its passages; an empty text is held back there."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "description": "The release's body as the page published it."
+    },
+    "source_fields": {
+      "type": "object",
+      "description": "What the source says of the release, unchanged, e.g. its PDF's address."
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connector",
+        "connector_version",
+        "source_id",
+        "url",
+        "fetched_at"
+      ],
+      "properties": {
+        "connector": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "connector_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The release's key as the source gives it: its page's name."
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release's page."
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "issuer",
+        "number",
+        "title",
+        "published_on",
+        "language"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+:siaran-pers:[0-9]{4}:[a-z0-9][a-z0-9-]*$",
+          "description": "{issuer}:siaran-pers:{year}:{name}, the name being the page's in lower case, e.g. ojk:siaran-pers:2026:ojk-cabut-izin-usaha-pt-porto-ventura-kapital."
+        },
+        "issuer": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+$",
+          "description": "e.g. ojk."
+        },
+        "number": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "As printed, e.g. SP 188/DKPU/OJK/X/2026. Numbers repeat across years, and some releases have none."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "As listed."
+        },
+        "published_on": {
+          "type": "string",
+          "format": "date",
+          "description": "As the source's listing dates it."
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2}$",
+          "description": "e.g. id."
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "role",
+        "media_type",
+        "source_url",
+        "edition"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "role": {
+          "enum": [
+            "source_page"
+          ]
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edition": {
+          "type": "string",
+          "format": "date",
+          "description": "The release's date."
+        }
+      }
+    }
+  }
+}

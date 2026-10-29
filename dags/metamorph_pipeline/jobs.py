@@ -210,14 +210,14 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_reports",
             connector="reports",
             image="metamorph/reports:dev",
-            schedule="45 4 * * 1",  # weekly, Mondays: OJK publishes LPKSI yearly, on no fixed day
+            schedule="45 4 * * 1",  # weekly, Mondays: LPKSI comes yearly, OJK's press releases a few a week
             # exits 2 on a refusal; a report MinerU can't read now is kept unread and read on a later run.
             # KEKSI and the roadmaps are imported by hand (`reports import`), into the same data/
             collect="reports sync",
             export="reports export --out {out} --run-id {run_id}",
             mounts=(data("Reports-Connector"), bundles),
             secrets=("REPORTS_CONTACT",),  # added to the connector's User-Agent, if set
-            description="Regulators' reports (LPKSI, KEKSI, roadmaps): new LPKSI editions from OJK's listing, export",
+            description="Regulators' reports (LPKSI, KEKSI, roadmaps) and OJK's press releases: the new ones, export",
             tags=("ojk", "bi", "market"),
             layer=Layer.MARKET,
         ),
@@ -226,7 +226,9 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             connector="bps-stats",
             image="metamorph/bps-stats:dev",
             schedule="15 4 * * 1",  # weekly, Mondays: only the tables BPS changed are asked again
-            collect="bps-stats collect",  # exits 2 on a refusal or challenge: the task fails, nothing is worked around
+            # an hour a week: BPS answers slowly, so a run stops before its next table once the hour is spent, and the
+            # next week's goes on. Exits 2 on a refusal or challenge: the task fails, nothing is worked around
+            collect="bps-stats collect --for 60",
             # BPS's tables hold millions of values: the bundle carries the tables collected since the last success
             export="bps-stats export --out {out} --run-id {run_id} --since {since}",
             mounts=(data("BPS-Stats-Connector"), bundles),

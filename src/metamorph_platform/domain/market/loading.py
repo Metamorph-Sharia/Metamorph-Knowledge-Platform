@@ -2,7 +2,7 @@
 and which files to keep.
 
 Registers and statistics sources are curated (market.register, market.statistics_source): a record on another one
-waits in quarantine until it is added. A report belongs to no register or source.
+waits in quarantine until it is added. A report or a release belongs to no register or source.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Set
 
-from metamorph_market import LicensedEntityRecord, MarketRecord, ReportRecord, to_json
+from metamorph_market import LicensedEntityRecord, MarketRecord, ReleaseRecord, ReportRecord, to_json
 
 from metamorph_platform.domain.market.statistics import source_of
 
@@ -32,7 +32,7 @@ def kept_files(record: MarketRecord) -> dict[str, str]:
 
 
 def unknown_scope_problems(record: MarketRecord, registers: Set[str], sources: Set[str]) -> list[str]:
-    if isinstance(record, ReportRecord):
+    if isinstance(record, ReportRecord | ReleaseRecord):
         return []
     if isinstance(record, LicensedEntityRecord):
         register = record.entity.register

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from market_samples import build_record, build_report, build_series
+from market_samples import build_record, build_release, build_report, build_series
 from metamorph_market import (
     BundleWriter,
     BusinessType,
@@ -21,6 +21,7 @@ from metamorph_market import (
     LicenseKind,
     Listing,
     Observation,
+    ReleaseRecord,
     ReportRecord,
     SeriesRecord,
     Snapshot,
@@ -181,3 +182,28 @@ def write_report_bundle(directory: Path, texts: dict[str, str], run_id: str = "r
             bundle.add(report_record(text, report_id))
     return directory
 
+
+
+RELEASE_BODY = b'<div id="summary"><p>SIARAN PERS</p></div>'
+
+
+def release_record(text: str, name: str = "ojk-cabut-izin-usaha-pt-porto-ventura-kapital",
+                   published_on: str = "2026-10-08", number: str | None = "SP 188/DKPU/OJK/X/2026") -> ReleaseRecord:
+    """A release of OJK's, its body sharing one blob's bytes (write_release_bundle)."""
+    record = build_release(text=text)
+    release_id = f"ojk:siaran-pers:{published_on[:4]}:{name}"
+    return replace(
+        record,
+        release=replace(record.release, id=release_id, published_on=published_on, number=number),
+        source=replace(record.source, source_id=name),
+        files=tuple(replace(file, sha256=hashlib.sha256(RELEASE_BODY).hexdigest(), edition=published_on)
+                    for file in record.files),
+    )
+
+
+def write_release_bundle(directory: Path, releases: Sequence[ReleaseRecord], run_id: str = "run-1") -> Path:
+    with BundleWriter(directory, connector="reports", connector_version="0.2.0", run_id=run_id) as bundle:
+        bundle.put_blob(RELEASE_BODY)
+        for record in releases:
+            bundle.add(record)
+    return directory

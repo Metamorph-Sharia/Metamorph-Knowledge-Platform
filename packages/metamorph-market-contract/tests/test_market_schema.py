@@ -20,6 +20,8 @@ from metamorph_market import (
     LicenseKind,
     Listing,
     Observation,
+    Release,
+    ReleaseRecord,
     Report,
     ReportRecord,
     ReportText,
@@ -28,7 +30,14 @@ from metamorph_market import (
     SourceRef,
     TextMethod,
 )
-from metamorph_market.schema import ENTITY_SCHEMA, MANIFEST_SCHEMA, REPORT_SCHEMA, SERIES_SCHEMA, load_schema
+from metamorph_market.schema import (
+    ENTITY_SCHEMA,
+    MANIFEST_SCHEMA,
+    RELEASE_SCHEMA,
+    REPORT_SCHEMA,
+    SERIES_SCHEMA,
+    load_schema,
+)
 
 RECORD = load_schema(ENTITY_SCHEMA)
 DEFINITIONS = RECORD["$defs"]
@@ -36,6 +45,8 @@ SERIES = load_schema(SERIES_SCHEMA)
 SERIES_DEFINITIONS = SERIES["$defs"]
 REPORT = load_schema(REPORT_SCHEMA)
 REPORT_DEFINITIONS = REPORT["$defs"]
+RELEASE = load_schema(RELEASE_SCHEMA)
+RELEASE_DEFINITIONS = RELEASE["$defs"]
 
 OBJECTS = {
     LicensedEntityRecord: RECORD,
@@ -52,6 +63,8 @@ OBJECTS = {
     Report: REPORT_DEFINITIONS["report"],
     ReportText: REPORT_DEFINITIONS["text"],
     Extraction: REPORT_DEFINITIONS["extraction"],
+    ReleaseRecord: RELEASE,
+    Release: RELEASE_DEFINITIONS["release"],
 }
 
 SHARED = ("source", "file")  # one type each, so every kind's schema must define them alike, apart from the file roles
@@ -65,7 +78,7 @@ VOCABULARIES = {
 }
 
 
-@pytest.mark.parametrize("schema", [ENTITY_SCHEMA, SERIES_SCHEMA, REPORT_SCHEMA, MANIFEST_SCHEMA])
+@pytest.mark.parametrize("schema", [ENTITY_SCHEMA, SERIES_SCHEMA, REPORT_SCHEMA, RELEASE_SCHEMA, MANIFEST_SCHEMA])
 def test_each_schema_is_valid_json_schema(schema: str) -> None:
     Draft202012Validator.check_schema(load_schema(schema))
 
@@ -83,13 +96,13 @@ def test_each_vocabulary_matches_the_schema(vocabulary: type[StrEnum]) -> None:
 
 
 def test_each_kinds_file_roles_are_file_roles() -> None:
-    roles = [schema["$defs"]["file"]["properties"]["role"]["enum"] for schema in (RECORD, SERIES, REPORT)]
+    roles = [schema["$defs"]["file"]["properties"]["role"]["enum"] for schema in (RECORD, SERIES, REPORT, RELEASE)]
     assert {member.value for member in FileRole} == {role for kind in roles for role in kind}
 
 
 @pytest.mark.parametrize("name", SHARED)
 def test_every_kind_defines_the_shared_types_alike(name: str) -> None:
-    for other in (SERIES_DEFINITIONS, REPORT_DEFINITIONS):
+    for other in (SERIES_DEFINITIONS, REPORT_DEFINITIONS, RELEASE_DEFINITIONS):
         assert set(DEFINITIONS[name]["properties"]) == set(other[name]["properties"])
         assert DEFINITIONS[name]["required"] == other[name]["required"]
 
@@ -98,4 +111,5 @@ def test_the_version_is_the_schemas() -> None:
     assert RECORD["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
     assert SERIES["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
     assert REPORT["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
+    assert RELEASE["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
     assert load_schema(MANIFEST_SCHEMA)["properties"]["contract_version"]["const"] == MARKET_CONTRACT_VERSION
