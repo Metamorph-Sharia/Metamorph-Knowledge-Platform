@@ -199,6 +199,139 @@
         "title": "CitationTarget",
         "type": "object"
       },
+      "CompanyPage": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CompanyRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "total",
+          "page",
+          "pages"
+        ],
+        "title": "CompanyPage",
+        "type": "object"
+      },
+      "CompanyRow": {
+        "properties": {
+          "business_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Type"
+          },
+          "first_listed": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Listed"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "left_after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left After"
+          },
+          "legal_name": {
+            "title": "Legal Name",
+            "type": "string"
+          },
+          "register": {
+            "title": "Register",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "register",
+          "legal_name",
+          "status",
+          "business_type",
+          "first_listed",
+          "left_after"
+        ],
+        "title": "CompanyRow",
+        "type": "object"
+      },
+      "CompanyView": {
+        "properties": {
+          "company": {
+            "$ref": "#/components/schemas/CompanyRow"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRow"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "mentions": {
+            "items": {
+              "$ref": "#/components/schemas/MentionRow"
+            },
+            "title": "Mentions",
+            "type": "array"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "company",
+          "names",
+          "entities",
+          "mentions"
+        ],
+        "title": "CompanyView",
+        "type": "object"
+      },
       "ConflictDecision": {
         "properties": {
           "decision": {
@@ -567,6 +700,194 @@
         "title": "Dashboard",
         "type": "object"
       },
+      "DatasetPage": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "total",
+          "page",
+          "pages"
+        ],
+        "title": "DatasetPage",
+        "type": "object"
+      },
+      "DatasetRow": {
+        "properties": {
+          "first_period": {
+            "format": "date",
+            "title": "First Period",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Industry"
+          },
+          "last_period": {
+            "format": "date",
+            "title": "Last Period",
+            "type": "string"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "register": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Register"
+          },
+          "series": {
+            "title": "Series",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "industry",
+          "group",
+          "metric",
+          "register",
+          "series",
+          "first_period",
+          "last_period",
+          "updated"
+        ],
+        "title": "DatasetRow",
+        "type": "object"
+      },
+      "DatasetView": {
+        "properties": {
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "dataset": {
+            "$ref": "#/components/schemas/DatasetRow"
+          },
+          "governed_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed By",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "reports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/MarketSeriesRow"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "series_total": {
+            "title": "Series Total",
+            "type": "integer"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "dataset",
+          "governed_by",
+          "reports",
+          "citation",
+          "url",
+          "series",
+          "series_total",
+          "page",
+          "pages"
+        ],
+        "title": "DatasetView",
+        "type": "object"
+      },
       "DocumentHit": {
         "properties": {
           "citation": {
@@ -876,6 +1197,123 @@
         "title": "EditableText",
         "type": "object"
       },
+      "EntityRow": {
+        "properties": {
+          "business_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Type"
+          },
+          "first_listed": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Listed"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_listed": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Listed"
+          },
+          "left_after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left After"
+          },
+          "legal_name": {
+            "title": "Legal Name",
+            "type": "string"
+          },
+          "license_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License Date"
+          },
+          "license_number": {
+            "title": "License Number",
+            "type": "string"
+          },
+          "on_newest_list": {
+            "title": "On Newest List",
+            "type": "boolean"
+          },
+          "review_notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Notes",
+            "type": "array"
+          },
+          "website": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Website"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "license_number",
+          "license_date",
+          "legal_name",
+          "business_type",
+          "website",
+          "first_listed",
+          "last_listed",
+          "on_newest_list",
+          "left_after",
+          "review_notes"
+        ],
+        "title": "EntityRow",
+        "type": "object"
+      },
       "Facet": {
         "properties": {
           "name": {
@@ -1173,6 +1611,113 @@
         "title": "HoldReason",
         "type": "object"
       },
+      "IndustryChange": {
+        "properties": {
+          "governed_by": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed By",
+            "type": "array"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "register": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Register"
+          },
+          "reports": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "title": "IndustryChange",
+        "type": "object"
+      },
+      "IndustryName": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "name"
+        ],
+        "title": "IndustryName",
+        "type": "object"
+      },
+      "IndustryView": {
+        "properties": {
+          "datasets": {
+            "title": "Datasets",
+            "type": "integer"
+          },
+          "governed_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed By",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "register": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Register"
+          },
+          "reports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "name",
+          "register",
+          "governed_by",
+          "reports",
+          "datasets"
+        ],
+        "title": "IndustryView",
+        "type": "object"
+      },
       "Link": {
         "properties": {
           "url": {
@@ -1266,6 +1811,292 @@
           "method"
         ],
         "title": "LinkRow",
+        "type": "object"
+      },
+      "MarketChange": {
+        "description": "A change to the curated links, as published: what it named that is not published, and the sources page.",
+        "properties": {
+          "sources": {
+            "$ref": "#/components/schemas/MarketSources"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "warnings",
+          "sources"
+        ],
+        "title": "MarketChange",
+        "type": "object"
+      },
+      "MarketCounts": {
+        "properties": {
+          "companies": {
+            "title": "Companies",
+            "type": "integer"
+          },
+          "datasets": {
+            "title": "Datasets",
+            "type": "integer"
+          },
+          "entities": {
+            "title": "Entities",
+            "type": "integer"
+          },
+          "mentions": {
+            "title": "Mentions",
+            "type": "integer"
+          },
+          "observations": {
+            "title": "Observations",
+            "type": "integer"
+          },
+          "releases": {
+            "title": "Releases",
+            "type": "integer"
+          },
+          "reports": {
+            "title": "Reports",
+            "type": "integer"
+          },
+          "sectors": {
+            "title": "Sectors",
+            "type": "integer"
+          },
+          "series": {
+            "title": "Series",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companies",
+          "entities",
+          "datasets",
+          "series",
+          "observations",
+          "reports",
+          "releases",
+          "mentions",
+          "sectors"
+        ],
+        "title": "MarketCounts",
+        "type": "object"
+      },
+      "MarketOverview": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CheckRow"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/MarketCounts"
+          },
+          "health_taken_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Taken At"
+          },
+          "open_reviews": {
+            "title": "Open Reviews",
+            "type": "integer"
+          },
+          "recent_bundles": {
+            "items": {
+              "$ref": "#/components/schemas/BundleRow"
+            },
+            "title": "Recent Bundles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "checks",
+          "health_taken_at",
+          "counts",
+          "open_reviews",
+          "recent_bundles"
+        ],
+        "title": "MarketOverview",
+        "type": "object"
+      },
+      "MarketSeriesRow": {
+        "properties": {
+          "first_period": {
+            "format": "date",
+            "title": "First Period",
+            "type": "string"
+          },
+          "frequency": {
+            "title": "Frequency",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_period": {
+            "format": "date",
+            "title": "Last Period",
+            "type": "string"
+          },
+          "observations": {
+            "title": "Observations",
+            "type": "integer"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "frequency",
+          "unit",
+          "first_period",
+          "last_period",
+          "observations"
+        ],
+        "title": "MarketSeriesRow",
+        "type": "object"
+      },
+      "MarketSources": {
+        "description": "Everything a curator keeps on the market's sources page: the curated links, and what they reach.",
+        "properties": {
+          "industries": {
+            "items": {
+              "$ref": "#/components/schemas/IndustryView"
+            },
+            "title": "Industries",
+            "type": "array"
+          },
+          "named_industries": {
+            "items": {
+              "$ref": "#/components/schemas/IndustryName"
+            },
+            "title": "Named Industries",
+            "type": "array"
+          },
+          "registers": {
+            "items": {
+              "$ref": "#/components/schemas/RegisterView"
+            },
+            "title": "Registers",
+            "type": "array"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/SectorView"
+            },
+            "title": "Sectors",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/StatisticsSourceView"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "registers",
+          "sources",
+          "industries",
+          "sectors",
+          "named_industries"
+        ],
+        "title": "MarketSources",
+        "type": "object"
+      },
+      "MentionRow": {
+        "description": "A report or release passage that names a regulation or a company.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "citation": {
+            "title": "Citation",
+            "type": "string"
+          },
+          "document": {
+            "title": "Document",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "published_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published On"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "document",
+          "address",
+          "citation",
+          "title",
+          "published_on"
+        ],
+        "title": "MentionRow",
+        "type": "object"
+      },
+      "NamedTarget": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "NamedTarget",
         "type": "object"
       },
       "NewDocument": {
@@ -1375,6 +2206,30 @@
         "title": "NewId",
         "type": "object"
       },
+      "ObservationRow": {
+        "properties": {
+          "period": {
+            "format": "date",
+            "title": "Period",
+            "type": "string"
+          },
+          "provisional": {
+            "title": "Provisional",
+            "type": "boolean"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "period",
+          "value",
+          "provisional"
+        ],
+        "title": "ObservationRow",
+        "type": "object"
+      },
       "PageStart": {
         "properties": {
           "at": {
@@ -1415,6 +2270,66 @@
           "address"
         ],
         "title": "PassageReference",
+        "type": "object"
+      },
+      "PassageRow": {
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "names": {
+            "items": {
+              "$ref": "#/components/schemas/NamedTarget"
+            },
+            "title": "Names",
+            "type": "array"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "words": {
+            "title": "Words",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "ordinal",
+          "page_start",
+          "page_end",
+          "text",
+          "words",
+          "names"
+        ],
+        "title": "PassageRow",
         "type": "object"
       },
       "ProvisionChange": {
@@ -1773,6 +2688,324 @@
         "title": "Reason",
         "type": "object"
       },
+      "RegisterLinksChange": {
+        "properties": {
+          "fresh_days": {
+            "title": "Fresh Days",
+            "type": "integer"
+          },
+          "governed_by": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed By",
+            "type": "array"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "reports": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "fresh_days"
+        ],
+        "title": "RegisterLinksChange",
+        "type": "object"
+      },
+      "RegisterView": {
+        "properties": {
+          "companies": {
+            "title": "Companies",
+            "type": "integer"
+          },
+          "editions": {
+            "title": "Editions",
+            "type": "integer"
+          },
+          "fresh_days": {
+            "title": "Fresh Days",
+            "type": "integer"
+          },
+          "governed_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed By",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "newest_edition": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest Edition"
+          },
+          "reports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "issuer",
+          "name",
+          "governed_by",
+          "reports",
+          "fresh_days",
+          "newest_edition",
+          "editions",
+          "companies"
+        ],
+        "title": "RegisterView",
+        "type": "object"
+      },
+      "ReleasePage": {
+        "properties": {
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "total",
+          "page",
+          "pages"
+        ],
+        "title": "ReleasePage",
+        "type": "object"
+      },
+      "ReleaseRow": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number"
+          },
+          "passages": {
+            "title": "Passages",
+            "type": "integer"
+          },
+          "published_on": {
+            "format": "date",
+            "title": "Published On",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "title",
+          "published_on",
+          "passages"
+        ],
+        "title": "ReleaseRow",
+        "type": "object"
+      },
+      "ReleaseView": {
+        "properties": {
+          "citation": {
+            "title": "Citation",
+            "type": "string"
+          },
+          "passages": {
+            "items": {
+              "$ref": "#/components/schemas/PassageRow"
+            },
+            "title": "Passages",
+            "type": "array"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseRow"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "release",
+          "citation",
+          "url",
+          "passages"
+        ],
+        "title": "ReleaseView",
+        "type": "object"
+      },
+      "ReportRow": {
+        "properties": {
+          "edition": {
+            "title": "Edition",
+            "type": "string"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "passages": {
+            "title": "Passages",
+            "type": "integer"
+          },
+          "published_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published On"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "issuer",
+          "family",
+          "edition",
+          "title",
+          "published_on",
+          "pages",
+          "passages",
+          "method"
+        ],
+        "title": "ReportRow",
+        "type": "object"
+      },
+      "ReportView": {
+        "properties": {
+          "citation": {
+            "title": "Citation",
+            "type": "string"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "passages": {
+            "items": {
+              "$ref": "#/components/schemas/PassageRow"
+            },
+            "title": "Passages",
+            "type": "array"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ReportRow"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "report",
+          "citation",
+          "url",
+          "passages",
+          "page",
+          "pages"
+        ],
+        "title": "ReportView",
+        "type": "object"
+      },
       "ReviewDecision": {
         "properties": {
           "reason": {
@@ -2039,6 +3272,97 @@
         "title": "SearchPage",
         "type": "object"
       },
+      "SectorChange": {
+        "properties": {
+          "industries": {
+            "items": {
+              "$ref": "#/components/schemas/IndustryName"
+            },
+            "title": "Industries",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_en": {
+            "default": "",
+            "title": "Name En",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "industries"
+        ],
+        "title": "SectorChange",
+        "type": "object"
+      },
+      "SectorView": {
+        "properties": {
+          "datasets": {
+            "title": "Datasets",
+            "type": "integer"
+          },
+          "governed_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Governed By",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "industries": {
+            "items": {
+              "$ref": "#/components/schemas/IndustryName"
+            },
+            "title": "Industries",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_en": {
+            "title": "Name En",
+            "type": "string"
+          },
+          "registers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Registers",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "name_en",
+          "industries",
+          "registers",
+          "governed_by",
+          "reports",
+          "datasets"
+        ],
+        "title": "SectorView",
+        "type": "object"
+      },
       "SeriesPage": {
         "properties": {
           "documents": {
@@ -2143,6 +3467,71 @@
         "title": "SeriesRow",
         "type": "object"
       },
+      "SeriesView": {
+        "properties": {
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "dataset": {
+            "title": "Dataset",
+            "type": "string"
+          },
+          "dimensions": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Dimensions",
+            "type": "array"
+          },
+          "measure": {
+            "title": "Measure",
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/ObservationRow"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "series": {
+            "$ref": "#/components/schemas/MarketSeriesRow"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "series",
+          "dataset",
+          "measure",
+          "dimensions",
+          "citation",
+          "url",
+          "observations"
+        ],
+        "title": "SeriesView",
+        "type": "object"
+      },
       "Session": {
         "properties": {
           "curator": {
@@ -2182,6 +3571,39 @@
           "password"
         ],
         "title": "SignIn",
+        "type": "object"
+      },
+      "SourceChange": {
+        "properties": {
+          "citation": {
+            "default": "",
+            "title": "Citation",
+            "type": "string"
+          },
+          "download_hint": {
+            "default": "",
+            "title": "Download Hint",
+            "type": "string"
+          },
+          "download_page": {
+            "default": "",
+            "title": "Download Page",
+            "type": "string"
+          },
+          "fresh_days": {
+            "title": "Fresh Days",
+            "type": "integer"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fresh_days"
+        ],
+        "title": "SourceChange",
         "type": "object"
       },
       "SourceRow": {
@@ -2224,6 +3646,93 @@
           "missing_since"
         ],
         "title": "SourceRow",
+        "type": "object"
+      },
+      "StatisticsSourceView": {
+        "properties": {
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "datasets": {
+            "title": "Datasets",
+            "type": "integer"
+          },
+          "download_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Hint"
+          },
+          "download_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Page"
+          },
+          "fresh_days": {
+            "title": "Fresh Days",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "newest_period": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest Period"
+          },
+          "series": {
+            "title": "Series",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "issuer",
+          "name",
+          "citation",
+          "fresh_days",
+          "download_page",
+          "download_hint",
+          "datasets",
+          "series",
+          "newest_period"
+        ],
+        "title": "StatisticsSourceView",
         "type": "object"
       },
       "StatusRow": {
@@ -3868,6 +5377,969 @@
         "summary": "Held",
         "tags": [
           "reads"
+        ]
+      }
+    },
+    "/api/v1/market/companies": {
+      "get": {
+        "operationId": "companies_api_v1_market_companies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "register",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Register",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "business_type",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Business Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Companies",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/companies/{company_id}": {
+      "get": {
+        "operationId": "company_api_v1_market_companies__company_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "company_id",
+            "required": true,
+            "schema": {
+              "title": "Company Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Company",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/datasets": {
+      "get": {
+        "operationId": "datasets_api_v1_market_datasets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "industry",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Industry",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Datasets",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/datasets/{dataset_id}": {
+      "get": {
+        "description": "A dataset with a page of its series.",
+        "operationId": "dataset_api_v1_market_datasets__dataset_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dataset_id",
+            "required": true,
+            "schema": {
+              "title": "Dataset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Dataset",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/overview": {
+      "get": {
+        "operationId": "market_overview_api_v1_market_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Market Overview",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/registers/{register_id}/links": {
+      "put": {
+        "description": "Replace a register's curated links; published at once.",
+        "operationId": "set_register_links_api_v1_market_registers__register_id__links_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "register_id",
+            "required": true,
+            "schema": {
+              "title": "Register Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterLinksChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Register Links",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/releases": {
+      "get": {
+        "description": "Press releases, newest first; `from` and `to` bound their published date.",
+        "operationId": "releases_api_v1_market_releases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleasePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Releases",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/releases/{release_id}": {
+      "get": {
+        "operationId": "release_api_v1_market_releases__release_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Release",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/reports": {
+      "get": {
+        "operationId": "reports_api_v1_market_reports_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReportRow"
+                  },
+                  "title": "Response Reports Api V1 Market Reports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reports",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/reports/{report_id}": {
+      "get": {
+        "description": "A report with a page of its passages, each with what it names.",
+        "operationId": "report_api_v1_market_reports__report_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Report",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/sectors/{sector_id}": {
+      "put": {
+        "description": "Add a sector, or replace its names and industries; published at once.",
+        "operationId": "set_sector_api_v1_market_sectors__sector_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sector_id",
+            "required": true,
+            "schema": {
+              "title": "Sector Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectorChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Sector",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/sectors/{sector_id}/withdraw": {
+      "post": {
+        "operationId": "withdraw_sector_api_v1_market_sectors__sector_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sector_id",
+            "required": true,
+            "schema": {
+              "title": "Sector Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reason"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Sector",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/series/{series_id}": {
+      "get": {
+        "description": "A series with every observation, oldest first.",
+        "operationId": "market_series_api_v1_market_series__series_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "title": "Series Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Market Series",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/sources": {
+      "get": {
+        "description": "Registers and statistics sources with their curated links, the industries and the sectors.",
+        "operationId": "market_sources_api_v1_market_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSources"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Market Sources",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{source_id}": {
+      "put": {
+        "operationId": "set_source_api_v1_market_sources__source_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Source",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{source_id}/industries/{name}": {
+      "put": {
+        "description": "Add an industry as its source names it, or replace its links; published at once.",
+        "operationId": "set_industry_api_v1_market_sources__source_id__industries__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IndustryChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Industry",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{source_id}/industries/{name}/withdraw": {
+      "post": {
+        "operationId": "withdraw_industry_api_v1_market_sources__source_id__industries__name__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reason"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Industry",
+        "tags": [
+          "market"
         ]
       }
     },

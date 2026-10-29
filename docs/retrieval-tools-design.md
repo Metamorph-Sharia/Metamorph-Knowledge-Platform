@@ -47,7 +47,7 @@
 | `find_series` | Which statistics measure this? | `published_market.dataset`, `series` |
 | `get_observations` | The figures of these series over these periods | `published_market.observation` |
 | `find_companies` | Who is licensed, registered or gone, and since when; what OJK announced about them | `published_market.company`, `entity`, `register`; `mention`, `release` |
-| `industry_context` | For an industry: its registers, governing regulations, reports and datasets | `published_market.industry` (published since 2026-10-28) |
+| `industry_context` | For an industry: its registers, governing regulations, reports and datasets | `published_market.sector` and `industry` |
 
 ### `search_documents`
 
@@ -191,6 +191,7 @@ The agent writes the answer from these results, citing each `ref` and series, an
 |---|---|---|
 | Reports and their passages: `published_market.report`, `report_passage` | Reports in `search_documents` and `get_provision` | [market-data-layer-plan.md](market-data-layer-plan.md), Phase 4 |
 | `published_market.industry`: each curated industry with its registers, regulations, reports and datasets | `industry_context` | **Done** (Phase 4, Step 6, migration 0020) |
+| `published_market.sector`: one curated industry across the sources' names, with what its industries link | `industry_context`'s starting point | **Done** (migration 0022, [market-curation-plan.md](market-curation-plan.md)); curators define the sectors |
 | `reports[]` on `published_market.register` and `dataset`; a report's `discusses[]` | Reports from the market side, and from a report to the regulations it discusses | `reports[]` **done** (migration 0020). `discusses[]` is curation's; mentions (below) give the regulations a passage names |
 | Releases and their passages: `published_market.release`, `release_passage` | Releases in `search_documents` and `get_provision` | **Done** (Phase 5, migration 0021) |
 | `published_market.mention`: the regulations and companies each report or release passage names | `follow_links` with `named_by`; `find_companies` with `announcements` | **Done** (Phase 5, migration 0021) |
@@ -198,7 +199,7 @@ The agent writes the answer from these results, citing each `ref` and series, an
 ## Open questions
 
 1. **The embedding model and where it runs.** It must handle Indonesian legal text well, and Arabic for fatwas would be a bonus. It runs locally first and on AWS later (deferred). To choose by the evaluation set, between a hosted multilingual model and an open one.
-2. **One list of industries across sources.** `market.industry` is keyed by each source's own names. `industry_context` wants one curated industry (e.g. "sharia fintech lending") mapped to each source's names.
+2. **One list of industries across sources.** *Settled 2026-10-29:* `published_market.sector` is one curated industry (e.g. `sharia-banking`) gathering each source's names, with what they link ([market-curation-plan.md](market-curation-plan.md)). Curators define the sectors in the console; none exists yet.
 3. **The `sharia` force of a fatwa** that no regulation adopts. Is it `sharia` or `guidance`? For the project owner, with legal advice.
 4. **Report passage size,** from Phase 4's Step 0b, and whether reports need a heading-aware split later (a general option in `metamorph-pdf-text`).
 5. **A read-only SQL tool over a few market views,** for analysts' questions the seven tools don't cover. It waits for a need: open-ended SQL is harder to test and to guard.

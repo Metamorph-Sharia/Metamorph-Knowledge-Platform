@@ -123,3 +123,21 @@ def test_a_curator_uploads_a_file_straight_to_the_store_and_adds_a_document(sett
         f"/api/v1/documents/dsnmui:fatwa:170/content/{hashlib.sha256(b'%PDF-1.7 Fatwa 170').hexdigest()}", headers=auth
     )
     assert httpx.get(file_link.json()["url"]).content == b"%PDF-1.7 Fatwa 170"
+
+
+def test_a_curator_changes_a_register_s_links_and_the_sources_page_shows_them_published(settings) -> None:
+    with psycopg.connect(settings.database_url, autocommit=True) as connection:
+        migrate(connection)
+    client, auth = session(settings)
+
+    response = client.put("/api/v1/market/registers/ojk:lpbbti/links", headers=auth, json={
+        "governed_by": ["ojk:pojk:2024:40"], "reports": ["ojk:roadmap:2023:lpbbti"], "fresh_days": 45,
+        "reason": "SEOJK 19/2025 implements POJK 40/2024; it does not govern the register"})
+
+    assert response.status_code == 200
+    (register,) = response.json()["sources"]["registers"]
+    assert (register["governed_by"], register["fresh_days"]) == (["ojk:pojk:2024:40"], 45)
+    assert client.get("/api/v1/market/sources", headers=auth).json()["registers"] == [register]
+    with psycopg.connect(settings.database_url) as connection:
+        assert connection.execute("SELECT author, action FROM curation.audit_log").fetchall() == [
+            ("ani", "market.set_register_links")]

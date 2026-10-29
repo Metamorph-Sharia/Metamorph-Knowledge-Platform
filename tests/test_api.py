@@ -28,12 +28,14 @@ from fakes import (
     MemoryReviewQueue,
 )
 from fastapi.testclient import TestClient
+from market_curation_samples import JournalledRelink, MemoryMarketCuration, MemoryMarketViews, MemoryPublishedNames
 
 from metamorph_platform.adapters.api.accounts import Accounts, hash_password
 from metamorph_platform.adapters.api.app import ApiServices, create_api
 from metamorph_platform.adapters.api.tokens import TOKEN_LIFETIME
 from metamorph_platform.application.add_manual_document import AddManualDocument
 from metamorph_platform.application.curate import CorrectText, Curate
+from metamorph_platform.application.curate_market import CurateMarket
 from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.ports import CorrectableText
 
@@ -85,6 +87,8 @@ def world(accounts):
         publish=CountingPublish(),
         blobs=MemoryBlobReader({"blobs/bb/gappy": GAPPY_TEXT.encode(), "blobs/cc/fixed": FIXED_TEXT.encode()}),
         files=MemoryFileLinks(),
+        market_views=MemoryMarketViews(),
+        curate_market=CurateMarket(MemoryMarketCuration([]), MemoryPublishedNames(), JournalledRelink([])),
     )
 
     @contextmanager

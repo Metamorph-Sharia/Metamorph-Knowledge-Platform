@@ -16,6 +16,8 @@ from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks, 
 from metamorph_platform.adapters.postgres.health import PostgresHealth
 from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, PostgresRegistry, PostgresReviewQueue
 from metamorph_platform.adapters.postgres.market import PostgresMarket, PostgresPublishedMarket
+from metamorph_platform.adapters.postgres.market_curation import PostgresMarketCuration
+from metamorph_platform.adapters.postgres.market_views import PostgresMarketViews
 from metamorph_platform.adapters.postgres.publishing import PostgresPublication
 from metamorph_platform.adapters.postgres.reviews import PostgresOpenReviews
 from metamorph_platform.adapters.postgres.views import PostgresCurationViews
@@ -23,11 +25,13 @@ from metamorph_platform.application.add_manual_document import AddManualDocument
 from metamorph_platform.application.check_health import CheckHealth
 from metamorph_platform.application.compute_validity import ComputeValidity
 from metamorph_platform.application.curate import CorrectText, Curate
+from metamorph_platform.application.curate_market import CurateMarket
 from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.load_market_bundle import LoadMarketBundle
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.publish import Publish
 from metamorph_platform.application.publish_market import PublishMarket
+from metamorph_platform.application.relink_market import RelinkMarket
 from metamorph_platform.application.resolve_citations import ResolveCitations
 from metamorph_platform.application.settle_reviews import SettleReviews
 from metamorph_platform.config import Settings
@@ -65,6 +69,15 @@ def publish_market(connection: psycopg.Connection, settings: Settings) -> Publis
     return PublishMarket(
         source=PostgresMarket(connection), published=PostgresPublishedMarket(connection), blobs=blob_store(settings)
     )
+
+
+def relink_market(connection: psycopg.Connection) -> RelinkMarket:
+    return RelinkMarket(source=PostgresMarket(connection), published=PostgresPublishedMarket(connection))
+
+
+def curate_market(connection: psycopg.Connection) -> CurateMarket:
+    curation = PostgresMarketCuration(connection)
+    return CurateMarket(actions=curation, published=curation, relink=relink_market(connection))
 
 
 def publish(connection: psycopg.Connection, settings: Settings) -> Publish:
@@ -112,6 +125,8 @@ def api_services(settings: Settings) -> ApiServicesFactory:
                 publish=publish(connection, settings),
                 blobs=blobs,
                 files=file_links(settings),
+                market_views=PostgresMarketViews(connection),
+                curate_market=curate_market(connection),
             )
 
     return open_services

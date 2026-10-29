@@ -19,18 +19,38 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Protocol, TypeVar
 
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from metamorph_platform.adapters.api.accounts import Accounts
 from metamorph_platform.adapters.api.tokens import TOKEN_LIFETIME, InvalidToken, issue, verify
 from metamorph_platform.application.add_manual_document import AddManualDocument
 from metamorph_platform.application.curate import CorrectText, Curate
+from metamorph_platform.application.curate_market import CurateMarket
+from metamorph_platform.application.market_views import (
+    BUSINESS_TYPES,
+    COMPANY_STATUSES,
+    CompanyFilters,
+    CompanyPage,
+    CompanyView,
+    DatasetFilters,
+    DatasetPage,
+    DatasetView,
+    IndustryName,
+    MarketOverview,
+    MarketSources,
+    MarketViews,
+    ReleasePage,
+    ReleaseView,
+    ReportRow,
+    ReportView,
+    SeriesView,
+)
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.ports import BlobReader, CurationRefused, Curator
 from metamorph_platform.application.publish import Publish
@@ -84,6 +104,8 @@ class ApiServices:
     publish: Publish
     blobs: BlobReader
     files: FileLinks
+    market_views: MarketViews
+    curate_market: CurateMarket
 
 
 ServicesFactory = Callable[[], AbstractContextManager[ApiServices]]
@@ -182,6 +204,40 @@ class NewDocument(Reason):
     file_name: str
     media_type: str = "application/octet-stream"
     upload_key: str
+
+
+class RegisterLinksChange(Reason):
+    governed_by: list[str] = []  # document IDs, e.g. ojk:pojk:2024:40
+    reports: list[str] = []  # report IDs or families, e.g. ojk:lpksi
+    fresh_days: int
+
+
+class IndustryChange(Reason):
+    # the industry takes the register's regulations, or its own: not both. `register` in JSON; the field is named
+    # otherwise, since pydantic models have a `register` of their own
+    register_id: str | None = Field(default=None, alias="register")
+    governed_by: list[str] = []
+    reports: list[str] = []
+
+
+class SourceChange(Reason):
+    citation: str = ""
+    fresh_days: int
+    download_page: str = ""  # where a curator downloads an edition by hand
+    download_hint: str = ""
+
+
+class SectorChange(Reason):
+    name: str
+    name_en: str = ""
+    industries: list[IndustryName]  # in the curator's order
+
+
+class MarketChange(BaseModel):
+    """A change to the curated links, as published: what it named that is not published, and the sources page."""
+
+    warnings: list[str]
+    sources: MarketSources
 
 
 class Unauthorized(Exception):
@@ -410,6 +466,107 @@ def create_api(
         svc.publish.run()
         return Done(done=body.state)
 
+    # --- the market layer: its pages' reads, and changes to its curated links ---------------------------------
+
+    @router.get("/market/overview", tags=["market"])
+    def market_overview(who: Who, svc: Services) -> MarketOverview:
+        return svc.market_views.overview()
+
+    @router.get("/market/sources", tags=["market"])
+    def market_sources(who: Who, svc: Services) -> MarketSources:
+        """Registers and statistics sources with their curated links, the industries and the sectors."""
+        return svc.market_views.sources()
+
+    @router.get("/market/companies", tags=["market"])
+    def companies(
+        who: Who, svc: Services, q: str = "", register: str = "", status: str = "", business_type: str = "",
+        page: int = 1,
+    ) -> CompanyPage:
+        _chosen(status, COMPANY_STATUSES, "company status")
+        _chosen(business_type, BUSINESS_TYPES, "business type")
+        filters = CompanyFilters(register or None, status or None, business_type or None)
+        return svc.market_views.companies(q.strip(), filters, max(page, 1))
+
+    @router.get("/market/companies/{company_id}", tags=["market"])
+    def company(who: Who, svc: Services, company_id: str) -> CompanyView:
+        return _found(svc.market_views.company(company_id), f"no company {company_id}")
+
+    @router.get("/market/datasets", tags=["market"])
+    def datasets(
+        who: Who, svc: Services, q: str = "", source: str = "", industry: str = "", page: int = 1
+    ) -> DatasetPage:
+        return svc.market_views.datasets(q.strip(), DatasetFilters(source or None, industry or None), max(page, 1))
+
+    @router.get("/market/datasets/{dataset_id}", tags=["market"])
+    def dataset(who: Who, svc: Services, dataset_id: str, page: int = 1) -> DatasetView:
+        """A dataset with a page of its series."""
+        return _found(svc.market_views.dataset(dataset_id, max(page, 1)), f"no dataset {dataset_id}")
+
+    @router.get("/market/series/{series_id}", tags=["market"])
+    def market_series(who: Who, svc: Services, series_id: str) -> SeriesView:
+        """A series with every observation, oldest first."""
+        return _found(svc.market_views.series(series_id), f"no series {series_id}")
+
+    @router.get("/market/reports", tags=["market"])
+    def reports(who: Who, svc: Services) -> list[ReportRow]:
+        return list(svc.market_views.reports())
+
+    @router.get("/market/reports/{report_id}", tags=["market"])
+    def report(who: Who, svc: Services, report_id: str, page: int = 1) -> ReportView:
+        """A report with a page of its passages, each with what it names."""
+        return _found(svc.market_views.report(report_id, max(page, 1)), f"no report {report_id}")
+
+    @router.get("/market/releases", tags=["market"])
+    def releases(
+        who: Who, svc: Services, q: str = "", published_from: Annotated[date | None, Query(alias="from")] = None,
+        published_to: Annotated[date | None, Query(alias="to")] = None, page: int = 1,
+    ) -> ReleasePage:
+        """Press releases, newest first; `from` and `to` bound their published date."""
+        return svc.market_views.releases(q.strip(), published_from, published_to, max(page, 1))
+
+    @router.get("/market/releases/{release_id}", tags=["market"])
+    def release(who: Who, svc: Services, release_id: str) -> ReleaseView:
+        return _found(svc.market_views.release(release_id), f"no release {release_id}")
+
+    def market_changed(svc: ApiServices, warnings: tuple[str, ...]) -> MarketChange:
+        return MarketChange(warnings=list(warnings), sources=svc.market_views.sources())
+
+    @router.put("/market/registers/{register_id}/links", tags=["market"])
+    def set_register_links(who: Who, svc: Services, register_id: str, body: RegisterLinksChange) -> MarketChange:
+        """Replace a register's curated links; published at once."""
+        warnings = svc.curate_market.set_register_links(who, register_id, body.governed_by, body.reports,
+                                                        body.fresh_days, body.reason)
+        return market_changed(svc, warnings)
+
+    @router.put("/market/sources/{source_id}", tags=["market"])
+    def set_source(who: Who, svc: Services, source_id: str, body: SourceChange) -> MarketChange:
+        warnings = svc.curate_market.set_source(who, source_id, body.citation, body.fresh_days, body.download_page,
+                                                body.download_hint, body.reason)
+        return market_changed(svc, warnings)
+
+    @router.put("/market/sources/{source_id}/industries/{name}", tags=["market"])
+    def set_industry(who: Who, svc: Services, source_id: str, name: str, body: IndustryChange) -> MarketChange:
+        """Add an industry as its source names it, or replace its links; published at once."""
+        warnings = svc.curate_market.set_industry(who, source_id, name, body.register_id, body.governed_by,
+                                                  body.reports, body.reason)
+        return market_changed(svc, warnings)
+
+    @router.post("/market/sources/{source_id}/industries/{name}/withdraw", tags=["market"])
+    def withdraw_industry(who: Who, svc: Services, source_id: str, name: str, body: Reason) -> MarketChange:
+        return market_changed(svc, svc.curate_market.withdraw_industry(who, source_id, name, body.reason))
+
+    @router.put("/market/sectors/{sector_id}", tags=["market"])
+    def set_sector(who: Who, svc: Services, sector_id: str, body: SectorChange) -> MarketChange:
+        """Add a sector, or replace its names and industries; published at once."""
+        industries = [(industry.source, industry.name) for industry in body.industries]
+        return market_changed(
+            svc, svc.curate_market.set_sector(who, sector_id, body.name, body.name_en, industries, body.reason)
+        )
+
+    @router.post("/market/sectors/{sector_id}/withdraw", tags=["market"])
+    def withdraw_sector(who: Who, svc: Services, sector_id: str, body: Reason) -> MarketChange:
+        return market_changed(svc, svc.curate_market.withdraw_sector(who, sector_id, body.reason))
+
     app.include_router(router)
 
     @app.exception_handler(Unauthorized)
@@ -439,6 +596,11 @@ def _found(value: T | None, missing: str) -> T:
     if value is None:
         raise NotFound(missing)
     return value
+
+
+def _chosen(value: str, choices: tuple[str, ...], what: str) -> None:
+    if value and value not in choices:
+        raise NotFound(f"no {what} {value}: {', '.join(choices[:-1])} or {choices[-1]}")
 
 
 def _diff(source: str, corrected: str) -> list[str]:

@@ -15,7 +15,7 @@ from metamorph_market import LicensedEntityRecord, Listing
 
 from metamorph_platform.domain.market.companies import Company, companies
 from metamorph_platform.domain.market.history import HeldLicense, edition_changes, review_notes, standing
-from metamorph_platform.domain.market.links import PublishedIndustry
+from metamorph_platform.domain.market.links import PublishedIndustry, PublishedSector
 from metamorph_platform.domain.market.releases import Releases
 from metamorph_platform.domain.market.reports import Reports
 from metamorph_platform.domain.market.statistics import Statistics
@@ -112,6 +112,7 @@ class MarketPublication:
     industries: tuple[PublishedIndustry, ...] = ()
     releases: Releases = field(default_factory=Releases)
     mentions: tuple[Mention, ...] = ()  # what each passage of a report or a release names
+    sectors: tuple[PublishedSector, ...] = ()  # curated industries across sources (market.sector)
 
 
 def publication(

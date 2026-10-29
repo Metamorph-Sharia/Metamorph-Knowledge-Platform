@@ -62,18 +62,18 @@ class PublishMarket:
         self.series_per_part = series_per_part
 
     def run(self) -> MarketPublishReport:
-        registers, keys = self.source.register_infos(), self.source.storage_keys()
-        built = publication(registers, self.source.current_records(), keys)
-        links = self.source.industry_links()
+        keys = self.source.storage_keys()
         records = self.source.current_reports()
         cut = reports(records, self._texts(records, keys), keys)
         announced = releases(self.source.current_releases(), keys)
-        named = mentions(_passages(cut, announced), built.companies)
-        with self.published.replacing() as writer:
+        with self.published.replacing() as writer:  # the curated links are read under the publish lock
+            registers, links = self.source.register_infos(), self.source.industry_links()
+            built = publication(registers, self.source.current_records(), keys)
+            named = mentions(_passages(cut, announced), built.companies)
             datasets, series, observations = self._add_statistics(writer, registers, links, cut, keys)
             whole = replace(built, statistics=Statistics(datasets, (), ()), reports=cut, releases=announced,
                             mentions=tuple(named))
-            writer.add(with_links(whole, registers, links))
+            writer.add(with_links(whole, registers, links, self.source.sector_definitions()))
         return MarketPublishReport(
             len(built.registers), len(built.editions), len(built.companies), len(built.entities),
             len(datasets), series, observations,

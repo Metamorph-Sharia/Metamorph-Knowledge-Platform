@@ -3,9 +3,14 @@
 Each job runs in its connector's own image (built from the connector's repository):
   1. collect   the connector's scheduled run, then `export` of its bundle into /bundles, even when the run
                raised alerts, so the platform always gets the latest full snapshot
-  2. load      in the platform image, into the connector's layer: `metamorph load` (regulations, contract v2,
-               then the registry build) or `metamorph market load --publish` (market data, market contract)
+  2. load      in the platform image, into the connector's layer: `metamorph load` (regulations, contract v2) or
+               `metamorph market load` (market data, market contract). Its success updates the layer's registry,
+               an Airflow Dataset, which triggers the DAG that publishes it
   3. discard   the bundle, once it is loaded (a failed load keeps it for inspection)
+
+The layers, as Airflow Datasets, so the UI draws each from its connectors to what is published:
+  regulation connectors → REGISTRY        → registry_build → PUBLISHED         (`published`)
+  market connectors     → MARKET_REGISTRY → market_publish → PUBLISHED_MARKET  (`published_market`)
 
 The connectors keep their state (SQLite stores, downloaded files) in their repositories' data/
 directories, bind-mounted, so a scheduled run and a person's CLI run see the same store.
@@ -16,7 +21,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-PLATFORM_IMAGE = "metamorph-platform:dev"  # the platform's tasks: load, build, health
+PLATFORM_IMAGE = "metamorph-platform:dev"  # the platform's tasks: load, build, publish, health
+REGISTRY = "metamorph://registry"  # the regulation layer's system of record (`registry`)
+PUBLISHED = "metamorph://published"  # its read contract
+MARKET_REGISTRY = "metamorph://market-registry"  # the market layer's system of record (`market`)
+PUBLISHED_MARKET = "metamorph://published-market"  # its read contract
 BUNDLES = "/bundles"
 BUNDLES_VOLUME = "metamorph-bundles"
 EXPORT_FAILED = 3  # the collect task's exit code when no bundle could be written
@@ -45,7 +54,7 @@ class Mount:
 
 class Layer(StrEnum):
     REGULATION = "regulation"  # contract v2 bundles: `metamorph load`, then the registry build
-    MARKET = "market"  # market contract bundles: `metamorph market load --publish`
+    MARKET = "market"  # market contract bundles: `metamorph market load`, then market_publish
 
 
 @dataclass(frozen=True)
@@ -95,7 +104,12 @@ def collect_command(job: ConnectorJob, run_id: str, since: str = "") -> list[str
 def load_command(job: ConnectorJob, run_id: str) -> list[str]:
     """The platform's command for the job's bundle, in the job's layer."""
     bundle = bundle_path(job.connector, run_id)
-    return ["market", "load", bundle, "--publish"] if job.layer is Layer.MARKET else ["load", bundle]
+    return ["market", "load", bundle] if job.layer is Layer.MARKET else ["load", bundle]
+
+
+def registry_of(job: ConnectorJob) -> str:
+    """The registry a job's load updates: the Dataset whose DAG publishes it."""
+    return MARKET_REGISTRY if job.layer is Layer.MARKET else REGISTRY
 
 
 def discard_command(job: ConnectorJob, run_id: str) -> list[str]:

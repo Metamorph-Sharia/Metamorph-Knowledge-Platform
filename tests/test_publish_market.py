@@ -63,6 +63,9 @@ class MemoryMarketSource:
     def citations(self) -> dict[str, str]:
         return {"ojk:portal": "Otoritas Jasa Keuangan, data.ojk.go.id"}
 
+    def sector_definitions(self) -> list:
+        return []
+
 
 class MemoryPublishedMarket:
     """Keeps what each publish writes: its statistics part by part, then the rest."""

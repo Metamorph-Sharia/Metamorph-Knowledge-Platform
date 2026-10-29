@@ -268,11 +268,17 @@ class PostgresCurationViews:
             return f"Cites “{subject.get('target_text', '')}”, which names no document"
         if kind == "quarantine":
             row = self.connection.execute(
-                "SELECT problems FROM ingest.quarantine WHERE bundle_id = %s AND line = %s",
+                "SELECT q.problems, q.source_id, b.connector FROM ingest.quarantine q "
+                "JOIN ingest.bundle b ON b.id = q.bundle_id WHERE q.bundle_id = %s AND q.line = %s",
                 (subject.get("bundle_id"), subject.get("line")),
             ).fetchone()
-            problems = "; ".join(row[0][:PROBLEMS_SHOWN]) if row else "the line is no longer in the quarantine"
-            return f"Bundle {subject.get('bundle_id')}, line {subject.get('line')}: {problems}"
+            if row is None:
+                return f"Bundle {subject.get('bundle_id')}, line {subject.get('line')}: the line is no longer in the " \
+                       "quarantine"
+            problems, source_id, connector = row
+            named = f", {source_id}" if source_id else ""
+            return f"Bundle {subject.get('bundle_id')} ({connector}), line {subject.get('line')}{named}: " \
+                   f"{'; '.join(problems[:PROBLEMS_SHOWN])}"
         if kind == "conflict":
             row = self.connection.execute(
                 "SELECT o.field, o.value, c.source_value FROM curation.override o "

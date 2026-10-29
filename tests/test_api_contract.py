@@ -14,9 +14,12 @@ def test_the_committed_openapi_document_is_the_apis() -> None:
 
 
 def test_every_curation_capability_is_in_the_contract() -> None:
-    """The design's tables (docs/curation-web-separation-design.md): 9 reads, 14 actions, and signing in."""
+    """The design's tables (docs/curation-web-separation-design.md): 9 reads, 14 actions, and signing in. The market's
+    (docs/market-curation-plan.md): 11 reads, 4 changes that replace a curated link, 2 that withdraw one."""
     operations = [(method, path) for path, item in openapi_document()["paths"].items() for method in item]
+    market = [(method, path) for method, path in operations if path.startswith("/api/v1/market/")]
 
-    assert sum(method == "get" for method, _ in operations) == 13
-    assert sum(method == "post" for method, _ in operations) == 15
+    assert sum(method == "get" for method, _ in operations) == 13 + 11
+    assert sum(method == "post" for method, _ in operations) == 15 + 2
     assert ("post", "/api/v1/documents/{document_id}/texts/{text_sha256}/correction") in operations
+    assert sorted(method for method, _ in market) == ["get"] * 11 + ["post"] * 2 + ["put"] * 4

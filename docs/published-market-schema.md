@@ -7,13 +7,16 @@ The Knowledge and Retrieval layer reads market data **only** from `published_mar
 - **statistics:** each dataset linked to the regulations that govern its industry, and each series with its periods: months, quarters, half-years or years;
 - **reports:** regulators' reports, roadmaps and masterplans, cut into passages with their pages. **A report has no legal force.**
 - **releases:** OJK's press releases since 2020, cut into passages. **A release has no legal force.**
-- **mentions:** the regulations and companies each passage of a report or a release names.
+- **mentions:** the regulations and companies each passage of a report or a release names;
+- **industries and sectors:** the curated links from a market question to the law and the reports. A sector gathers industries the sources name differently.
 
 What the registers and statistics say comes from the market connectors under the [market contract](../packages/metamorph-market-contract/MARKET_CONTRACT.md): `ojk-register` for the register, `ojk-stats` for OJK's portal statistics, `bi-stats` for BI's SEKI tables and `bps-stats` for BPS's dynamic tables, and `reports` for regulators' reports (LPKSI, KEKSI, roadmaps) and OJK's press releases. The plan behind it is [market-data-layer-plan.md](market-data-layer-plan.md).
 
 ## How it is refreshed
 
 `metamorph market publish` rebuilds the whole schema in one transaction, registers, statistics, reports, releases and mentions together, from every record the connectors' latest snapshots still send. Readers see the old schema or the new one, never a mix. A register holds hundreds of records, and a company or a standing depends on every record of its register, so there is no per-row change log. `register.published_at` says when the schema was last rebuilt: re-read after it changes. BPS's connector sends only the tables BPS changed, each whole; the others stay as last loaded.
+
+A curator's change to a curated link (in the curation console, [market-curation-plan.md](market-curation-plan.md)) is published at once by a links-only publish, in the same transaction as the change. It rewrites what the links decide: `register.governed_by` and `reports`; each dataset's `register`, `governed_by`, `reports` and `citation`; and `industry` and `sector` whole. It uses the same rules as a full publish, so the next one writes the same. `industry.published_at` and `sector.published_at` say when the links were last published. The two publishes hold one lock, so neither writes over what the other read.
 
 ## Tables
 
@@ -27,6 +30,7 @@ What the registers and statistics say comes from the market connectors under the
 | `dataset` | one of a source's tables (a portal cube, a SEKI table, a BPS table) | `id` (`ojk:portal:bu_syariah_posisikeuangan`, `bi:seki:tabel1_1`, `bps:table:2263`), `source` (`ojk:portal`, `bi:seki`, `bps:table`), `industry` (null for a macro dataset), `group`, `metric` (as the source names them), `register` (its industry's register, if any), `governed_by[]`, `series`, `first_period`, `last_period`, `updated` (the source's last update), `url` (the page that shows it), `citation` (how the source asks to be cited), `reports[]` (its industry's reports), `published_at` |
 | `series` | one statistic over time | `id`, `dataset`, `measure`, `label` (the measure and its members, e.g. `Posisi Keuangan: 003. 1. Kas dan Setara Kas`), `dimensions` (`[{name, key, label}]`), `frequency` (`monthly`, `quarterly`, `semiannual`, `annual`), `unit` (as the source states it, or null), `first_period`, `last_period`, `observations` |
 | `industry` | industry as a statistics source names it, curated | `source`, `name`, `register`, `governed_by[]` (its register's regulations, or its own), `reports[]`, `datasets[]`, `published_at`. **The bridge from a market question to the law and the reports** |
+| `sector` | curated sector: one industry across the sources' own names (e.g. `sharia-banking`) | `id`, `name` (Indonesian), `name_en`, `industries` (`[{source, name}]`, in the curator's order), `registers[]`, `governed_by[]`, `reports[]`, `datasets[]`: what its industries link, each once. **Where `industry_context` starts** |
 | `report` | regulator's report, roadmap or masterplan | `id` (`ojk:lpksi:2025`, `ojk:roadmap:2023:rp3si`), `issuer`, `family` (`lpksi`, `keksi`, `roadmap`), `edition` (as titled), `title`, `published_on`, `language`, `url` (the page that lists it), `citation` (the issuer and the title), `pages`, `passages`, `method` (`text_layer`, or `ocr` when any page was read by OCR), `storage_key` (the PDF), `published_at` |
 | `report_passage` | passage of a report: what to read, cite and embed | `report`, `address` (`p-1`, `p-2`… in reading order), `ordinal`, `page_start`, `page_end`, `text` (about 250 to 400 words), `words` |
 | `release` | regulator's press release | `id` (`ojk:siaran-pers:2026:ojk-cabut-izin-usaha-pt-porto-ventura-kapital`), `issuer`, `number` (as printed, e.g. `SP 188/DKPU/OJK/X/2026`; null when it has none), `title` (as listed), `published_on`, `language`, `url` (its page), `citation`, `passages`, `storage_key` (its body as published), `published_at` |

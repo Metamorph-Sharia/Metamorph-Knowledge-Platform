@@ -14,6 +14,7 @@
   - **BPS is live on what is collected:** 1,205 tables, 229,500 series and 3,634,515 observations are published from the 1,269 of 1,758 tables kept (60% of the table-years). The rest comes from `ingest_bps_stats`, an hour a week, or sooner from the backfill container (`BPS-Stats-Connector/scripts/backfill start`, about 9 hours at its last pace), resumed by the project owner.
   - **Cross-checked:** BPS's inflation and GDP equal SEKI's to the digit.
 - **Phase 4, the regulators' reports, is live (2026-10-28):** 13 reports, 1,943 passages, linked to every sharia industry. AWS (Step 8) is deferred with the others. Earlier, it was planned as: LPKSI, KEKSI and two roadmaps as a reports module of their own in the market layer, kept out of the regulation layer (decided), collected by `reports sync` from OJK's LPKSI listing and by `reports import` for the rest (decided). The first reports are LPKSI 2016–2025, KEKSI, RP3SI and Roadmap LPBBTI (decided); building started 2026-10-28. The retrieval tools that serve both layers to an answering agent are drafted in [retrieval-tools-design.md](retrieval-tools-design.md).
+- **Airflow, 2026-10-29:** a market DAG's load no longer publishes in its own task. It updates the `metamorph://market-registry` Dataset, which triggers `market_publish` (`metamorph market publish`, updating `metamorph://published-market`), so Airflow's DAG Dependencies view draws the layer from its connectors to `published_market`, as it does the regulation layer ([dags/README.md](../dags/README.md)). The steps below say `market load --publish` as they were built.
 - **Phase 5, OJK's press releases, is live (2026-10-28):** 1,178 releases since 2020, 3,685 passages, and 2,232 mentions of regulations and companies across reports and releases. It brings a `release` record kind, `Reports-Connector` 0.2.0, and migration 0021. `ingest_reports` loads and publishes them weekly, and a second run is unchanged. AWS (Step 7) is deferred with the others.
 
 Decided on 2026-10-27:
@@ -939,6 +940,8 @@ Derived by the platform for **every report and every release**: LPKSI names POJK
 ## The curation console: market pages (to design)
 
 The [curation console](../../Metamorph-Curation-Web/README.md) has no market pages yet. What they must do is gathered here as it comes up, and settled when they are designed.
+
+**Built on 2026-10-29, by [market-curation-plan.md](market-curation-plan.md):** the market pages (requirements 1 and 2 met: SEKI's download on the Sources and Links page, a reader for reports and releases), curating the links, and sectors, one list of industries across the sources.
 
 **1. Where to download SEKI's edition** (the project owner, 2026-10-28). Since option A, a curator downloads each month's SEKI edition by hand. To keep that easy to maintain, the console shows it beside the `bi:seki` source:
 - **the addresses:** the [SEKI page](https://www.bi.go.id/id/statistik/ekonomi-keuangan/seki/Default.aspx) and the edition's zip, `https://www.bi.go.id/id/statistik/ekonomi-keuangan/seki/Documents/SEKI_SEPTEMBER_2026.zip` for September 2026 (published 15 October);

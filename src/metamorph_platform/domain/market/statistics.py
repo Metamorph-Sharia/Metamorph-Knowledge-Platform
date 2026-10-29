@@ -135,9 +135,8 @@ def _dataset(
 ) -> PublishedDataset:
     series = records[0].series
     source = source_of(series.dataset)
-    link = linked.get((source, series.industry)) if series.industry else None
-    register = link.register if link else None
-    governed_by = registers.get(register, ()) if register else (link.governed_by if link else ())
+    register, governed_by = industry_regulations(linked.get((source, series.industry)) if series.industry else None,
+                                                 registers)
     periods = [observation.period for record in records for observation in record.observations]
     editions = [file.edition for record in records for file in record.files]
     return PublishedDataset(
@@ -155,6 +154,15 @@ def _dataset(
         url=records[0].source.url,
         citation=citations.get(source),
     )
+
+
+def industry_regulations(
+    link: IndustryLink | None, registers: Mapping[str, tuple[str, ...]]
+) -> tuple[str | None, tuple[str, ...]]:
+    """A dataset's register and regulations, by its industry's curated link: the register's, or the link's own."""
+    if link is None:
+        return None, ()
+    return link.register, registers.get(link.register, ()) if link.register else link.governed_by
 
 
 def _series(record: SeriesRecord) -> PublishedSeries:

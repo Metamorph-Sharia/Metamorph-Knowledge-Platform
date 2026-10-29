@@ -25,6 +25,14 @@ class InvalidCorrection(ValueError):
     """What a curator entered can't be applied; the message says what is expected."""
 
 
+def checked_reason(text: str) -> str:
+    """Every curation action needs a reason: the next reviewer reads it in the audit log."""
+    reason = " ".join(text.split())
+    if not reason:
+        raise InvalidCorrection("add a reason: the next reviewer will read it in the audit log")
+    return reason
+
+
 @dataclass(frozen=True)
 class ActiveOverride:
     id: int

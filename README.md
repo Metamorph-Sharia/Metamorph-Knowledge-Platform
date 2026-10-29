@@ -9,11 +9,11 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | Path | What it is |
 |---|---|
 | [packages/metamorph-contract](packages/metamorph-contract/CONTRACT_V2.md) | **Contract v2**: JSON Schemas (the formal contract) for the normalized document and bundle manifest, the matching Python types, validator and bundle writer/reader. Every connector depends on it |
-| [packages/metamorph-market-contract](packages/metamorph-market-contract/MARKET_CONTRACT.md) | **Market contract 1.0**: the market data layer's counterpart to contract v2. JSON Schemas, Python types and a bundle writer/reader for its two record kinds: `licensed_entity`, which `OJK-Register-Connector` exports, and `series`, which `OJK-Stats-Connector` exports ([plan](docs/market-data-layer-plan.md)) |
+| [packages/metamorph-market-contract](packages/metamorph-market-contract/MARKET_CONTRACT.md) | **Market contract 1.0**: the market data layer's counterpart to contract v2. JSON Schemas, Python types and a bundle writer/reader for its four record kinds: `licensed_entity` (`OJK-Register-Connector`), `series` (`OJK-Stats-Connector`, `BI-Stats-Connector`, `BPS-Stats-Connector`), and `report` and `release` (`Reports-Connector`) ([plan](docs/market-data-layer-plan.md)) |
 | [src/metamorph_platform](src/metamorph_platform) | The platform: `metamorph` CLI, PostgreSQL migrations (`adapters/postgres/migrations`). Layers follow the dependency rule, enforced by `tests/test_architecture.py` |
 | [compose.yaml](compose.yaml) | Local stack: PostgreSQL 16 + pgvector, SeaweedFS (S3), Airflow 2.10, and the platform image |
 | [docs/data-source-management-plan.md](docs/data-source-management-plan.md) | The phased plan for this layer |
-| [dags](dags/README.md) | Airflow DAGs: one ingest DAG per connector job, `registry_build`, `health` |
+| [dags](dags/README.md) | Airflow DAGs: one ingest DAG per connector job, `registry_build`, `market_publish`, `health` |
 | [docs/published-schema.md](docs/published-schema.md) | **The read contract** for the Knowledge and Retrieval layer: tables, IDs, provision addresses, links, validity |
 | [docs/published-market-schema.md](docs/published-market-schema.md) | **The market read contract** (`published_market`): registers, editions, companies, licenses and registrations, listings; statistics as datasets, series and observations. Loaded with `metamorph market load BUNDLE`, rebuilt with `metamorph market publish` |
 | [docs/curation-workflow-design.md](docs/curation-workflow-design.md) | The publish gate, held documents, approving as is, and text correction |
@@ -25,6 +25,7 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | [docs/deployment-architecture.md](docs/deployment-architecture.md) | The architecture as deployed with MinerU: the rings in each package, the composition roots, the services, what changes at deployment, and why step 9 on SageMaker AI leaves it as it is |
 | [docs/mineru-extraction-plan.md](docs/mineru-extraction-plan.md) | MinerU extraction in every connector, text cleaning, parser 6 (huruf/angka) and the retrieval units: architecture, steps, validation |
 | [docs/market-data-layer-plan.md](docs/market-data-layer-plan.md) | The market data layer beside the regulation layer, for journey Phases 1 and 2: the phases, then each in detail. Phase 1 (closed): `OJK-Register-Connector`, OJK's monthly register of licensed fintech lenders. Phase 2: `OJK-Stats-Connector`, OJK's portal statistics for fintech lending and sharia banking. AWS is deferred until every phase is built |
+| [docs/market-curation-plan.md](docs/market-curation-plan.md) | Curating the market layer: its pages in the console, the curated links (registers, industries, statistics sources, sectors) kept through the curation API, each change published at once by a links-only publish |
 | [docs/curation-web-separation-design.md](docs/curation-web-separation-design.md) | The curation web app in its own repository (Next.js + TypeScript) over the curation JSON API; migration plan (Phases 1 to 3 built) |
 
 ## The database
@@ -74,7 +75,7 @@ Each step only does what is new, so a second `build` changes nothing.
 
 ## Run on a schedule (Airflow)
 
-Airflow only schedules. Every task is a container: a connector's own image collects and exports a bundle into the `metamorph-bundles` volume, then the platform image loads it. Each load triggers `registry_build` (`metamorph build`, then `metamorph health`).
+Airflow only schedules. Every task is a container: a connector's own image collects and exports a bundle into the `metamorph-bundles` volume, then the platform image loads it. A regulation load triggers `registry_build` (`metamorph build`, then `metamorph health`), and a market load triggers `market_publish` (`metamorph market publish`), each through its layer's registry Dataset ([how the DAGs depend on each other](dags/README.md)).
 
 | DAG | When | What |
 |---|---|---|
@@ -83,7 +84,9 @@ Airflow only schedules. Every task is a container: a connector's own image colle
 | `ingest_bi` | daily 03:00 | `src.cli sync` into BI's own database, then `src.pipeline.exporter_v2` |
 | `ingest_dsn_fatwa` | Mondays 04:00 | `dsn sync`, Arabic OCR, `dsn export` |
 | `ingest_dsn_fatwa_full` | 1st of the month | the same, re-downloading every file |
-| `registry_build` | after any load | `metamorph build`, then `metamorph health --fail-on critical` |
+| `ingest_ojk_register`, `ingest_ojk_stats`, `ingest_bi_seki`, `ingest_bps_stats`, `ingest_reports` | Mondays, 02:45–04:45 | The market data layer: each connector's collect and export, then `metamorph market load` |
+| `registry_build` | after any regulation load | `metamorph build`, then `metamorph health --fail-on critical` |
+| `market_publish` | after any market load | `metamorph market publish`: `published_market` rebuilt from the market registry |
 | `health` | daily 06:00 | `metamorph health --fail-on critical`: a connector that stopped loading never triggers a build |
 
 A run that raises alerts still exports and loads its snapshot. The collect task fails only at the connector's error exit code. The bundle is removed once it is loaded, and kept when the load fails. Failures go to the task log, and to `METAMORPH_ALERT_WEBHOOK_URL` when set.

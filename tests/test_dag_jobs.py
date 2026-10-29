@@ -10,7 +10,11 @@ import pytest
 from metamorph_pipeline.alerts import failure_message
 from metamorph_pipeline.jobs import (
     BUNDLES,
+    MARKET_REGISTRY,
     PLATFORM_IMAGE,
+    PUBLISHED,
+    PUBLISHED_MARKET,
+    REGISTRY,
     TASK_CONTAINER,
     ConnectorJob,
     Layer,
@@ -19,6 +23,7 @@ from metamorph_pipeline.jobs import (
     ingest_jobs,
     load_command,
     passed_on,
+    registry_of,
     task_family,
 )
 
@@ -81,9 +86,18 @@ def test_the_statistics_job_collects_from_the_portal_and_loads_into_the_market_l
 
 def test_a_bundle_loads_into_its_own_layer(jobs) -> None:
     assert load_command(jobs["ingest_ojk"], "r1") == ["load", "/bundles/ojk/r1"]
-    assert load_command(jobs["ingest_ojk_register"], "r1") == [
-        "market", "load", "/bundles/ojk-register/r1", "--publish",
-    ]
+    assert load_command(jobs["ingest_ojk_register"], "r1") == ["market", "load", "/bundles/ojk-register/r1"]
+
+
+def test_a_load_updates_its_layer_s_registry_which_its_own_dag_publishes(jobs) -> None:
+    registries = {job.dag_id: registry_of(job) for job in jobs.values()}
+
+    assert {registries[dag] for dag in ("ingest_ojk", "ingest_bpk", "ingest_bi", "ingest_dsn_fatwa")} == {REGISTRY}
+    assert {registries[dag] for dag in ("ingest_ojk_register", "ingest_ojk_stats", "ingest_bi_seki",
+                                        "ingest_bps_stats", "ingest_reports")} == {MARKET_REGISTRY}
+    assert (REGISTRY, MARKET_REGISTRY, PUBLISHED, PUBLISHED_MARKET) == (
+        "metamorph://registry", "metamorph://market-registry", "metamorph://published",
+        "metamorph://published-market")
 
 
 def test_each_connector_keeps_its_own_data_directory_and_ojk_its_token(jobs) -> None:

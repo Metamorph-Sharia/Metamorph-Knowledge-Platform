@@ -1,7 +1,7 @@
 """One DAG per connector job (metamorph_pipeline/jobs.py): collect and export → load → discard the bundle.
 
-A successful regulation load updates the `registry` Dataset, which triggers registry_build. A market load
-publishes its own layer (`metamorph market load --publish`).
+A successful load updates its layer's registry, a Dataset: `registry`, which triggers registry_build, or
+`market-registry`, which triggers market_publish.
 """
 
 from __future__ import annotations
@@ -16,16 +16,15 @@ from metamorph_pipeline.containers import container, host_path, platform
 from metamorph_pipeline.jobs import (
     BUNDLES,
     BUNDLES_VOLUME,
-    Layer,
     Mount,
     collect_command,
     discard_command,
     ingest_jobs,
     load_command,
     passed_on,
+    registry_of,
 )
 
-REGISTRY = Dataset("metamorph://registry")
 RUN_ID = "{{ ts_nodash }}"
 SINCE = "{{ prev_start_date_success.isoformat() if prev_start_date_success else '' }}"  # a failed run widens it
 DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_callback": on_failure}
@@ -50,7 +49,7 @@ for job in ingest_jobs(host_path("METAMORPH_WORKSPACE"), ojk_credentials=host_pa
             "load", load_command(job, RUN_ID),
             mounts=[Mount(BUNDLES_VOLUME, BUNDLES, kind="volume")],
             trigger_rule=TriggerRule.ALL_DONE,  # a run that raised alerts still exported its bundle
-            outlets=[REGISTRY] if job.layer is Layer.REGULATION else [],
+            outlets=[Dataset(registry_of(job))],
         )  # fmt: skip
         discard = container("discard", job.image, discard_command(job, RUN_ID), mounts=job.mounts, retries=0)
         collect >> load >> discard

@@ -322,12 +322,7 @@ class PostgresCurationActions:
     # --- shared ----------------------------------------------------------------------------------
 
     def _begin(self, curator: Curator) -> None:
-        """Team accounts come from the environment; the database learns each one at its first action."""
-        self.connection.execute(
-            "INSERT INTO curation.curator (username, display_name) VALUES (%s, %s) "
-            "ON CONFLICT (username) DO UPDATE SET display_name = EXCLUDED.display_name",
-            (curator.username, curator.display_name),
-        )
+        learn_curator(self.connection, curator)
 
     def _require_document(self, document_id: str) -> dict:
         row = self._one(
@@ -351,11 +346,28 @@ class PostgresCurationActions:
         )
 
     def _audit(self, curator: Curator, action: str, target: dict, before: Any, after: Any, reason: str) -> None:
-        self.connection.execute(
-            "INSERT INTO curation.audit_log (author, action, target, before, after, reason) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
-            (curator.username, action, Jsonb(target), _jsonb(before), _jsonb(after), reason),
-        )
+        audit(self.connection, curator, action, target, before, after, reason)
+
+
+def learn_curator(connection: psycopg.Connection, curator: Curator) -> None:
+    """Team accounts come from the environment; the database learns each one at its first action."""
+    connection.execute(
+        "INSERT INTO curation.curator (username, display_name) VALUES (%s, %s) "
+        "ON CONFLICT (username) DO UPDATE SET display_name = EXCLUDED.display_name",
+        (curator.username, curator.display_name),
+    )
+
+
+def audit(
+    connection: psycopg.Connection, curator: Curator, action: str, target: Mapping[str, Any], before: Any, after: Any,
+    reason: str,
+) -> None:
+    """One row of curation.audit_log: who did what to which, the state before and after, and why."""
+    connection.execute(
+        "INSERT INTO curation.audit_log (author, action, target, before, after, reason) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (curator.username, action, Jsonb(dict(target)), _jsonb(before), _jsonb(after), reason),
+    )
 
 
 class PostgresOverrides:

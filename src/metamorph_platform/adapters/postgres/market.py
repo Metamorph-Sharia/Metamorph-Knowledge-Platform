@@ -8,7 +8,7 @@ The connection runs in autocommit mode; every operation that must be atomic open
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import astuple
 
@@ -26,12 +26,20 @@ from psycopg.types.json import Jsonb
 
 from metamorph_platform.application.ports import StoredBlob
 from metamorph_platform.domain.loading import SaveOutcome
+from metamorph_platform.domain.market.links import (
+    DatasetKey,
+    PublishedIndustry,
+    PublishedSector,
+    Relinked,
+    SectorDefinition,
+)
 from metamorph_platform.domain.market.publication import MarketPublication, RegisterInfo
 from metamorph_platform.domain.market.statistics import IndustryLink, Statistics, source_of
 
 RECORD_TABLES = ("market.entity", "market.series", "market.report", "market.release")  # fixed names, never input
-PUBLISHED_ROOTS = ("register", "dataset", "report", "release", "mention", "industry")  # deleting them cascades
+PUBLISHED_ROOTS = ("register", "dataset", "report", "release", "mention", "industry", "sector")  # deleting cascades
 SERIES_PER_FETCH = 1_000
+PUBLISH_LOCK = 0x6D61726B6574  # "market": held by a full publish and a links-only one, until their transaction ends
 
 
 class PostgresMarket:
@@ -160,6 +168,16 @@ class PostgresMarket:
         rows = self.connection.execute("SELECT id, citation FROM market.statistics_source WHERE citation IS NOT NULL")
         return dict(rows.fetchall())
 
+    def sector_definitions(self) -> list[SectorDefinition]:
+        rows = self.connection.execute(
+            "SELECT s.id, s.name, s.name_en, "
+            "coalesce(array_agg(ARRAY[i.source, i.name] ORDER BY i.ordinal) FILTER (WHERE i.source IS NOT NULL), "
+            "'{}') FROM market.sector s LEFT JOIN market.sector_industry i ON i.sector = s.id "
+            "GROUP BY s.id ORDER BY s.id"
+        )
+        return [SectorDefinition(id_, name, name_en, tuple((source, industry) for source, industry in members))
+                for id_, name, name_en, members in rows]
+
 
 class PostgresPublishedMarket:
     def __init__(self, connection: psycopg.Connection) -> None:
@@ -170,9 +188,45 @@ class PostgresPublishedMarket:
         """One transaction: deleting the registers, datasets, reports and releases cascades to everything published
         under them, and what is added inside takes their place."""
         with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", (PUBLISH_LOCK,))
             for root in PUBLISHED_ROOTS:
                 cursor.execute(f"DELETE FROM published_market.{root}")
             yield PostgresMarketWriter(cursor)
+
+    @contextmanager
+    def relinking(self) -> Iterator[PostgresPublishedLinks]:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", (PUBLISH_LOCK,))
+            yield PostgresPublishedLinks(cursor)
+
+
+class PostgresPublishedLinks:
+    """The columns of published_market the curated links decide, rewritten in place."""
+
+    def __init__(self, cursor: psycopg.Cursor) -> None:
+        self.cursor = cursor
+
+    def datasets(self) -> list[DatasetKey]:
+        rows = self.cursor.execute("SELECT id, source, industry FROM published_market.dataset ORDER BY id").fetchall()
+        return [DatasetKey(*row) for row in rows]
+
+    def reports(self) -> list[str]:
+        return [id_ for (id_,) in self.cursor.execute("SELECT id FROM published_market.report ORDER BY id")]
+
+    def write(self, relinked: Relinked) -> None:
+        cursor = self.cursor
+        cursor.executemany(
+            "UPDATE published_market.register SET governed_by = %s, reports = %s WHERE id = %s",
+            [(list(r.governed_by), list(r.reports), r.id) for r in relinked.registers],
+        )
+        cursor.executemany(
+            "UPDATE published_market.dataset SET register = %s, governed_by = %s, reports = %s, citation = %s "
+            "WHERE id = %s",
+            [(d.register, list(d.governed_by), list(d.reports), d.citation, d.id) for d in relinked.datasets],
+        )
+        cursor.execute("DELETE FROM published_market.industry")
+        cursor.execute("DELETE FROM published_market.sector")
+        PostgresMarketWriter(cursor).add_links(relinked.industries, relinked.sectors)
 
 
 class PostgresMarketWriter:
@@ -222,10 +276,19 @@ class PostgresMarketWriter:
             [_row(passage) for passage in publication.reports.passages],
         )
         self._replace_releases(cursor, publication)
-        cursor.executemany(
+        self.add_links(publication.industries, publication.sectors)
+
+    def add_links(self, industries: Sequence[PublishedIndustry], sectors: Sequence[PublishedSector]) -> None:
+        """The industries and the sectors: written last, from what the curated links name."""
+        self.cursor.executemany(
             "INSERT INTO published_market.industry (source, name, register, governed_by, reports, datasets) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
-            [_row(industry) for industry in publication.industries],
+            [_row(industry) for industry in industries],
+        )
+        self.cursor.executemany(
+            "INSERT INTO published_market.sector (id, name, name_en, industries, registers, governed_by, reports, "
+            "datasets) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [(s.id, s.name, s.name_en, Jsonb([dict(i) for i in s.industries]), *_row(s)[4:]) for s in sectors],
         )
 
     @staticmethod

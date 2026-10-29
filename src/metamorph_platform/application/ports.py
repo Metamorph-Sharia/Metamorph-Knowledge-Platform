@@ -20,6 +20,8 @@ from metamorph_platform.domain.dates import TextDates
 from metamorph_platform.domain.gate import HoldReason
 from metamorph_platform.domain.health import Health, HealthFacts
 from metamorph_platform.domain.loading import ReviewKind, SaveOutcome
+from metamorph_platform.domain.market.curation import RegisterLinks, SourceSettings
+from metamorph_platform.domain.market.links import DatasetKey, Relinked, SectorDefinition
 from metamorph_platform.domain.market.publication import MarketPublication, RegisterInfo
 from metamorph_platform.domain.market.statistics import IndustryLink, Statistics
 from metamorph_platform.domain.publishing import DocumentSnapshot, PublishedDocument
@@ -150,6 +152,10 @@ class MarketSource(Protocol):
         """How each statistics source asks to be cited, by source ID."""
         ...
 
+    def sector_definitions(self) -> list[SectorDefinition]:
+        """The curated sectors, each with its industries as the sources name them (market.sector)."""
+        ...
+
 
 class PublishedMarketWriter(Protocol):
     def add_statistics(self, part: Statistics) -> None:
@@ -161,10 +167,66 @@ class PublishedMarketWriter(Protocol):
         ...
 
 
+class PublishedLinks(Protocol):
+    """What the curated links decide in published_market, for a links-only publish."""
+
+    def datasets(self) -> list[DatasetKey]:
+        """The datasets published, each with its source and industry."""
+        ...
+
+    def reports(self) -> list[str]:
+        """The reports published, by ID."""
+        ...
+
+    def write(self, relinked: Relinked) -> None: ...
+
+
 class PublishedMarketStore(Protocol):
+    """A full publish and a links-only one hold one lock, so neither writes over what the other read."""
+
     def replacing(self) -> AbstractContextManager[PublishedMarketWriter]:
         """Atomic: what is added inside replaces published_market whole, so readers see the old one or the new one,
-        never a mix."""
+        never a mix. Read the curated links inside it."""
+        ...
+
+    def relinking(self) -> AbstractContextManager[PublishedLinks]:
+        """Atomic: what the curated links decide, rewritten in place; series and observations are left as they are."""
+        ...
+
+
+class MarketCurationActions(Protocol):
+    """The Metamorph team's changes to the market layer's curated links (market.register, industry, statistics_source,
+    sector). Each writes curation.audit_log with the state before it, and refuses (CurationRefused) what names nothing
+    held: a register, a source, an industry or a sector."""
+
+    def atomically(self) -> AbstractContextManager[None]:
+        """One transaction around a change and what it publishes."""
+        ...
+
+    def set_register_links(self, curator: Curator, register_id: str, links: RegisterLinks, reason: str) -> None: ...
+
+    def set_industry(self, curator: Curator, link: IndustryLink, reason: str) -> None:
+        """Add the industry, or replace its links."""
+
+    def withdraw_industry(self, curator: Curator, source: str, name: str, reason: str) -> None: ...
+
+    def set_source(self, curator: Curator, source_id: str, settings: SourceSettings, reason: str) -> None: ...
+
+    def set_sector(self, curator: Curator, sector: SectorDefinition, reason: str) -> None:
+        """Add the sector, or replace its names and industries."""
+
+    def withdraw_sector(self, curator: Curator, sector_id: str, reason: str) -> None: ...
+
+
+class PublishedNames(Protocol):
+    """What is published, for the warnings a link change gives."""
+
+    def documents(self, ids: list[str]) -> set[str]:
+        """Those of `ids` the regulation layer publishes."""
+        ...
+
+    def reports(self) -> list[str]:
+        """Every report published, by ID."""
         ...
 
 
