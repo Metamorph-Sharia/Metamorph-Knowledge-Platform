@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Metamorph's PostgreSQL 16 (docs/aws-deployment-plan.md): the platform's database and BI's own, and later
-  Airflow's, on RDS for PostgreSQL (Instance). The Aurora Serverless v2 cluster it replaces (Cluster, Writer) stays
-  until the cut-over is confirmed, then leaves this template. 14 days of point-in-time recovery. The master password
+  Airflow's, on RDS for PostgreSQL (Instance). It replaced Aurora Serverless v2 on 2026-10-30; Aurora's final
+  snapshot is kept. 14 days of point-in-time recovery. The master password
   is read from Parameter Store (/metamorph/database/master-password), never written in the template. Also
   metamorph-dbops: psql, pg_dump and pg_restore in the VPC, between the database and the operations bucket, without a
   tunnel. /metamorph/database/host names RDS.
@@ -12,20 +12,8 @@ Parameters:
     Type: String
     Default: "16.15"
     Description: >-
-      PostgreSQL 16's minor version, for RDS (and Aurora until it leaves). The newest in the region:
+      PostgreSQL 16's minor version. The newest in the region:
       aws rds describe-db-engine-versions --engine postgres --engine-version 16 --query 'DBEngineVersions[-1].EngineVersion'
-  MinCapacity:
-    Type: Number
-    Default: 0
-    Description: ACUs when idle. 0 pauses it; 0.5 keeps it awake (about $73 a month)
-  MaxCapacity:
-    Type: Number
-    Default: 4
-    Description: ACUs at most (2 GiB each), for a heavy query or a restore
-  SecondsUntilPause:
-    Type: Number
-    Default: 900
-    Description: Idle seconds before it pauses (MinCapacity 0 only)
   InstanceClass:
     Type: String
     Default: db.t4g.medium
@@ -47,41 +35,6 @@ Resources:
     Properties:
       DBSubnetGroupDescription: metamorph database
       SubnetIds: !Split [",", !ImportValue metamorph-subnets]
-
-  Cluster:
-    Type: AWS::RDS::DBCluster
-    DeletionPolicy: Snapshot
-    UpdateReplacePolicy: Snapshot
-    Properties:
-      DBClusterIdentifier: metamorph
-      Engine: aurora-postgresql
-      EngineVersion: !Ref EngineVersion
-      DatabaseName: metamorph
-      MasterUsername: metamorph
-      MasterUserPassword: "{{resolve:ssm-secure:/metamorph/database/master-password}}"
-      Port: 5432
-      DBSubnetGroupName: !Ref SubnetGroup
-      VpcSecurityGroupIds: [!ImportValue metamorph-sg-database]
-      StorageEncrypted: true
-      BackupRetentionPeriod: 7
-      PreferredBackupWindow: "19:00-19:30"           # 02:00 WIB
-      PreferredMaintenanceWindow: "sun:20:00-sun:20:30"
-      CopyTagsToSnapshot: true
-      DeletionProtection: false   # removed on 2026-10-30 after the move to RDS; its final snapshot is kept
-      ServerlessV2ScalingConfiguration:
-        MinCapacity: !Ref MinCapacity
-        MaxCapacity: !Ref MaxCapacity
-        SecondsUntilAutoPause: !Ref SecondsUntilPause
-  Writer:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      DBInstanceIdentifier: metamorph-1
-      DBClusterIdentifier: !Ref Cluster
-      Engine: aurora-postgresql
-      DBInstanceClass: db.serverless
-      DBSubnetGroupName: !Ref SubnetGroup
-      PubliclyAccessible: false
-      AutoMinorVersionUpgrade: true
 
   # RDS for PostgreSQL: a fixed size, always on. Aurora's pause saves nothing once Airflow and the retrieval gateway
   # hold connections, and its 15-second wake outlasts the gateway's 10-second timeout (docs/aws-deployment-plan.md §4.1).
@@ -187,4 +140,3 @@ Resources:
 
 Outputs:
   Host: {Value: !GetAtt Instance.Endpoint.Address, Export: {Name: metamorph-database-host}}
-  AuroraHost: {Value: !GetAtt Cluster.Endpoint.Address}
