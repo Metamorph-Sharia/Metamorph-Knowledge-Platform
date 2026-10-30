@@ -12,7 +12,7 @@ x-connector: &connector
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16          # pgvector is installed for the Knowledge and Retrieval layer; unused here
+    image: pgvector/pgvector:pg16          # pgvector: the retrieval layer's index (retrieval_market) uses it
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-metamorph}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-metamorph-dev}
@@ -190,6 +190,10 @@ services:
     <<: *connector
     build: {context: .., dockerfile: Reports-Connector/Dockerfile}
     image: metamorph/reports:dev
+  retrieval:                                # the retrieval layer (../Metamorph-Retrieval): built here for market_index
+    <<: *connector
+    build: {context: ../Metamorph-Retrieval}
+    image: metamorph/retrieval:dev
 
 networks:
   default:
@@ -198,6 +202,8 @@ networks:
 volumes:
   postgres-data:
   objectstore-data:
+  metamorph-models:                         # the retrieval image's embedding models, kept between runs
+    name: metamorph-models
   bundles:
     name: metamorph-bundles                 # connectors write bundles here; `metamorph load` reads them
   mineru-uploads:                           # the files MinerU was sent, kept a day (its --retention-seconds)

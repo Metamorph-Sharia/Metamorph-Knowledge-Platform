@@ -11,6 +11,7 @@ Each job runs in its connector's own image (built from the connector's repositor
 The layers, as Airflow Datasets, so the UI draws each from its connectors to what is published:
   regulation connectors → REGISTRY        → registry_build → PUBLISHED         (`published`)
   market connectors     → MARKET_REGISTRY → market_publish → PUBLISHED_MARKET  (`published_market`)
+                                            → market_index   → MARKET_INDEX      (`retrieval_market`)
 
 The connectors keep their state (SQLite stores, downloaded files) in their repositories' data/
 directories, bind-mounted, so a scheduled run and a person's CLI run see the same store.
@@ -26,6 +27,10 @@ REGISTRY = "metamorph://registry"  # the regulation layer's system of record (`r
 PUBLISHED = "metamorph://published"  # its read contract
 MARKET_REGISTRY = "metamorph://market-registry"  # the market layer's system of record (`market`)
 PUBLISHED_MARKET = "metamorph://published-market"  # its read contract
+MARKET_INDEX = "metamorph://market-index"  # the retrieval layer's index of it (`retrieval_market`)
+RETRIEVAL_IMAGE = "metamorph/retrieval:dev"  # Metamorph-Retrieval: the gateway and the market index's refresh
+MODELS = "/models"  # where the retrieval image keeps its embedding models
+MODELS_VOLUME = "metamorph-models"
 BUNDLES = "/bundles"
 BUNDLES_VOLUME = "metamorph-bundles"
 EXPORT_FAILED = 3  # the collect task's exit code when no bundle could be written

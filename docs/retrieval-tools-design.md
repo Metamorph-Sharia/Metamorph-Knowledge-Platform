@@ -2,6 +2,8 @@
 
 **Status: draft, 2026-10-28.** For review by the team building the Knowledge & Retrieval layer and the team building the answering agent. Nothing here is built yet.
 
+**2026-10-30:** [retrieval-architecture.md](retrieval-architecture.md) splits this layer into providers (market: ours; regulatory: Friend 2's) behind a shared contract and a gateway. The tools, principles, legal force and evaluation below still hold; that page says who owns each part, and proposes renaming `get_provision` to `read`.
+
 **Decided by the project owner on 2026-10-28, and built into this draft:**
 - **The answering agent is not ours.** We build a retrieval layer that exposes its capabilities as tools. An answering agent calls them, orchestrates them, and writes the final response.
 - **Reports are a module of their own, in the market layer.** OJK's and BI's reports and roadmaps (LPKSI, KEKSI, RP3SI, …) are kept out of the regulation layer, published as `published_market.report` and `report_passage` ([market-data-layer-plan.md](market-data-layer-plan.md), Phase 4). Behind the tools, the agent still has one text search over regulations and reports.
