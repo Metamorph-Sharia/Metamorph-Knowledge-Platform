@@ -109,3 +109,4 @@ Resources:
 
 Outputs:
   Group: {Value: !Ref Group, Export: {Name: metamorph-sg-retrieval}}
+  GatewayTask: {Value: !Ref Gateway, Export: {Name: metamorph-retrieval-gateway-task}}

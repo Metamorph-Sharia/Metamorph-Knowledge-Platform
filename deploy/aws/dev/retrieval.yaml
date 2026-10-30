@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  DEVELOPMENT ONLY (docs/aws-deployment-plan.md §5.5): the retrieval gateway on the internet, for building the LLM
+  layer before its agent loop runs in the VPC. CloudFront (its own *.cloudfront.net name, HTTPS only) checks a bearer
+  token at the edge and drops it, then reaches an internal load balancer through a VPC origin, which forwards to a
+  gateway service of this stack's own. Nothing depends on this stack: deleting it removes every public way in and
+  leaves the retrieval stack as it is. The token lives in Parameter Store (/metamorph/retrieval/dev-token); only its
+  SHA-256 is here.
+
+Parameters:
+  TokenSha256:
+    Type: String
+    NoEcho: true
+    AllowedPattern: "[0-9a-f]{64}"
+    Description: The bearer token's SHA-256, in hex
+  WebAclArn:
+    Type: String
+    Default: ""
+    Description: The rate-limiting web ACL that dev/waf.sh makes in us-east-1 (CloudFront's region), or empty
+  GatewayCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [0, 1]
+  CloudFrontPrefixList:
+    Type: String
+    Default: pl-bca247d5
+    Description: CloudFront's origin-facing addresses in this region, the only source the load balancer accepts
+
+Conditions:
+  HasWebAcl: !Not [!Equals [!Ref WebAclArn, ""]]
+
+Resources:
+  LoadBalancerGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: metamorph retrieval development load balancer, from CloudFront only
+      VpcId: !ImportValue metamorph-vpc
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, SourcePrefixListId: !Ref CloudFrontPrefixList}
+  GatewayFromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue metamorph-sg-retrieval
+      IpProtocol: tcp
+      FromPort: 8765
+      ToPort: 8765
+      SourceSecurityGroupId: !Ref LoadBalancerGroup
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: metamorph-retrieval-dev
+      Type: application
+      Scheme: internal
+      Subnets: !Split [",", !ImportValue metamorph-private-subnets]
+      SecurityGroups: [!Ref LoadBalancerGroup]
+  Target:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Protocol: HTTP
+      Port: 8765
+      VpcId: !ImportValue metamorph-vpc
+      HealthCheckPath: /health
+      Matcher: {HttpCode: "200"}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: "30"}]
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
+
+  # Its own service, on the retrieval stack's task definition, so the retrieval stack never refers to this one.
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Listener
+    Properties:
+      ServiceName: retrieval-gateway-dev
+      Cluster: !ImportValue metamorph-cluster
+      TaskDefinition: !ImportValue metamorph-retrieval-gateway-task
+      LaunchType: FARGATE
+      DesiredCount: !Ref GatewayCount
+      HealthCheckGracePeriodSeconds: 900   # a start downloads bge-m3 from Hugging Face: 1 to 9 minutes, seen on AWS
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      LoadBalancers: [{ContainerName: main, ContainerPort: 8765, TargetGroupArn: !Ref Target}]
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:   # the load balancer's zones (its private subnets share the first two)
+            - !Select [0, !Split [",", !ImportValue metamorph-subnets]]
+            - !Select [1, !Split [",", !ImportValue metamorph-subnets]]
+          SecurityGroups: [!ImportValue metamorph-sg-retrieval]
+          AssignPublicIp: ENABLED   # no NAT gateway: ECR, Parameter Store and Hugging Face over the internet
+
+  Origin:
+    Type: AWS::CloudFront::VpcOrigin
+    Properties:
+      VpcOriginEndpointConfig:
+        Name: metamorph-retrieval-dev
+        Arn: !Ref LoadBalancer
+        HTTPPort: 80
+        HTTPSPort: 443
+        OriginProtocolPolicy: http-only
+
+  # The token check, before anything reaches AWS's network. A request without the token gets 401 at the edge; with
+  # it, the header is dropped, so the token goes no further than CloudFront.
+  TokenCheck:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: metamorph-retrieval-dev-token
+      AutoPublish: true
+      FunctionConfig: {Comment: metamorph retrieval development bearer token, Runtime: cloudfront-js-2.0}
+      FunctionCode: !Sub |
+        const crypto = require('crypto');
+        const TOKEN_SHA256 = '${TokenSha256}';
+        const BEARER = /^bearer\s+(\S+)$/i;
+
+        function handler(event) {
+            const request = event.request;
+            const header = request.headers.authorization;
+            const presented = header ? BEARER.exec(header.value) : null;
+            if (presented && crypto.createHash('sha256').update(presented[1]).digest('hex') === TOKEN_SHA256) {
+                delete request.headers.authorization;
+                return request;
+            }
+            return {statusCode: 401, statusDescription: 'Unauthorized', headers: {'www-authenticate': {value: 'Bearer'}}};
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: metamorph retrieval gateway, DEVELOPMENT ONLY
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200          # includes Asia
+        WebACLId: !If [HasWebAcl, !Ref WebAclArn, !Ref AWS::NoValue]
+        Origins:
+          - Id: gateway
+            DomainName: !GetAtt LoadBalancer.DNSName
+            VpcOriginConfig: {VpcOriginId: !GetAtt Origin.Id, OriginReadTimeout: 60}
+        # Tool calls are POSTs whose answers depend on the data of the moment: nothing is cached.
+        DefaultCacheBehavior:
+          TargetOriginId: gateway
+          ViewerProtocolPolicy: https-only
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # Managed-SecurityHeadersPolicy
+          FunctionAssociations: [{EventType: viewer-request, FunctionARN: !GetAtt TokenCheck.FunctionARN}]
+
+Outputs:
+  Url:
+    Description: The gateway's development address. MCP at /mcp; HTTP tools at /tools, /manifest, /openapi.json
+    Value: !Sub "https://${Distribution.DomainName}"
