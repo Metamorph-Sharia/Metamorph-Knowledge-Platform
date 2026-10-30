@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Metamorph Retrieval for market data on Fargate (docs/aws-deployment-plan.md §5.5): the image's repository; the
+  metamorph-retrieval task (the market index's refresh, scripts/refresh-market-index.sh, which the market_index DAG
+  runs, and one-off evals); and the gateway (`metamorph-gateway serve`, MCP at /mcp) as the ECS service
+  retrieval-gateway. The gateway has no authentication, so nothing outside the VPC reaches it: its service starts at
+  DesiredCount 0 until callers have a way in (SSM port forwarding, or a front door with a token). bge-m3 is
+  downloaded from Hugging Face into /models when a task first embeds, until the image bakes it in.
+
+Parameters:
+  RetrievalTag: {Type: String, Description: The metamorph/retrieval image's tag (deploy/aws/push-images.sh)}
+  GatewayCount:
+    Type: Number
+    Default: 0
+    AllowedValues: [0, 1]
+    Description: Gateway tasks; 0 until callers can reach it
+
+Resources:
+  Images:
+    Type: AWS::ECR::Repository
+    Properties: {RepositoryName: metamorph/retrieval, LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}'}}
+
+  Group:
+    Type: AWS::EC2::SecurityGroup
+    Properties: {GroupDescription: metamorph retrieval (gateway and index refresh), VpcId: !ImportValue metamorph-vpc}
+  DatabaseFromRetrieval:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue metamorph-sg-database
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref Group
+
+  # The refresh, and one-off evals with a command override. It writes retrieval_market, so it signs in as the
+  # indexer (/metamorph/retrieval/indexer-database-url).
+  Refresh:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-retrieval   # what jobs.task_family("metamorph/retrieval:…") names
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: "2048"
+      Memory: "8192"
+      EphemeralStorage: {SizeInGiB: 40}
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/retrieval:${RetrievalTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          Command: [scripts/refresh-market-index.sh]
+          Secrets:
+            - {Name: METAMORPH_RETRIEVAL_DATABASE_URL, ValueFrom: /metamorph/retrieval/indexer-database-url}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-retrieval}
+
+  # The gateway reads only: it signs in as retrieval_reader, and its sessions are read-only besides.
+  Gateway:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: metamorph-retrieval-gateway
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
+      Cpu: "2048"
+      Memory: "6144"
+      EphemeralStorage: {SizeInGiB: 30}
+      ExecutionRoleArn: !ImportValue metamorph-execution-role
+      ContainerDefinitions:
+        - Name: main
+          Image: !Sub
+            - "${Registry}/metamorph/retrieval:${RetrievalTag}"
+            - Registry: !ImportValue metamorph-registry
+          Essential: true
+          Command: [metamorph-gateway, serve, --host, 0.0.0.0, --port, "8765"]
+          PortMappings: [{ContainerPort: 8765}]
+          HealthCheck:
+            Command: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=5)"]
+            Interval: 30
+            Timeout: 10
+            Retries: 3
+            StartPeriod: 180   # the first start downloads bge-m3
+          Secrets:
+            - {Name: METAMORPH_RETRIEVAL_DATABASE_URL, ValueFrom: /metamorph/retrieval/reader-database-url}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-retrieval-gateway}
+  GatewayService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: retrieval-gateway
+      Cluster: !ImportValue metamorph-cluster
+      TaskDefinition: !Ref Gateway
+      LaunchType: FARGATE
+      DesiredCount: !Ref GatewayCount
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Split [",", !ImportValue metamorph-subnets]
+          SecurityGroups: [!Ref Group]
+          AssignPublicIp: ENABLED   # no NAT gateway: ECR, Parameter Store and Hugging Face over the internet
+
+Outputs:
+  Group: {Value: !Ref Group, Export: {Name: metamorph-sg-retrieval}}

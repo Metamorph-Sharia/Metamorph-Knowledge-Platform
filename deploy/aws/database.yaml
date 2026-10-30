@@ -1,18 +1,19 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Metamorph's PostgreSQL 16 on Aurora Serverless v2 (docs/aws-deployment-guide.md): the platform's database and BI's
-  own, and later Airflow's. It pauses at 0 ACU when nothing is connected (the API connects per request) and wakes
-  on the next connection in about 15 seconds. 7 days of point-in-time recovery. The master password is read from
-  Parameter Store (/metamorph/database/master-password), never written in the template. Also metamorph-dbops: psql,
-  pg_dump and pg_restore in the VPC, between the database and the operations bucket, without a tunnel.
+  Metamorph's PostgreSQL 16 (docs/aws-deployment-plan.md): the platform's database and BI's own, and later
+  Airflow's, on RDS for PostgreSQL (Instance). The Aurora Serverless v2 cluster it replaces (Cluster, Writer) stays
+  until the cut-over is confirmed, then leaves this template. 14 days of point-in-time recovery. The master password
+  is read from Parameter Store (/metamorph/database/master-password), never written in the template. Also
+  metamorph-dbops: psql, pg_dump and pg_restore in the VPC, between the database and the operations bucket, without a
+  tunnel. /metamorph/database/host names RDS.
 
 Parameters:
   EngineVersion:
     Type: String
     Default: "16.15"
     Description: >-
-      Aurora PostgreSQL 16, 16.3 or newer (pausing at 0 ACU needs it). The newest in the region:
-      aws rds describe-db-engine-versions --engine aurora-postgresql --engine-version 16 --query 'DBEngineVersions[-1].EngineVersion'
+      PostgreSQL 16's minor version, for RDS (and Aurora until it leaves). The newest in the region:
+      aws rds describe-db-engine-versions --engine postgres --engine-version 16 --query 'DBEngineVersions[-1].EngineVersion'
   MinCapacity:
     Type: Number
     Default: 0
@@ -25,6 +26,20 @@ Parameters:
     Type: Number
     Default: 900
     Description: Idle seconds before it pauses (MinCapacity 0 only)
+  InstanceClass:
+    Type: String
+    Default: db.t4g.medium
+    AllowedValues: [db.t4g.medium, db.t4g.large, db.m7g.large]
+    Description: >-
+      RDS's size: 2 vCPU and 4 GiB. Next steps up: db.t4g.large (8 GiB) if FreeableMemory stays under 500 MB,
+      db.m7g.large if nightly builds use up the CPU credits
+  Storage:
+    Type: Number
+    Default: 50
+    Description: GB of gp3 to start with; it grows by itself up to MaxStorage
+  MaxStorage:
+    Type: Number
+    Default: 200
 
 Resources:
   SubnetGroup:
@@ -68,9 +83,48 @@ Resources:
       PubliclyAccessible: false
       AutoMinorVersionUpgrade: true
 
-  HostSetting:   # the guide's Phase 2 builds the database URLs in Parameter Store from it
+  # RDS for PostgreSQL: a fixed size, always on. Aurora's pause saves nothing once Airflow and the retrieval gateway
+  # hold connections, and its 15-second wake outlasts the gateway's 10-second timeout (docs/aws-deployment-plan.md §4.1).
+  Settings:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: postgres16
+      Description: metamorph PostgreSQL 16
+      Parameters:
+        log_min_duration_statement: "1000"   # log any statement over a second
+        rds.force_ssl: "1"
+  Instance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: metamorph-pg
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref InstanceClass
+      AllocatedStorage: !Ref Storage
+      MaxAllocatedStorage: !Ref MaxStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: metamorph
+      MasterUsername: metamorph
+      MasterUserPassword: "{{resolve:ssm-secure:/metamorph/database/master-password}}"
+      Port: "5432"
+      DBParameterGroupName: !Ref Settings
+      DBSubnetGroupName: !Ref SubnetGroup
+      VPCSecurityGroups: [!ImportValue metamorph-sg-database]
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 14
+      PreferredBackupWindow: "19:00-19:30"           # 02:00 WIB
+      PreferredMaintenanceWindow: "sun:20:00-sun:20:30"
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      DeletionProtection: true
+
+  HostSetting:   # the database URLs in Parameter Store are built from it
     Type: AWS::SSM::Parameter
-    Properties: {Name: /metamorph/database/host, Type: String, Value: !GetAtt Cluster.Endpoint.Address}
+    Properties: {Name: /metamorph/database/host, Type: String, Value: !GetAtt Instance.Endpoint.Address}
 
   # metamorph-dbops: "fetch" copies s3://<ops bucket>/transfer/database/ into /work, "main" runs its command with
   # psql, pg_dump and pg_restore, signed in as the master user, then "put" copies /work/out/ to s3://<ops bucket>/exports/.
@@ -132,4 +186,5 @@ Resources:
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-dbops}
 
 Outputs:
-  Host: {Value: !GetAtt Cluster.Endpoint.Address, Export: {Name: metamorph-database-host}}
+  Host: {Value: !GetAtt Instance.Endpoint.Address, Export: {Name: metamorph-database-host}}
+  AuroraHost: {Value: !GetAtt Cluster.Endpoint.Address}

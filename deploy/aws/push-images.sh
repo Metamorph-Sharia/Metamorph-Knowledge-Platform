@@ -3,6 +3,7 @@
 # tag (docs/aws-deployment-guide.md). MinerU's image is x86-64 and is built on the GPU instance instead (Phase 3).
 #
 #   deploy/aws/push-images.sh                          the core's images: platform, curation-web
+#   deploy/aws/push-images.sh retrieval                Metamorph Retrieval, once deploy/aws/retrieval.yaml made its repository
 #   deploy/aws/push-images.sh airflow bpk-connector    others, once the ingestion layer has their repositories
 #   TAG=20261024-1 deploy/aws/push-images.sh           a tag of your own (default: the UTC time)
 #
@@ -15,7 +16,7 @@ region="${AWS_REGION:-ap-southeast-3}"
 registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$region.amazonaws.com"
 tag="${TAG:-$(date -u +%Y%m%d-%H%M)}"
 CORE=(platform curation-web)
-IMAGES=("${CORE[@]}" airflow ojk-connector bpk-connector bi-connector dsn-mui-connector)
+IMAGES=("${CORE[@]}" retrieval airflow ojk-connector bpk-connector bi-connector dsn-mui-connector)
 
 build() {  # repository, build context, Dockerfile
   docker build --platform linux/arm64 -t "$registry/metamorph/$1:$tag" -f "$3" "$2"
@@ -28,6 +29,7 @@ for image in "$@"; do
   case "$image" in
     platform)          build platform "$platform" "$platform/docker/platform.Dockerfile" ;;
     curation-web)      build curation-web "$workspace/Metamorph-Curation-Web" "$workspace/Metamorph-Curation-Web/Dockerfile" ;;
+    retrieval)         build retrieval "$workspace/Metamorph-Retrieval" "$workspace/Metamorph-Retrieval/Dockerfile" ;;
     airflow)           build airflow "$platform/dags" "$platform/docker/airflow.Dockerfile" ;;
     ojk-connector)     build ojk-connector "$workspace" "$workspace/OJK-Source-Connector/Dockerfile" ;;
     bpk-connector)     build bpk-connector "$workspace" "$workspace/BPK-Source-Connector/Dockerfile" ;;

@@ -1,5 +1,7 @@
 # The ingestion layer: Airflow, the connectors and MinerU on ECS
 
+> **Superseded, 2026-10-30:** [docs/aws-deployment-plan.md](../../../docs/aws-deployment-plan.md) revises this layer (nine connectors, RDS, a private VPC, MinerU's window matched to the DAGs). The templates here are its starting point.
+
 **Status:** designed, linted (`cfn-lint`, CloudFormation's `validate-template`) and tested against the core's exports (`tests/test_deploy_layers.py`); not deployable with the account's access as of 2026-10-23. **Deploy the core first:** [docs/aws-deployment-guide.md](../../../docs/aws-deployment-guide.md).
 
 This layer plugs into the core: it imports the core's exports, and no core stack is redeployed. Airflow runs every DAG task as an ECS task (`METAMORPH_TASK_LAUNCHER=ecs`, `dags/metamorph_pipeline/containers.py`). The connectors keep their stores, PDFs and MinerU caches on EFS. MinerU runs on one GPU instance, only in the ingest window.

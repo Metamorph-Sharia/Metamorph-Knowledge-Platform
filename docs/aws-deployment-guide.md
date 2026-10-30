@@ -1,5 +1,7 @@
 # Deploying Metamorph on AWS (Jakarta): the core first
 
+> **Superseded, 2026-10-30:** [aws-deployment-plan.md](aws-deployment-plan.md) revises this architecture (RDS instead of Aurora, a private VPC, ingestion and retrieval). This guide stays the record of the stack deployed on 2026-10-23 until that plan's Phase 4 replaces it.
+
 **Date:** 2026-10-23 · **Region:** Asia Pacific (Jakarta), `ap-southeast-3` · **Account access:** the `Project3Learner` role, as it is today · **Status:** designed and written; nothing created on AWS yet. Checks so far:
 - the templates pass `cfn-lint` and CloudFormation's own `validate-template`;
 - the Aurora version and the existing role were checked in the account;
