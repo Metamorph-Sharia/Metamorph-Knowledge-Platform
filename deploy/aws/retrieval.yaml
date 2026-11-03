@@ -52,13 +52,18 @@ Resources:
             - Registry: !ImportValue metamorph-registry
           Essential: true
           Command: [scripts/refresh-market-index.sh]
+          Environment:
+            # The regulation index is in schema retrieval_regulation, which the indexer owns (Metamorph-Retrieval
+            # docs/deploying.md); the market's tables name their schema, so its refresh is unaffected
+            - {Name: PGOPTIONS, Value: "-c search_path=retrieval_regulation,public"}
           Secrets:
             - {Name: METAMORPH_RETRIEVAL_DATABASE_URL, ValueFrom: /metamorph/retrieval/indexer-database-url}
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-retrieval}
 
-  # The gateway reads only: it signs in as retrieval_reader, and its sessions are read-only besides.
+  # The gateway reads only: it signs in as retrieval_reader, and its sessions are read-only besides. 8 GB: both
+  # providers load bge-m3 (2.3 GB each), and the reranker its cross-encoder.
   Gateway:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -67,7 +72,7 @@ Resources:
       NetworkMode: awsvpc
       RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
       Cpu: "2048"
-      Memory: "6144"
+      Memory: "8192"
       EphemeralStorage: {SizeInGiB: 30}
       ExecutionRoleArn: !ImportValue metamorph-execution-role
       ContainerDefinitions:
@@ -83,7 +88,12 @@ Resources:
             Interval: 30
             Timeout: 10
             Retries: 3
-            StartPeriod: 180   # the first start downloads bge-m3
+            StartPeriod: 180   # loading the image's models
+          Environment:
+            # reranks every search's candidates in the task, on its CPU (Metamorph-Retrieval eval/README.md)
+            - {Name: METAMORPH_RETRIEVAL_RERANKER, Value: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1}
+            # the regulation index's schema; the reader reads it (Metamorph-Retrieval docs/deploying.md)
+            - {Name: PGOPTIONS, Value: "-c search_path=retrieval_regulation,public"}
           Secrets:
             - {Name: METAMORPH_RETRIEVAL_DATABASE_URL, ValueFrom: /metamorph/retrieval/reader-database-url}
           LogConfiguration:

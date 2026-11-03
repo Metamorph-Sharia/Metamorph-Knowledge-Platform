@@ -8,6 +8,12 @@ Description: >-
   SHA-256 is here.
 
 Parameters:
+  GatewayTask:
+    Type: String
+    Default: metamorph-retrieval-gateway:1
+    Description: >-
+      The gateway's task definition, as family:revision, which the retrieval stack registers. Named here rather than
+      imported, so the retrieval stack can register a new revision while this service still runs the last one
   TokenSha256:
     Type: String
     NoEcho: true
@@ -72,17 +78,18 @@ Resources:
       Port: 80
       DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
 
-  # Its own service, on the retrieval stack's task definition, so the retrieval stack never refers to this one.
+  # Its own service, on the retrieval stack's task definition, so the retrieval stack never refers to this one. To
+  # move it to a new revision: deploy this stack with GatewayTask=metamorph-retrieval-gateway:<revision>.
   Service:
     Type: AWS::ECS::Service
     DependsOn: Listener
     Properties:
       ServiceName: retrieval-gateway-dev
       Cluster: !ImportValue metamorph-cluster
-      TaskDefinition: !ImportValue metamorph-retrieval-gateway-task
+      TaskDefinition: !Ref GatewayTask
       LaunchType: FARGATE
       DesiredCount: !Ref GatewayCount
-      HealthCheckGracePeriodSeconds: 900   # a start downloads bge-m3 from Hugging Face: 1 to 9 minutes, seen on AWS
+      HealthCheckGracePeriodSeconds: 900   # a start loads the image's models; before they were baked in, 1 to 9 minutes
       DeploymentConfiguration:
         MinimumHealthyPercent: 100
         MaximumPercent: 200
