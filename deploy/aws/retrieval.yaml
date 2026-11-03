@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Metamorph Retrieval for market data on Fargate (docs/aws-deployment-plan.md §5.5): the image's repository; the
-  metamorph-retrieval task (the market index's refresh, scripts/refresh-market-index.sh, which the market_index DAG
-  runs, and one-off evals); and the gateway (`metamorph-gateway serve`, MCP at /mcp) as the ECS service
+  Metamorph Retrieval on Fargate (docs/aws-deployment-plan.md §5.5): the image's repository; the metamorph-retrieval
+  task (the market index's refresh, scripts/refresh-market-index.sh, which the market_index DAG runs, the regulation
+  index's build, and one-off evals); and the gateway (`metamorph-gateway serve`, MCP at /mcp) as the ECS service
   retrieval-gateway. The gateway has no authentication, so nothing outside the VPC reaches it: its service starts at
-  DesiredCount 0 until callers have a way in (SSM port forwarding, or a front door with a token). bge-m3 is
-  downloaded from Hugging Face into /models when a task first embeds, until the image bakes it in.
+  DesiredCount 0 until callers have a way in (SSM port forwarding, or a front door with a token). The image bakes in
+  its models (bge-m3, the reranker's cross-encoder); Metamorph-Retrieval docs/deploying.md is the checklist.
 
 Parameters:
   RetrievalTag: {Type: String, Description: The metamorph/retrieval image's tag (deploy/aws/push-images.sh)}
