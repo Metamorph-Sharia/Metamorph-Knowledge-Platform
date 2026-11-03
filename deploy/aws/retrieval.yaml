@@ -56,6 +56,9 @@ Resources:
             # The regulation index is in schema retrieval_regulation, which the indexer owns (Metamorph-Retrieval
             # docs/deploying.md); the market's tables name their schema, so its refresh is unaffected
             - {Name: PGOPTIONS, Value: "-c search_path=retrieval_regulation,public"}
+            # torch's matrix maths in bf16 on Graviton3: embedding and reranking about 2.3 times faster, with the
+            # question sets' results unchanged (Metamorph-Retrieval docs/deploying.md)
+            - {Name: DNNL_DEFAULT_FPMATH_MODE, Value: BF16}
           Secrets:
             - {Name: METAMORPH_RETRIEVAL_DATABASE_URL, ValueFrom: /metamorph/retrieval/indexer-database-url}
           LogConfiguration:
@@ -92,6 +95,9 @@ Resources:
           Environment:
             # reranks every search's candidates in the task, on its CPU (Metamorph-Retrieval eval/README.md)
             - {Name: METAMORPH_RETRIEVAL_RERANKER, Value: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1}
+            # 25: a search's p95 3.6 s on 2 vCPU, regulation set 14 of 42; 50: p95 6.9 s, 16 of 42 (2026-11-03)
+            - {Name: METAMORPH_RETRIEVAL_RERANK_CANDIDATES, Value: "25"}
+            - {Name: DNNL_DEFAULT_FPMATH_MODE, Value: BF16}
             # the regulation index's schema; the reader reads it (Metamorph-Retrieval docs/deploying.md)
             - {Name: PGOPTIONS, Value: "-c search_path=retrieval_regulation,public"}
           Secrets:
