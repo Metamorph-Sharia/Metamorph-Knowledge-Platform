@@ -7,7 +7,13 @@
 - M3: the gateway (MCP and HTTP) and the regulation stand-in. Friend 1 can connect an agent now ([connecting-an-agent.md](../../Metamorph-Retrieval/docs/connecting-an-agent.md));
 - M4: search over report and release passages, full text and bge-m3 embeddings fused, behind a gated index refresh.
 
-M5 waits for Friend 2's provider. M6 is optional, and comes only if the evaluation set shows a gain.
+**2026-11-04: M5 built, M6's reranker added, deployed on AWS.**
+- **M5: the regulatory provider arrived** as PR #1 and was merged. It speaks the contract natively, so no adapter was needed. Conformance passes, and the stand-in is retired.
+  - **Built in M5:** the gateway's search fusion, links between regulations and their merging with the market's, the regulation set (42 questions) and the federated set (27).
+- **M6: a cross-encoder reranker** in the gateway lifted the regulation set from 9 to 15 of 42 through the gateway, on a Mac.
+  - On AWS: 14 of 42 with 25 candidates; the market set is unchanged at 52 of 54.
+  - Context headers and a result cache are not added.
+- **AWS:** both run on ECS ([deploying.md](../../Metamorph-Retrieval/docs/deploying.md)).
 
 **For:** the three of us.
 - Market retrieval (this page's first build).
@@ -223,11 +229,21 @@ The gateway composes providers and adds no domain knowledge.
 - **Routing.** `read`, `describe` and provider tools go to the owner of the ref's namespace, or of the tool.
 - **Federated search.** `search_documents` fans out to the providers whose manifests hold the requested kinds, in parallel and each with a timeout. It fuses their pages with reciprocal rank fusion (k = 60, ties broken by ref). A fused page's cursor encodes each provider's own cursor.
   - **Built in M5, not M3.** Fusion only matters once two providers search, which is when Friend 2's joins. Until then the gateway sends a search to the one provider holding the kinds asked, and links to the one provider answering links. Building fusion against fakes now would fix a cursor design no real second provider has tested.
+  - **As built (M5, 2026-11-03):**
+    - The fused cursor is `fused:N`, an offset into the fusion of each provider's pages.
+    - A provider that fails becomes a warning on the page, as for budgets.
+- **Reranking (M6, as built).** With a reranker set (`METAMORPH_RETRIEVAL_RERANKER`), the gateway works in three steps:
+  - it gathers each provider's first pages up to `METAMORPH_RETRIEVAL_RERANK_CANDIDATES` (default 50; 25 on AWS);
+  - it fuses them;
+  - it orders them by the cross-encoder's score of the question against each candidate's citation, title and wording. This puts both providers' candidates on one scale, which RRF alone could not.
+  
+  If the reranker is late (5 s) or fails, the fused order comes back with the warning `NOT_RERANKED`. The reranker is a port in the application ring; the CrossEncoder is its adapter.
 - **Federated links.** `follow_links` asks every provider that declares `links`, and merges what they return.
   - The regulatory provider answers amends, revokes and implements.
   - The market provider answers `named_by`: which report and release passages name a `doc:` ref, from `published_market.mention`.
   
   Neither provider knows about the other.
+  - **As built (M5, 2026-11-04):** each provider's links come in its own order, and the gateway merges them in turn, the owner of the ref first. A page then holds some of each. The cursor is `fused:N`, as for search. A link both know appears once, and a provider that fails becomes a warning.
 - **Enrichment.** When a market result names `doc:` refs, such as a dataset's `governed_by`, the gateway can add their citations and status with one batched `describe` to the owner. The market provider never reads `published`.
   - **As built:** each `{"ref"}` stub in a record's fields that **another** provider owns gets its owner's `kind`, `citation`, `title`, `legal_force` and `status`. What the stub already says is kept. A provider's own refs are left as it named them, since it could have cited them itself. Citing everything starved the regulations in the live run: 35 market refs used up the budget first.
   - At most 40 refs are cited per answer. Past that, or when an owner is late, the refs stay bare and the page's `warnings` say so.
@@ -263,7 +279,8 @@ These are the seven tools from the tools design, with an owner each and one rena
 | `find_series` | market provider tool | Two stages (§6.2) |
 | `get_observations` | market provider tool | SQL only. Values are never embedded |
 | `find_companies` | market provider tool | Adds `as_of` (§6.4) |
-| `industry_context` | market provider tool | Starts from `sector`, then `industry`. Returns `doc:` refs the agent passes to `search_documents(document_ids=…)` |
+| `industry_context` | market provider tool | Starts from `sector`, then `industry`. Returns `doc:` refs the agent passes to `search_documents(documents=…)` |
+| `find_provision` | regulatory provider tool | Added with the provider (M5): a citation such as `POJK 40/2024 Pasal 137 ayat (3)` resolved to its provision, exactly |
 
 **Signals every result carries, whatever the strategy:**
 - `score`, `rank` and `matched_by`, for a relevance grader;
@@ -404,6 +421,11 @@ market_publish (built) ──outlet metamorph://published-market──► market
   - Spans are named `execute_tool {tool}` (the GenAI conventions). Over MCP, they nest under the MCP server's own span, which reads the agent's `_meta.traceparent`.
   - It is how a bad answer is debugged: was the expected ref in the index, retrieved, or ranked too low?
   - It is also where new evaluation questions come from.
+  - **On AWS (2026-11-03), neither is kept yet.**
+    - No OpenTelemetry SDK or exporter is configured in the image, so the spans are dropped.
+    - The JSON Lines files are on the task's own disk, which is lost when the task is replaced.
+    
+    The answering agent (mira-ai-chatbot) already sends its Langfuse trace in `_meta.traceparent`. Langfuse accepts OpenTelemetry, so exporting the spans there joins one question's trace end to end. The call log belongs in CloudWatch or S3.
 - **Alerts:**
   - the rate of empty results;
   - p95 latency per tool;
@@ -431,6 +453,11 @@ Determinism is what makes the result cache safe: a new `index_version` invalidat
   - A read replica comes first if queries contend with publishing. Partitioning is not needed at these sizes.
 - **Full text in Indonesian.** PostgreSQL's `indonesian` text search configuration is checked in step M3 (`\dF indonesian`), with the `simple` configuration for ids and numbers. *Used from M4 for the index's full text.*
 - **AWS waits for the project owner**, as everywhere else.
+  - **Deployed 2026-11-03:** the gateway runs as the ECS service `retrieval-gateway` (2 vCPU / 8 GB, arm64), and the index builds run as the `metamorph-retrieval` task ([deploying.md](../../Metamorph-Retrieval/docs/deploying.md)).
+  - **The regulation index on RDS:** schema `retrieval_regulation`, about 2.6 GB. It holds 577,539 chunks, of which 179,523 are embedded searchable units.
+  - **Vectors can come from another build.** A chunk's vector depends only on its text, so a build can take another build's vectors by chunk. On AWS, Fargate embeds about 2 units a second.
+- **No GPU within the role.** ECS tasks are capped at 2 vCPU / 8 GB and EC2 at `*.large`, and Bedrock's rerankers are unavailable or throttled.
+  - **bf16 maths on Graviton3** (`DNNL_DEFAULT_FPMATH_MODE=BF16`) makes the reranker 2.3 times faster on CPU. Fargate doesn't promise Graviton3: on Graviton2 the reranker misses its budget, and searches come back in fused order.
 
 ## 8. Evaluation
 
@@ -446,6 +473,9 @@ Retrieval is judged on its own, apart from answers, so that "retrieval missed it
   
   As in [engineering-principles.md](engineering-principles.md), only these few gates block. Everything else is monitored.
 - **A federated set**, once Friend 2's provider is in: cross-layer questions ("which regulations govern sharia P2P lending, who is licensed under them, and what did OJK announce?").
+  - **As built (M5):** a regulation set of 42 questions comes first: mira-ai-chatbot's golden questions, naming 54 retrieval units ([eval/README.md](../../Metamorph-Retrieval/eval/README.md)). Through the gateway, it measures the federated search as the agent calls it.
+  - **The federated set (2026-11-04):** 27 cases: links confirmed in the regulations' wording, a rule and what a regulator said of it, and the hops from an industry to its rules. 25 of 27 on AWS.
+  - A question of two parts is two calls, the agent's to split. Asked as one search, such questions passed 1 of 6.
 - **For Friend 1:** a stable tool catalog means models and agent strategies can be compared on the same retrieval, and retrieval can be improved without moving their baseline.
 
 ## 9. Repository layout
@@ -460,7 +490,8 @@ Metamorph-Retrieval/
     metamorph-market-retrieval/     the market provider (§6)
     metamorph-retrieval-gateway/    routing, budgets, enrichment, the catalog; adapters: MCP, HTTP, call log, spans;
                                     client.py; wiring.py names the providers (module:function), never imports them
-    metamorph-regulation-standin/   read and describe over published.* only, until Friend 2's provider arrives
+    metamorph-regulation-retrieval/ the regulatory provider and its index builder (M5; it replaced the stand-in,
+                                    which read and described published.* only)
   integrations/                     optional, orchestration side: thin LangGraph and Haystack wrappers
   eval/                             question sets (JSONL), runner, reports
   tests/test_architecture.py        the dependency rules below
@@ -496,6 +527,15 @@ agent = create_react_agent(model, tools)            # or a CRAG graph whose retr
 - Then run the conformance suite on it, then the federated evaluation.
 - The stand-in provider is retired.
 
+**As it arrived (2026-11-03):**
+- **Items 1 to 4 hold.**
+  - Hits are cited by `provision_unit` addresses.
+  - They carry the envelope.
+  - Retrieval is deterministic.
+  - `describe` is batched.
+- **Item 5:** the provider takes no trace context itself. The gateway's span for each tool call covers the provider's part.
+- The provider was registered as it is. The stand-in is retired.
+
 **Until then, however long it takes**, the stand-in reads `published.document` and `provision_unit` for `read` and `describe` only. It never searches. Market results get their regulation citations end to end, and Friend 1 has a whole tool catalog to test against. The stand-in also keeps the contract honest: it exercises the `doc:` namespace and cross-provider `describe`, so the contract doesn't drift into a market-only shape while Friend 2 is away.
 
 ## 11. Plan
@@ -509,10 +549,16 @@ agent = create_react_agent(model, tools)            # or a CRAG graph whose retr
 | M2 ✓ | Exact market tools over SQL: `find_companies` (with `as_of`), `industry_context`, `get_observations`, `read`, `describe`, `named_by` links, and `find_series` by lexical match. **Built 2026-10-30:** `metamorph-market-retrieval`, with domain, application and adapter rings enforced by a test, and one read-model test set run in memory and on PostgreSQL. **Live run:** all 30 exact cases pass; `find_series` passes 7 of 9 and `industry_context` 2 of 4 (the misses are English queries, and one ambiguous case); 32 of 54 cases overall, since search waits for M4 ([eval/market/runs/2026-10-30-m2.md](../../Metamorph-Retrieval/eval/market/runs/2026-10-30-m2.md)). Conformance passes on the live data. **The call log moved to M3:** the gateway sees every call, across providers | The evaluation's exact cases pass; conformance passes |
 | M3 ✓ | **Friend 1 starts here.** The gateway: MCP and HTTP, budgets, tracing, the call log, the stand-in regulation provider. Tool catalog 0.x: the M2 tools. **Built 2026-10-30:** `metamorph-retrieval-gateway` and `metamorph-regulation-standin`, each with its rings enforced by a test.<br>**Live:**<br>• An MCP client over streamable HTTP called every M2 tool, 10 calls in about 0.5 s.<br>• The question set run end to end through the gateway's HTTP client gives 32 of 54, identical to M2 case by case.<br>• A live provider past its budget returned `provider_unavailable`: a 503 over HTTP, `isError` over MCP.<br>• Market answers' regulations now come back cited by the stand-in.<br>**Deviations:** fusion moved to M5; the call log is files ([eval/market/runs/2026-10-30-m3.md](../../Metamorph-Retrieval/eval/market/runs/2026-10-30-m3.md)) | Friend 1 calls every M2 tool end to end from their agent; a provider timeout returns a typed error |
 | M4 ✓ | Search: full text first, then embeddings fused by RRF, for passages and dataset cards. `search_documents` joins the catalog, adding a tool without breaking any. `market_index` DAG, index versions, embedding cache. **Built 2026-10-30:** search, index versions and the cache in `retrieval_market`; `metamorph-eval compare` as the gate; the refresh script and the paused DAG.<br>**Live:** `market-2026-10-30.6` (bge-m3) was activated by the gate.<br>• All cases: 52 of 54, recall 0.89, MRR 0.82, up from 32 of 54.<br>• `search_documents`: 18 of 19, recall 0.74 against full text's 0.68.<br>• `industry_context` 4 of 4, `find_series` 8 of 9.<br>• Search p95 is 174 ms through the gateway ([eval/market/runs/2026-10-30-m4.md](../../Metamorph-Retrieval/eval/market/runs/2026-10-30-m4.md)).<br>**Beyond the plan:** industry and sector cards are indexed; the half-the-words rule; a similarity floor | Recall in the first 8 results beats the full-text baseline on the set; activation gated |
-| M5 | **When Friend 2's provider is ready, however late:** register it natively or through an adapter; the gateway's search fusion (RRF) and link merging, moved here from M3; the federated evaluation set; the stand-in retires | Conformance passes; federated questions meet their expected refs |
-| M6 | Only if the evaluation set shows a gain: a reranker, model-written context headers, a result cache | Each one's gain measured, or it isn't added |
+| M5 ✓ | **When Friend 2's provider is ready, however late:** register it natively or through an adapter; the gateway's search fusion (RRF) and link merging, moved here from M3; the federated evaluation set; the stand-in retires.<br>**2026-11-03:**<br>• The provider was merged (PR #1) and registered natively; conformance passes; the stand-in is retired.<br>• Follow-ups: only retrieval units are searched, with word search fused in; filters run in SQL; revocations are dated.<br>• Search fusion is built.<br>• The regulation set: 12 of 42 for the provider alone, against 3 of 42 for mira-ai-chatbot's own client ([eval/regulation/runs/](../../Metamorph-Retrieval/eval/regulation/runs/)).<br>**2026-11-04:**<br>• Links between regulations are served from the index, 137,112 of them, what changes a text first; a provision also shows what changes what holds it.<br>• The gateway merges both layers' links.<br>• The federated set: 25 of 27, every one of its 13 link cases passing; the regulation set and the market set unchanged ([eval/federated/runs/](../../Metamorph-Retrieval/eval/federated/runs/)).<br>**The two misses:** a word only releases use ("pindar"), and a vague search within one regulation | Conformance passes; federated questions meet their expected refs |
+| M6 | Only if the evaluation set shows a gain: a reranker, model-written context headers, a result cache.<br>**Reranker added 2026-11-03:** `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` in the gateway. Through the gateway, the regulation set went from 9 to 15 of 42, and the market set held at 52 of 54. On AWS with 25 candidates: 14 of 42, p95 3.6 s. Context headers and a result cache are not added | Each one's gain measured, or it isn't added |
 
-**Until M5, Friend 1 should know:**
+**Since 2026-11-03, Friend 1 should know:**
+- `search_documents` finds regulations and fatwas too, fused with reports and releases and reranked.
+- `find_provision` resolves a named citation exactly.
+- `follow_links` answers for both layers.
+- The production gateway has no address an agent can reach yet. The development gateway is behind CloudFront with a token ([connecting-an-agent.md](../../Metamorph-Retrieval/docs/connecting-an-agent.md)).
+
+**Until M5, Friend 1 should know** (as it stood before 2026-11-03):
 - `search_documents` finds reports and releases only.
 - Regulations can be read and described by ref (through `industry_context`, `governed_by` and mentions), but not searched.
 - So compliance questions (journey phases 3–4) can be evaluated only as far as following those refs.
@@ -525,11 +571,11 @@ The market provider is built tests-first, in small steps, with the clean-archite
 1. **A new repository, `Metamorph-Retrieval`,** rather than more packages in the platform repository. Retrieval then gets its own release cadence and its own contributors. *Created 2026-10-30 with M0.*
 2. **We own `metamorph-retrieval-contract`.** Friend 2 implements it, or we adapt to their API. Either way, it stays the one boundary.
 3. **Rename `get_provision` to `read`.** It reads any ref, and the name should belong to neither layer.
-4. **A stand-in regulation provider** (read and describe only) until Friend 2's arrives.
+4. **A stand-in regulation provider** (read and describe only) until Friend 2's arrives. *Retired 2026-11-03, when the regulatory provider was merged.*
 5. **The embedding model is chosen in M3 by the evaluation set.** It must handle Indonesian; this is open question 1 of the tools design. A local model comes first. A hosted one waits for AWS. *Chosen in M4: `BAAI/bge-m3`, over `multilingual-e5-base`.*
 
 ## Open questions
 
 - **Friend 1's constraints:** how many tools, and which JSON Schema features, their candidate models handle well; and a token budget per result. They may change §3.4's caps and the descriptions' length.
-- **Friend 2's chunking:** if their units are not the platform's `provision_unit`s, how each maps to an address (item 1 of §10).
+- **Friend 2's chunking:** if their units are not the platform's `provision_unit`s, how each maps to an address (item 1 of §10). *Settled 2026-11-03: the provider indexes every provision so any can be read, and searches only `provision_unit`s, so each hit is a unit's address.*
 - **A read-only SQL tool** over a few market views (open question 5 of the tools design). It is still waiting for a need the seven tools don't meet.
