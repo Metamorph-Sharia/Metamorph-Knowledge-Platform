@@ -101,7 +101,14 @@ Resources:
             - Registry: !ImportValue metamorph-registry
           Essential: true
           PortMappings: [{ContainerPort: 3000}]
-          Secrets: [{Name: METAMORPH_API_URL, ValueFrom: /metamorph/web/api-url}]
+          # The curation API it calls, and the retrieval gateway the Retrieval page asks. The gateway's address is
+          # the development endpoint that is reachable from this task without a private route; its token is a
+          # development one, shared by every caller and rotated by replacing that parameter.
+          Secrets:
+            - {Name: METAMORPH_API_URL, ValueFrom: /metamorph/web/api-url}
+            - {Name: METAMORPH_RETRIEVAL_TOKEN, ValueFrom: /metamorph/retrieval/dev-token}
+          Environment:
+            - {Name: METAMORPH_RETRIEVAL_URL, Value: https://d2ae8k1h45zs74.cloudfront.net}
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-web}
