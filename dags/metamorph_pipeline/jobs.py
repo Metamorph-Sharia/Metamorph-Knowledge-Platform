@@ -10,6 +10,7 @@ Each job runs in its connector's own image (built from the connector's repositor
 
 The layers, as Airflow Datasets, so the UI draws each from its connectors to what is published:
   regulation connectors → REGISTRY        → registry_build → PUBLISHED         (`published`)
+                                                             → regulation_index → REGULATION_INDEX
   market connectors     → MARKET_REGISTRY → market_publish → PUBLISHED_MARKET  (`published_market`)
                                             → market_index   → MARKET_INDEX      (`retrieval_market`)
 
@@ -29,6 +30,7 @@ MARKET_REGISTRY = "metamorph://market-registry"  # the market layer's system of 
 PUBLISHED_MARKET = "metamorph://published-market"  # its read contract
 MARKET_INDEX = "metamorph://market-index"  # the retrieval layer's index of it (`retrieval_market`)
 RETRIEVAL_IMAGE = "metamorph/retrieval:dev"  # Metamorph-Retrieval: the gateway and the market index's refresh
+REGULATION_INDEX = "metamorph://regulation-index"  # the regulation index, judged before it is activated
 MODELS = "/models"  # where the retrieval image keeps its embedding models
 MODELS_VOLUME = "metamorph-models"
 BUNDLES = "/bundles"
