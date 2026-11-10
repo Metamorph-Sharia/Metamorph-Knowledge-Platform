@@ -103,7 +103,7 @@
   - A word held by more than 5% of the units still counts towards a hit's score, but doesn't choose which units are considered.
   - Meaning search is bge-m3 over pgvector HNSW.
   - The provider fuses the two by RRF.
-- **The gateway fuses both providers' pages by RRF.** It then reranks the first candidates with `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`: 25 on AWS, set by `METAMORPH_RETRIEVAL_RERANK_CANDIDATES`.
+- **The gateway fuses both providers' pages by RRF.** It then reranks the first candidates with `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`: 50, set by `METAMORPH_RETRIEVAL_RERANK_CANDIDATES`.
   - If the reranker is late (5 s) or fails, the fused order is returned with the warning `NOT_RERANKED`.
 
 ### `read` (was `get_provision`)

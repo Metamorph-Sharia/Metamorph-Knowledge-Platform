@@ -159,3 +159,86 @@ def test_a_note_marks_the_provision_it_names_and_its_own_parts_not_what_it_quote
     rows = db.execute("SELECT address, under_review FROM published.provision_unit ORDER BY address").fetchall()
 
     assert rows == [("pasal-87/ayat-2", True), ("pasal-87/pasal-5/ayat-1", False)]
+
+
+def long_wording(length: int) -> str:
+    """A unit's wording exactly `length` characters long, with its numbered points inside."""
+    return ("(1) Ketentuan: 1. pertama; 2. kedua; " + "x" * length)[:length]
+
+
+def test_a_long_unit_stays_a_unit_and_its_items_are_units_of_their_own(db, tmp_path) -> None:
+    published(db, tmp_path)
+    db.execute("DELETE FROM published.provision WHERE document_id = %s", (DOCUMENT,))
+    provisions(
+        db,
+        ("bab-i", None, "bab", ""),
+        ("bab-i/romawi-xiv", "bab-i", "romawi", long_wording(2001)),
+        ("bab-i/romawi-xiv/angka-1", "bab-i/romawi-xiv", "angka", "1. Pertama."),
+        ("bab-i/romawi-xiv/angka-4", "bab-i/romawi-xiv", "angka", "4. Paling lama 1% dari nilai."),
+        ("bab-i/romawi-xiv/angka-5", "bab-i/romawi-xiv", "angka", ""),
+    )
+
+    rows = db.execute(
+        "SELECT address, kind, wording FROM published.provision_unit WHERE document_id = %s ORDER BY address",
+        (DOCUMENT,),
+    ).fetchall()
+
+    assert rows == [
+        ("bab-i/romawi-xiv", "romawi", long_wording(2001)),
+        ("bab-i/romawi-xiv/angka-1", "angka", "1. Pertama."),
+        ("bab-i/romawi-xiv/angka-4", "angka", "4. Paling lama 1% dari nilai."),
+    ]
+
+
+def test_a_unit_of_two_thousand_characters_or_less_keeps_its_items_inside_it(db, tmp_path) -> None:
+    published(db, tmp_path)
+    db.execute("DELETE FROM published.provision WHERE document_id = %s", (DOCUMENT,))
+    provisions(
+        db,
+        ("pasal-5/ayat-1", "pasal-5", "ayat", long_wording(2000)),
+        ("pasal-5/ayat-1/huruf-a", "pasal-5/ayat-1", "huruf", "a. izin."),
+        ("pasal-5/ayat-1/huruf-b", "pasal-5/ayat-1", "huruf", "b. modal."),
+    )
+
+    rows = db.execute(
+        "SELECT address FROM published.provision_unit WHERE document_id = %s ORDER BY address",
+        (DOCUMENT,),
+    ).fetchall()
+
+    assert rows == [("pasal-5/ayat-1",)]
+
+
+def test_a_long_units_items_own_items_stay_inside_them_being_no_units(db, tmp_path) -> None:
+    published(db, tmp_path)
+    db.execute("DELETE FROM published.provision WHERE document_id = %s", (DOCUMENT,))
+    provisions(
+        db,
+        ("bab-i/romawi-xiv", None, "romawi", long_wording(2001)),
+        ("bab-i/romawi-xiv/angka-1", "bab-i/romawi-xiv", "angka", long_wording(3000)),
+        ("bab-i/romawi-xiv/angka-1/huruf-a", "bab-i/romawi-xiv/angka-1", "huruf", "a. izin."),
+        ("bab-i/romawi-xiv/angka-1/huruf-b", "bab-i/romawi-xiv/angka-1", "huruf", "b. modal."),
+    )
+
+    rows = db.execute(
+        "SELECT address FROM published.provision_unit WHERE document_id = %s ORDER BY address",
+        (DOCUMENT,),
+    ).fetchall()
+
+    assert rows == [("bab-i/romawi-xiv",), ("bab-i/romawi-xiv/angka-1",)]
+
+
+def test_an_item_that_is_a_unit_is_under_review_when_a_note_names_its_parent(db, tmp_path) -> None:
+    published(db, tmp_path)
+    db.execute("DELETE FROM published.provision WHERE document_id = %s", (DOCUMENT,))
+    provisions(
+        db,
+        ("bab-i/romawi-xiv", None, "romawi", long_wording(2001)),
+        ("bab-i/romawi-xiv/angka-1", "bab-i/romawi-xiv", "angka", "1. Pertama."),
+    )
+    db.execute(
+        "INSERT INTO published.review VALUES (%s, 0, 'bab-i/romawi-xiv', 'romawi-xiv: angka (4) missing')", (DOCUMENT,)
+    )
+
+    rows = db.execute("SELECT address, under_review FROM published.provision_unit ORDER BY address").fetchall()
+
+    assert rows == [("bab-i/romawi-xiv", True), ("bab-i/romawi-xiv/angka-1", True)]

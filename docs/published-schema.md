@@ -75,7 +75,8 @@ ORDER BY document_id, changed_at DESC;
 - a pasal without ayat;
 - a fatwa's ruling, or a circular's section without a provision of its own inside;
 - the preamble's parts;
-- an elucidation entry.
+- an elucidation entry;
+- the items of a unit whose wording is longer than 2,000 characters, one level down, since a reranker reads only the start of a long unit; the long unit stays one unit, and an item's own items stay inside it.
 
 A grouping heading (`bab`, `bagian`, `paragraf`) and an article whose ayat carry its wording are context, not units. A unit's items (`huruf`, `angka`) stay addressable in `provision`, so a long unit, such as a Ketentuan Umum's definitions, can be split by them.
 

@@ -233,7 +233,7 @@ The gateway composes providers and adds no domain knowledge.
     - The fused cursor is `fused:N`, an offset into the fusion of each provider's pages.
     - A provider that fails becomes a warning on the page, as for budgets.
 - **Reranking (M6, as built).** With a reranker set (`METAMORPH_RETRIEVAL_RERANKER`), the gateway works in three steps:
-  - it gathers each provider's first pages up to `METAMORPH_RETRIEVAL_RERANK_CANDIDATES` (default 50; 25 on AWS);
+  - it gathers each provider's first pages up to `METAMORPH_RETRIEVAL_RERANK_CANDIDATES` (50);
   - it fuses them;
   - it orders them by the cross-encoder's score of the question against each candidate's citation, title and wording. This puts both providers' candidates on one scale, which RRF alone could not.
   
