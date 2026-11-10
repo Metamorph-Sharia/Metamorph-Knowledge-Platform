@@ -1,16 +1,18 @@
 """Refresh the regulation index whenever published is republished: build a snapshot, judge it, activate if no worse.
 
-regulation_index   `scripts/refresh-regulation-index.sh` in the retrieval image: chunks, document metadata, bge-m3
-                   vectors and the index into staging tables, judged against the active snapshot on the acceptance
-                   set, and activated only if no worse; updates `regulation-index`
+regulation_index   `scripts/refresh-regulation-index.sh` in the retrieval image (Metamorph-Retrieval): a new snapshot of
+                   chunks, document metadata, bge-m3 vectors and links, judged against the live snapshot with
+                   metamorph-eval on the regulation question sets, as market_index judges its versions, and activated
+                   only if no worse; updates `regulation-index`
 
 A snapshot judged worse is kept, inactive, and the task fails, so the alert says so; the active one keeps answering.
 The build is a full rebuild and the swap is one transaction, so a failed run leaves the previous snapshot live.
 Embedding models are kept in the `metamorph-models` volume between runs.
 
-Sizing matters: bge-m3 embeds about 1.6 chunks/second on 2 vCPU, so a full 577k build is ~100 hours there. This task
-needs a larger or GPU-backed shape before it can own the schedule; until then, builds are run by hand and the index is
-shipped as a dump. The 24h timeout below is a guard, not a target.
+A build takes the live snapshot's vectors by chunk id, as market_index reuses its embedding cache, so a refresh embeds
+only the chunks a publish added or changed. bge-m3 embeds about 1.6 chunks/second on 2 vCPU, so a first build, or one
+after a change to what the model reads, would take about 100 hours there: seed it with vectors exported from a build
+made where embedding is fast (Metamorph-Retrieval docs/deploying.md). The 24h timeout below is a guard, not a target.
 """
 
 from __future__ import annotations
@@ -48,6 +50,6 @@ with DAG(
         ["scripts/refresh-regulation-index.sh"],
         mounts=[Mount(MODELS_VOLUME, MODELS, kind="volume")],
         secrets=["METAMORPH_DATABASE_URL"],
-        execution_timeout=timedelta(hours=24),  # a guard, not a target: the build needs a bigger task
+        execution_timeout=timedelta(hours=24),  # a guard: a refresh embeds only what a publish changed
         outlets=[Dataset(REGULATION_INDEX)],
     )
