@@ -14,6 +14,15 @@ Parameters:
     Default: 0
     AllowedValues: [0, 1]
     Description: Gateway tasks; 0 until callers can reach it
+  TraceEndpoint:
+    Type: String
+    Default: ""
+    Description: >-
+      Where the gateway sends its spans over OTLP, such as Langfuse's <base>/api/public/otel; empty sends none. Write
+      the SecureString /metamorph/retrieval/otel-headers first (Metamorph-Retrieval docs/connecting-an-agent.md)
+
+Conditions:
+  Traced: !Not [!Equals [!Ref TraceEndpoint, ""]]
 
 Resources:
   Images:
@@ -100,8 +109,10 @@ Resources:
             - {Name: DNNL_DEFAULT_FPMATH_MODE, Value: BF16}
             # the regulation index's schema; the reader reads it (Metamorph-Retrieval docs/deploying.md)
             - {Name: PGOPTIONS, Value: "-c search_path=retrieval_regulation,public"}
+            - !If [Traced, {Name: OTEL_EXPORTER_OTLP_ENDPOINT, Value: !Ref TraceEndpoint}, !Ref AWS::NoValue]
           Secrets:
             - {Name: METAMORPH_RETRIEVAL_DATABASE_URL, ValueFrom: /metamorph/retrieval/reader-database-url}
+            - !If [Traced, {Name: OTEL_EXPORTER_OTLP_HEADERS, ValueFrom: /metamorph/retrieval/otel-headers}, !Ref AWS::NoValue]
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-retrieval-gateway}
