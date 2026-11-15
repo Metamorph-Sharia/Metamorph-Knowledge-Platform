@@ -10,6 +10,7 @@ import psycopg
 from metamorph_platform.adapters.api.accounts import Accounts
 from metamorph_platform.adapters.api.app import ApiServices, create_api
 from metamorph_platform.adapters.api.app import ServicesFactory as ApiServicesFactory
+from metamorph_platform.adapters.api.clients import ServiceClients
 from metamorph_platform.adapters.blobs.s3 import S3BlobStore, S3FileLinks
 from metamorph_platform.adapters.postgres.curation import PostgresCurationActions, PostgresOverrides
 from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks, PostgresParsedTexts, PostgresValidity
@@ -18,6 +19,7 @@ from metamorph_platform.adapters.postgres.loading import PostgresIngestLedger, P
 from metamorph_platform.adapters.postgres.market import PostgresMarket, PostgresPublishedMarket
 from metamorph_platform.adapters.postgres.market_curation import PostgresMarketCuration
 from metamorph_platform.adapters.postgres.market_views import PostgresMarketViews
+from metamorph_platform.adapters.postgres.published_catalogue import PostgresPublishedCatalogue
 from metamorph_platform.adapters.postgres.publishing import PostgresPublication
 from metamorph_platform.adapters.postgres.reviews import PostgresOpenReviews
 from metamorph_platform.adapters.postgres.views import PostgresCurationViews
@@ -127,6 +129,7 @@ def api_services(settings: Settings) -> ApiServicesFactory:
                 files=file_links(settings),
                 market_views=PostgresMarketViews(connection),
                 curate_market=curate_market(connection),
+                published=PostgresPublishedCatalogue(connection),
             )
 
     return open_services
@@ -140,4 +143,5 @@ def file_links(settings: Settings) -> S3FileLinks:
 
 def api_app(settings: Settings):
     curators, secret = settings.require_curation()
-    return create_api(api_services(settings), Accounts.from_json(curators), secret)
+    clients = ServiceClients.from_json(settings.api_clients)
+    return create_api(api_services(settings), Accounts.from_json(curators), secret, clients=clients)

@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   The curation JSON API on Fargate (docs/aws-deployment-guide.md), behind an internal load balancer that only the
-  web app may reach; its address goes to Parameter Store (/metamorph/web/api-url) for the web app to read. Also
+  web app may reach; its address goes to Parameter Store (/metamorph/web/api-url) for the web app to read. A service
+  that reads the published catalogue (/api/v1/published, docs/api/published-catalogue.md), such as MIRA's API, may
+  reach it too when its security group is given as CatalogueClientGroup; it reads the address from /metamorph/api/url
+  and sends its own token (METAMORPH_API_CLIENTS). Also
   metamorph-cli, the `metamorph` command as a one-off task with the API's settings: migrations (its default), and a
   build or a health check by hand until the ingestion layer runs them. Stop the API with DesiredCount=0, or
   `aws ecs update-service --desired-count 0`.
@@ -12,6 +15,15 @@ Parameters:
     Type: Number
     Default: 1
     AllowedValues: [0, 1]
+  CatalogueClientGroup:
+    Type: String
+    Default: ""
+    Description: >-
+      The security group of a service that reads the published catalogue (e.g. MIRA's API tasks), or empty for none.
+      It reaches the load balancer only; what it may read is decided by its token.
+
+Conditions:
+  HasCatalogueClient: !Not [!Equals [!Ref CatalogueClientGroup, ""]]
 
 Resources:
   LoadBalancerGroup:
@@ -28,6 +40,17 @@ Resources:
       FromPort: 8001
       ToPort: 8001
       SourceSecurityGroupId: !Ref LoadBalancerGroup
+
+  CatalogueClientToLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasCatalogueClient
+    Properties:
+      GroupId: !Ref LoadBalancerGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref CatalogueClientGroup
+      Description: a published-catalogue client (its token decides what it may read)
 
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -59,6 +82,9 @@ Resources:
   ApiUrlSetting:
     Type: AWS::SSM::Parameter
     Properties: {Name: /metamorph/web/api-url, Type: String, Value: !Sub "http://${LoadBalancer.DNSName}"}
+  CatalogueUrl:   # the same address, for the published catalogue's clients
+    Type: AWS::SSM::Parameter
+    Properties: {Name: /metamorph/api/url, Type: String, Value: !Sub "http://${LoadBalancer.DNSName}"}
 
   Task:
     Type: AWS::ECS::TaskDefinition
@@ -85,6 +111,7 @@ Resources:
             - {Name: METAMORPH_S3_BUCKET, ValueFrom: /metamorph/platform/s3-bucket}
             - {Name: METAMORPH_CURATORS, ValueFrom: /metamorph/api/curators}
             - {Name: METAMORPH_WEB_SECRET, ValueFrom: /metamorph/api/web-secret}
+            - {Name: METAMORPH_API_CLIENTS, ValueFrom: /metamorph/api/clients}
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-api}

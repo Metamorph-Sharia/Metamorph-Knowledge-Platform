@@ -115,6 +115,8 @@ Every value a container reads from its environment is a parameter under `/metamo
 | `/metamorph/api/curators` | SecureString | you, Phase 1 | the API |
 | `/metamorph/api/web-secret` | SecureString | you, Phase 1 | the API |
 | `/metamorph/web/api-url` | String | the API stack (its internal load balancer) | the web app |
+| `/metamorph/api/clients` | SecureString | you, when a service is to read the published catalogue (`metamorph client token NAME` prints the entry; the value is a JSON list of them, `[]` for none) | the API |
+| `/metamorph/api/url` | String | the API stack (the same address) | the published catalogue's clients, such as MIRA's API |
 | `/metamorph/ops/bucket` | String | the foundation stack | `metamorph-dbops` |
 
 CloudFormation can't create SecureStrings, so you write the secret ones with the CLI. The stacks write the String ones for what they create. To change a setting, use `put-parameter --overwrite`. A one-off task reads it at its next start; a service needs a restart, with `aws ecs update-service --cluster metamorph --service api --force-new-deployment`.

@@ -109,6 +109,14 @@ def _parser() -> argparse.ArgumentParser:
     curator.add_parser(
         "hash-password", help="hash a password for METAMORPH_CURATORS (reads it without echo)"
     ).set_defaults(run=_hash_password, needs_settings=False)
+    client = commands.add_parser("client", help="services that read the published catalogue").add_subparsers(
+        required=True, metavar="ACTION"
+    )
+    token = client.add_parser(
+        "token", help="make a token for a service; prints it once, and the METAMORPH_API_CLIENTS entry to add"
+    )
+    token.add_argument("name", help="the service's name, e.g. mira")
+    token.set_defaults(run=_client_token, needs_settings=False)
     return parser
 
 
@@ -214,6 +222,17 @@ def _api(settings: Settings, arguments: argparse.Namespace) -> int:
     import uvicorn
 
     uvicorn.run(wiring.api_app(settings), host=arguments.host, port=arguments.port, proxy_headers=True)
+    return EXIT_OK
+
+
+def _client_token(_: None, arguments: argparse.Namespace) -> int:
+    import json
+
+    from metamorph_platform.adapters.api.clients import new_token, sha256_of
+
+    token = new_token()
+    print(f"token (give it to the service; it isn't kept here): {token}")
+    print(f"entry for METAMORPH_API_CLIENTS: {json.dumps({'name': arguments.name, 'token_sha256': sha256_of(token)})}")
     return EXIT_OK
 
 

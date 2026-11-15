@@ -101,6 +101,178 @@
         "title": "BundleRow",
         "type": "object"
       },
+      "CatalogueEntry": {
+        "properties": {
+          "citation": {
+            "title": "Citation",
+            "type": "string"
+          },
+          "effective_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective On"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "string"
+          },
+          "promulgated_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promulgated On"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "id",
+          "citation",
+          "title",
+          "kind",
+          "issuer",
+          "family",
+          "number",
+          "year",
+          "status",
+          "promulgated_on",
+          "effective_on"
+        ],
+        "title": "CatalogueEntry",
+        "type": "object"
+      },
+      "CatalogueFacets": {
+        "properties": {
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/FacetCount"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "issuers": {
+            "items": {
+              "$ref": "#/components/schemas/FacetCount"
+            },
+            "title": "Issuers",
+            "type": "array"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/FacetCount"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "statuses": {
+            "items": {
+              "$ref": "#/components/schemas/FacetCount"
+            },
+            "title": "Statuses",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "years": {
+            "items": {
+              "$ref": "#/components/schemas/FacetCount"
+            },
+            "title": "Years",
+            "type": "array"
+          }
+        },
+        "required": [
+          "total",
+          "issuers",
+          "families",
+          "years",
+          "statuses",
+          "kinds"
+        ],
+        "title": "CatalogueFacets",
+        "type": "object"
+      },
+      "CataloguePage": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogueEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries",
+          "total",
+          "next_cursor"
+        ],
+        "title": "CataloguePage",
+        "type": "object"
+      },
       "Check": {
         "enum": [
           "identity",
@@ -1343,6 +1515,24 @@
           "values"
         ],
         "title": "Facet",
+        "type": "object"
+      },
+      "FacetCount": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "count"
+        ],
+        "title": "FacetCount",
         "type": "object"
       },
       "FieldCorrection": {
@@ -6366,6 +6556,236 @@
         "summary": "Overview",
         "tags": [
           "reads"
+        ]
+      }
+    },
+    "/api/v1/published/facets": {
+      "get": {
+        "description": "What each filter would leave, with the same filters as /regulations: each facet is counted with every\nother filter applied but its own, so its counts say what choosing a value would show.",
+        "operationId": "published_facets_api_v1_published_facets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "issuer",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Issuer",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "family",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Family",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogueFacets"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Published Facets",
+        "tags": [
+          "published"
+        ]
+      }
+    },
+    "/api/v1/published/regulations": {
+      "get": {
+        "description": "Every published regulation the filters leave, newest first, a page at a time: `q` matches words in the\ncitation, title, an alias or the ID; the others match exactly. Send `next_cursor` back as `cursor` for the next\npage; it is null on the last. Only what is published appears: never a held, suppressed or unpublished\ndocument.",
+        "operationId": "published_regulations_api_v1_published_regulations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Cursor",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "issuer",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Issuer",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "family",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Family",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CataloguePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Published Regulations",
+        "tags": [
+          "published"
         ]
       }
     },

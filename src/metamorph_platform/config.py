@@ -23,6 +23,7 @@ class Settings:
     s3_public_endpoint_url: str | None = None
     curators: str | None = None  # METAMORPH_CURATORS: the curation team's accounts (JSON)
     web_secret: str | None = None  # METAMORPH_WEB_SECRET: signs the curation API's session tokens
+    api_clients: str | None = None  # METAMORPH_API_CLIENTS: the services that may read the published catalogue (JSON)
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str] = os.environ) -> Settings:
@@ -35,6 +36,7 @@ class Settings:
             s3_public_endpoint_url=environment.get("METAMORPH_S3_PUBLIC_ENDPOINT_URL") or None,
             curators=environment.get("METAMORPH_CURATORS") or None,
             web_secret=environment.get("METAMORPH_WEB_SECRET") or None,
+            api_clients=environment.get("METAMORPH_API_CLIENTS") or None,
         )
 
     def require_curation(self) -> tuple[str, str]:

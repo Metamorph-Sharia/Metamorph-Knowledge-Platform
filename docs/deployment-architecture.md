@@ -193,3 +193,13 @@ All of these are configuration too:
 - **The readings stay in the caches,** so going forward again reads nothing twice.
 
 The details are in [the plan's Rollback section](mineru-extraction-plan.md#rollback).
+
+## Who reads the API
+
+The `api` service (`deploy/aws/api.yaml`) answers two kinds of client, both servers on the private network:
+
+- the curation web app's server, as a signed-in curator: the curation reads and actions under `/api/v1`;
+- services that list what is published, each with its own token: only `/api/v1/published` ([api/published-catalogue.md](api/published-catalogue.md)). MIRA's API is the first, for its regulatory catalogue. Its tasks' security group is the stack's `CatalogueClientGroup`.
+
+Neither reaches the database: what a client may see is what the API's read models give it.
+

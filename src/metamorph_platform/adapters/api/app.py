@@ -1,9 +1,12 @@
-"""The curation JSON API (/api/v1): the curation use cases and read models over HTTP.
+"""The curation JSON API (/api/v1): the curation use cases and read models over HTTP, and the published
+catalogue.
 
-Its one client is the curation web app's server (Metamorph-Curation-Web), on the private network: browsers
-never call it. A curator signs in once for a short-lived token (tokens.py) and sends it as a bearer token,
-so every action is audited under the right name. The contract is the OpenAPI document this app generates,
-committed as docs/api/openapi.json.
+Its clients are servers on the private network: browsers never call it.
+- The curation web app's server (Metamorph-Curation-Web). A curator signs in once for a short-lived token
+  (tokens.py) and sends it as a bearer token, so every action is audited under the right name.
+- Services that list what is published (MIRA's API), under /api/v1/published only. Each sends its own token
+  (clients.py); it can read the published catalogue and nothing else, and never acts as a curator.
+The contract is the OpenAPI document this app generates, committed as docs/api/openapi.json.
 
 Every action runs its use case, then parses what changed and publishes, and only then answers: the
 answer says whether the document now passes the publish gate. Errors keep the use cases' meaning:
@@ -28,6 +31,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from metamorph_platform.adapters.api.accounts import Accounts
+from metamorph_platform.adapters.api.clients import ServiceClients
 from metamorph_platform.adapters.api.tokens import TOKEN_LIFETIME, InvalidToken, issue, verify
 from metamorph_platform.application.add_manual_document import AddManualDocument
 from metamorph_platform.application.curate import CorrectText, Curate
@@ -54,6 +58,14 @@ from metamorph_platform.application.market_views import (
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.ports import BlobReader, CurationRefused, Curator
 from metamorph_platform.application.publish import Publish
+from metamorph_platform.application.published_catalogue import (
+    CatalogueFacets,
+    CatalogueFilters,
+    CataloguePage,
+    InvalidCursor,
+    PublishedCatalogue,
+    page_size,
+)
 from metamorph_platform.application.reading import ReadText
 from metamorph_platform.application.views import (
     HELD_CHECKS,
@@ -106,6 +118,7 @@ class ApiServices:
     files: FileLinks
     market_views: MarketViews
     curate_market: CurateMarket
+    published: PublishedCatalogue | None = None  # the published catalogue, for service clients
 
 
 ServicesFactory = Callable[[], AbstractContextManager[ApiServices]]
@@ -249,7 +262,12 @@ class NotFound(Exception):
 
 
 def create_api(
-    open_services: ServicesFactory, accounts: Accounts, secret: str, *, clock: Clock = lambda: datetime.now(UTC)
+    open_services: ServicesFactory,
+    accounts: Accounts,
+    secret: str,
+    *,
+    clock: Clock = lambda: datetime.now(UTC),
+    clients: ServiceClients | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Metamorph Curation API", version="1", docs_url=None, redoc_url=None, openapi_url=f"{API}/openapi.json"
@@ -268,7 +286,16 @@ def create_api(
         with open_services() as opened:
             yield opened
 
+    def service_client(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> str:
+        if credentials is None:
+            raise Unauthorized("send this service's token as a bearer token")
+        name = (clients or ServiceClients()).verify(credentials.credentials)
+        if name is None:
+            raise Unauthorized("this token isn't a published-catalogue client's")
+        return name
+
     Who = Annotated[Curator, Depends(curator)]
+    Client = Annotated[str, Depends(service_client)]
     Services = Annotated[ApiServices, Depends(services)]
 
     @app.get("/healthz", include_in_schema=False)
@@ -568,6 +595,42 @@ def create_api(
         return market_changed(svc, svc.curate_market.withdraw_sector(who, sector_id, body.reason))
 
     app.include_router(router)
+
+    published = APIRouter(prefix=f"{API}/published", tags=["published"])
+
+    def catalogue_filters(
+        q: str = "", issuer: str = "", family: str = "", year: int | None = None, status: str = "", kind: str = ""
+    ) -> CatalogueFilters:
+        return CatalogueFilters(q.strip(), issuer.strip(), family.strip(), year, status.strip(), kind.strip())
+
+    Filters = Annotated[CatalogueFilters, Depends(catalogue_filters)]
+
+    def catalogue(svc: ApiServices) -> PublishedCatalogue:
+        if svc.published is None:
+            raise NotFound("the published catalogue isn't served here")
+        return svc.published
+
+    @published.get("/regulations")
+    def published_regulations(
+        client: Client, svc: Services, filters: Filters, cursor: str = "", limit: int = 0
+    ) -> CataloguePage:
+        """Every published regulation the filters leave, newest first, a page at a time: `q` matches words in the
+        citation, title, an alias or the ID; the others match exactly. Send `next_cursor` back as `cursor` for the next
+        page; it is null on the last. Only what is published appears: never a held, suppressed or unpublished
+        document."""
+        return catalogue(svc).page(filters, cursor or None, page_size(limit))
+
+    @published.get("/facets")
+    def published_facets(client: Client, svc: Services, filters: Filters) -> CatalogueFacets:
+        """What each filter would leave, with the same filters as /regulations: each facet is counted with every
+        other filter applied but its own, so its counts say what choosing a value would show."""
+        return catalogue(svc).facets(filters)
+
+    app.include_router(published)
+
+    @app.exception_handler(InvalidCursor)
+    def invalid_cursor(request: Request, error: InvalidCursor) -> JSONResponse:
+        return _error(422, "invalid", str(error), fields={"cursor": str(error)})
 
     @app.exception_handler(Unauthorized)
     def unauthorized(request: Request, error: Unauthorized) -> JSONResponse:
