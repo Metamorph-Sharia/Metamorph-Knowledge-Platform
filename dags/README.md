@@ -3,6 +3,7 @@ Airflow DAGs (Phase 6), mounted into the `airflow` service at /opt/airflow/dags.
 | File | DAGs |
 |---|---|
 | `ingest.py` | The regulation layer: `ingest_ojk`, `ingest_bpk`, `ingest_bi`, `ingest_dsn_fatwa`, `ingest_dsn_fatwa_full`: collect and export → `metamorph load` → discard. The market data layer, weekly on Mondays: `ingest_ojk_register`, `ingest_ojk_stats`, `ingest_bi_seki`, `ingest_bps_stats`, `ingest_reports`: collect and export → `metamorph market load` → discard. The market DAGs run on the local stack only until the market layer joins AWS (their ECS task definitions are deferred) |
+| `backup.py` | `backup_connector_data` (Sundays): the ops task copies every connector's `data/` to the ops bucket's `backups/<date>/`. Skipped under the Docker launcher |
 | `registry_build.py` | `registry_build` (after every regulation load) and `health` (daily, both layers) |
 | `market_publish.py` | `market_publish` (after every market load): `metamorph market publish` |
 

@@ -85,7 +85,8 @@ Airflow only schedules. Every task is a container: a connector's own image colle
 | `ingest_bi` | daily 03:00 | `src.cli sync` into BI's own database, then `src.pipeline.exporter_v2` |
 | `ingest_dsn_fatwa` | Mondays 04:00 | `dsn sync`, Arabic OCR, `dsn export` |
 | `ingest_dsn_fatwa_full` | 1st of the month | the same, re-downloading every file |
-| `ingest_ojk_register`, `ingest_ojk_stats`, `ingest_bi_seki`, `ingest_bps_stats`, `ingest_reports` | Mondays, 02:45–04:45 | The market data layer: each connector's collect and export, then `metamorph market load` |
+| `ingest_ojk_register`, `ingest_ojk_stats`, `ingest_bi_seki`, `ingest_bps_stats`, `ingest_reports` | Mondays, 02:15–04:15 UTC (`ingest_reports` 02:15, inside MinerU's window) | The market data layer: each connector's collect and export, then `metamorph market load` |
+| `backup_connector_data` | Sundays 05:00 UTC | On AWS: each connector's `data/` as a tarball in `s3://<ops bucket>/backups/<date>/` (skipped on the local stack) |
 | `registry_build` | after any regulation load | `metamorph build`, then `metamorph health --fail-on critical` |
 | `market_publish` | after any market load | `metamorph market publish`: `published_market` rebuilt from the market registry |
 | `health` | daily 06:00 | `metamorph health --fail-on critical`: a connector that stopped loading never triggers a build |

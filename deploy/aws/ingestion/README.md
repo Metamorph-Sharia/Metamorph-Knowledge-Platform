@@ -12,6 +12,7 @@ This layer plugs into the core: it imports the core's exports, and no core stack
 | `metamorph-ingestion-jobs` | [`jobs.yaml`](jobs.yaml) | The task definitions Airflow runs: `metamorph-platform` and the four connectors, plus `metamorph-ops` |
 | `metamorph-ingestion-airflow` | [`airflow.yaml`](airflow.yaml) | Airflow as an ECS service, with the role that lets it run those tasks |
 | `metamorph-ingestion-mineru` | [`mineru.yaml`](mineru.yaml) | A GPU Auto Scaling group with a warm pool, its capacity provider, the MinerU service, and the schedules that open and close its window |
+| `metamorph-ingestion-alerts` | [`alerts.yaml`](alerts.yaml) | An SNS topic with the owner's email, an EventBridge rule for Metamorph tasks that stop with a non-zero exit code, and a CloudWatch alarm for Airflow with no running task for 10 minutes. No IAM |
 
 ## What the account must allow first
 
@@ -46,7 +47,8 @@ The order, from the platform's directory with the core guide's Phase 0 shell lin
 
    Open the window by hand and read the two step 9 PDFs with `mineru_check.py` from a BPK task.
 8. **Airflow:** `deploy ingestion/airflow --capabilities CAPABILITY_NAMED_IAM --parameter-overrides AirflowTag=…`. Then unpause the DAGs.
-9. **Retire the core guide's hand-run build.** `registry_build` now runs after every load.
+9. **Alerts:** `deploy ingestion/alerts --parameter-overrides AlertEmail=…`, then confirm the subscription from the email SNS sends. Independent of the other stacks, so it can go first. The alarm reads the `airflow` service's CPU metric (`AWS/ECS`, no Container Insights): no task means no data, which counts as breaching. It also fires when Airflow is stopped on purpose with `DesiredCount=0`.
+10. **Retire the core guide's hand-run build.** `registry_build` now runs after every load.
 
 The DAGs' schedules already fit MinerU's window, 00:30–03:15 UTC, and 04:30 on the 1st of the month (`jobs.py`, `mineru.yaml`'s parameters). Change both together.
 
