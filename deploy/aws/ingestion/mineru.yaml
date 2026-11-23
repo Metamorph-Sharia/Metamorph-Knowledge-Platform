@@ -1,16 +1,16 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  MinerU on an ECS GPU instance (docs/aws-deployment-guide.md), at mineru.metamorph.internal:8010, for the
-  connectors only. Fargate has no GPU, so the service runs on its own capacity provider: an Auto Scaling group of
-  at most one g5.xlarge that is empty unless MinerU's service wants a task. The service runs only in the ingest
-  window: EventBridge Scheduler sets its desired count to 1 before the first ingest and to 0 after the last, and the
-  instance then goes back to a warm pool, stopped, with the 20 GB image still on its disk.
+  MinerU on one ECS GPU instance (docs/aws-deployment-guide.md), for the connectors only. Fargate has no GPU, and the
+  account allows no Auto Scaling and no Cloud Map, so the stack is one g5.xlarge EC2 instance in the cluster, started
+  and stopped by EventBridge Scheduler around the ingest window, with the MinerU service on it behind an internal
+  load balancer. The 20 GB image stays on the instance's disk while it is stopped. Creates no IAM: the instance's
+  profile and the scheduler's role come from parameters. Every create carries Owner=project3.
 
 Parameters:
   MinerUTag:
     Type: String
     Default: 4.0.12
-    Description: The metamorph/mineru image's tag, built on the GPU instance (the guide's Phase 3)
+    Description: The metamorph/mineru image's tag, built off the GPU instance and pushed to ECR (the guide's Phase 3)
   InstanceType:
     Type: String
     Default: g5.xlarge
@@ -23,119 +23,104 @@ Parameters:
   VolumeGiB:
     Type: Number
     Default: 100
-    Description: The image is 19.6 GB, and its build on the instance needs as much again
+    MaxValue: 100
+    Description: The account's limit on a volume. The image is 19.6 GB, and the models and caches need room beside it
+  InstanceSubnetIndex:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 2
+    Description: Which of the default VPC's subnets (metamorph-subnets, in order) holds the instance. Try another if its zone has no G5 capacity
+  InstanceProfile:
+    Type: String
+    Default: metamorph-mineru-instance
+    Description: The instance profile DevOps made (a role of the same name, trusted by ec2)
+  SchedulerRole:
+    Type: String
+    Default: metamorph-scheduler
+    Description: The role DevOps made for EventBridge Scheduler; it may start and stop only an instance named metamorph-mineru
   WindowStart:
     Type: String
-    Default: cron(30 0 * * ? *)
-    Description: UTC. Half an hour before the first ingest (jobs.py, 01:00), for the instance and the models
+    Default: cron(20 0 * * ? *)
+    Description: UTC. Ten minutes for boot and placement, then the models load before the first ingest at 01:00 (jobs.py)
   WindowEnd:
     Type: String
     Default: cron(15 3 2-31 * ? *)
-    Description: UTC. After the last daily ingest
+    Description: UTC. After the last daily ingest that reads PDFs. Not on the 1st, which has its own end
   MonthlyWindowEnd:
     Type: String
     Default: cron(30 4 1 * ? *)
     Description: UTC. On the 1st, after DSN-MUI's full pass (02:30)
 
 Resources:
-  InstanceRole:
-    Type: AWS::IAM::Role
+  Instance:
+    Type: AWS::EC2::Instance
     Properties:
-      RoleName: metamorph-gpu-instance
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement: [{Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: sts:AssumeRole}]
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-      Policies:
-        - PolicyName: build-mineru   # the guide's Phase 3: fetch the source, push the image it builds
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: s3:GetObject
-                Resource: !Sub
-                  - "${Ops}/transfer/source/*"
-                  - Ops: !ImportValue metamorph-ops-arn
-              - Effect: Allow
-                Action: [ecr:InitiateLayerUpload, ecr:UploadLayerPart, ecr:CompleteLayerUpload, ecr:PutImage, ecr:BatchCheckLayerAvailability]
-                Resource: !ImportValue metamorph-ecr-mineru-arn
-  InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties: {Roles: [!Ref InstanceRole]}
+      ImageId: !Ref GpuImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      NetworkInterfaces:   # a public address reaches ECS, ECR and CloudWatch without a NAT gateway
+        - DeviceIndex: "0"
+          AssociatePublicIpAddress: true
+          SubnetId: !Select [!Ref InstanceSubnetIndex, !Split [",", !ImportValue metamorph-subnets]]
+          GroupSet: [!ImportValue metamorph-sg-gpu-host]
+      BlockDeviceMappings:
+        - {DeviceName: /dev/xvda, Ebs: {VolumeSize: !Ref VolumeGiB, VolumeType: gp3, Encrypted: true}}
+      MetadataOptions: {HttpTokens: required, HttpPutResponseHopLimit: 2}
+      Tags:   # Name is what the scheduler role's policy matches; Owner is what the account's SCP requires
+        - {Key: Name, Value: metamorph-mineru}
+        - {Key: Owner, Value: project3}
+      # The image stays on disk between windows (no cleanup, cached before pulled), so only the first window pulls it.
+      # The attribute is what the MinerU service's placement constraint requires.
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            cat >> /etc/ecs/ecs.config <<EOF
+            ECS_CLUSTER=${Cluster}
+            ECS_ENABLE_GPU_SUPPORT=true
+            ECS_INSTANCE_ATTRIBUTES={"workload": "mineru"}
+            ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
+            ECS_DISABLE_IMAGE_CLEANUP=true
+            EOF
+          - Cluster: !ImportValue metamorph-cluster
 
-  LaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
+  LoadBalancer:   # the connectors' stable address; the task behind it changes with every start
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      LaunchTemplateData:
-        ImageId: !Ref GpuImageId
-        InstanceType: !Ref InstanceType
-        IamInstanceProfile: {Arn: !GetAtt InstanceProfile.Arn}
-        NetworkInterfaces:   # a public address reaches ECS, ECR and CloudWatch without a NAT gateway
-          - {DeviceIndex: 0, AssociatePublicIpAddress: true, Groups: [!ImportValue metamorph-sg-gpu-host]}
-        BlockDeviceMappings:
-          - {DeviceName: /dev/xvda, Ebs: {VolumeSize: !Ref VolumeGiB, VolumeType: gp3, Encrypted: true}}
-        MetadataOptions: {HttpTokens: required, HttpPutResponseHopLimit: 2}
-        TagSpecifications:
-          - {ResourceType: instance, Tags: [{Key: Name, Value: metamorph-mineru}]}
-          - {ResourceType: volume, Tags: [{Key: Name, Value: metamorph-mineru}]}
-        # Warm pools: the agent waits until the instance is in service. The image stays on disk between windows
-        # (no cleanup, cached before pulled), so only an instance's first window pulls it.
-        UserData:
-          Fn::Base64: !Sub
-            - |
-              #!/bin/bash
-              cat >> /etc/ecs/ecs.config <<EOF
-              ECS_CLUSTER=${Cluster}
-              ECS_ENABLE_GPU_SUPPORT=true
-              ECS_WARM_POOLS_CHECK=true
-              ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
-              ECS_DISABLE_IMAGE_CLEANUP=true
-              EOF
-            - Cluster: !ImportValue metamorph-cluster
+      Name: metamorph-mineru
+      Type: application
+      Scheme: internal
+      Subnets: !Split [",", !ImportValue metamorph-subnets]
+      SecurityGroups: [!ImportValue metamorph-sg-mineru-lb]
+      Tags: [{Key: Owner, Value: project3}]
+  Target:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip   # the task has its own interface (awsvpc)
+      Protocol: HTTP
+      Port: 8010
+      VpcId: !ImportValue metamorph-vpc
+      HealthCheckPath: /v1/health   # ok once the models are loaded (--preload-models)
+      HealthCheckIntervalSeconds: 30
+      Matcher: {HttpCode: "200"}
+      TargetGroupAttributes: [{Key: deregistration_delay.timeout_seconds, Value: "30"}]
+      Tags: [{Key: Owner, Value: project3}]
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 8010   # the port the load balancer's group admits from the jobs
+      DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
 
-  Instances:
-    Type: AWS::AutoScaling::AutoScalingGroup
+  Address:   # what the connectors' tasks read as METAMORPH_MINERU_URL (jobs.yaml)
+    Type: AWS::SSM::Parameter
     Properties:
-      AutoScalingGroupName: metamorph-gpu
-      MinSize: "0"
-      MaxSize: "1"
-      VPCZoneIdentifier: !Split [",", !ImportValue metamorph-subnets]   # any zone with G5 capacity
-      LaunchTemplate: {LaunchTemplateId: !Ref LaunchTemplate, Version: !GetAtt LaunchTemplate.LatestVersionNumber}
-      NewInstancesProtectedFromScaleIn: false
-  WarmPool:
-    Type: AWS::AutoScaling::WarmPool
-    Properties:
-      AutoScalingGroupName: !Ref Instances
-      PoolState: Stopped               # a stopped instance costs its disk only
-      MinSize: 0
-      MaxGroupPreparedCapacity: 1
-      InstanceReusePolicy: {ReuseOnScaleIn: true}
-
-  Capacity:
-    Type: AWS::ECS::CapacityProvider
-    Properties:
-      Name: metamorph-gpu
-      AutoScalingGroupProvider:
-        AutoScalingGroupArn: !Ref Instances
-        ManagedScaling: {Status: ENABLED, TargetCapacity: 100, MinimumScalingStepSize: 1, MaximumScalingStepSize: 1, InstanceWarmupPeriod: 300}
-        ManagedTerminationProtection: DISABLED
-        ManagedDraining: ENABLED
-  ClusterCapacity:
-    Type: AWS::ECS::ClusterCapacityProviderAssociations
-    Properties:
-      Cluster: !ImportValue metamorph-cluster
-      CapacityProviders: [!Ref Capacity]
-      DefaultCapacityProviderStrategy: []   # the other services name FARGATE themselves
-
-  Discovery:
-    Type: AWS::ServiceDiscovery::Service
-    Properties:
-      Name: mineru
-      NamespaceId: !ImportValue metamorph-namespace
-      DnsConfig: {DnsRecords: [{Type: A, TTL: 10}], RoutingPolicy: MULTIVALUE}
-      HealthCheckCustomConfig: {FailureThreshold: 1}
+      Name: /metamorph/connectors/mineru-url
+      Type: String
+      Value: !Sub "http://${LoadBalancer.DNSName}:8010"
+      Tags: {Owner: project3}
 
   Task:
     Type: AWS::ECS::TaskDefinition
@@ -156,7 +141,7 @@ Resources:
           LinuxParameters: {SharedMemorySize: 2048}   # vLLM's workers share tensors through /dev/shm
           PortMappings: [{ContainerPort: 8010}]
           MountPoints: [{SourceVolume: uploads, ContainerPath: /uploads}]
-          # The models are in the image, and the task has no internet route: never ask the Hugging Face Hub.
+          # The models are in the image: never ask the Hugging Face Hub.
           Environment: [{Name: HF_HUB_OFFLINE, Value: "1"}]
           Secrets: [{Name: MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}]
           HealthCheck:   # healthy once the models are loaded (--preload-models)
@@ -167,35 +152,28 @@ Resources:
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-mineru}
+      Tags: [{Key: Owner, Value: project3}]
 
   Service:
     Type: AWS::ECS::Service
-    DependsOn: ClusterCapacity
+    DependsOn: [Listener, Instance]
     Properties:
       ServiceName: mineru
       Cluster: !ImportValue metamorph-cluster
       TaskDefinition: !Ref Task
-      CapacityProviderStrategy: [{CapacityProvider: !Ref Capacity, Weight: 1}]
-      DesiredCount: 0                  # the schedules below set it; a stack update outside the window keeps it 0
+      LaunchType: EC2
+      DesiredCount: 1   # it places itself whenever the instance is running, and waits while it is stopped
+      PlacementConstraints: [{Type: memberOf, Expression: "attribute:workload == mineru"}]
+      HealthCheckGracePeriodSeconds: 900   # a start loads the models; the first one also pulls the image
       DeploymentConfiguration: {MinimumHealthyPercent: 0, MaximumPercent: 100}   # one GPU: replace, don't overlap
+      LoadBalancers: [{ContainerName: main, ContainerPort: 8010, TargetGroupArn: !Ref Target}]
       NetworkConfiguration:
         AwsvpcConfiguration:
           Subnets: !Split [",", !ImportValue metamorph-subnets]
           SecurityGroups: [!ImportValue metamorph-sg-mineru]
           AssignPublicIp: DISABLED     # an EC2 task's interface takes no public address
-      ServiceRegistries: [{RegistryArn: !GetAtt Discovery.Arn}]
+      Tags: [{Key: Owner, Value: project3}]
 
-  SchedulerRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement: [{Effect: Allow, Principal: {Service: scheduler.amazonaws.com}, Action: sts:AssumeRole}]
-      Policies:
-        - PolicyName: window
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement: [{Effect: Allow, Action: ecs:UpdateService, Resource: !Ref Service}]
   Open:
     Type: AWS::Scheduler::Schedule
     Properties:
@@ -204,11 +182,9 @@ Resources:
       ScheduleExpressionTimezone: UTC
       FlexibleTimeWindow: {Mode: "OFF"}
       Target:
-        Arn: arn:aws:scheduler:::aws-sdk:ecs:updateService
-        RoleArn: !GetAtt SchedulerRole.Arn
-        Input: !Sub
-          - '{"Cluster": "${Cluster}", "Service": "${Service.Name}", "DesiredCount": 1}'
-          - Cluster: !ImportValue metamorph-cluster
+        Arn: arn:aws:scheduler:::aws-sdk:ec2:startInstances
+        RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${SchedulerRole}"
+        Input: !Sub '{"InstanceIds": ["${Instance}"]}'
   Close:
     Type: AWS::Scheduler::Schedule
     Properties:
@@ -217,11 +193,9 @@ Resources:
       ScheduleExpressionTimezone: UTC
       FlexibleTimeWindow: {Mode: "OFF"}
       Target:
-        Arn: arn:aws:scheduler:::aws-sdk:ecs:updateService
-        RoleArn: !GetAtt SchedulerRole.Arn
-        Input: !Sub
-          - '{"Cluster": "${Cluster}", "Service": "${Service.Name}", "DesiredCount": 0}'
-          - Cluster: !ImportValue metamorph-cluster
+        Arn: arn:aws:scheduler:::aws-sdk:ec2:stopInstances
+        RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${SchedulerRole}"
+        Input: !Sub '{"InstanceIds": ["${Instance}"]}'
   CloseMonthly:
     Type: AWS::Scheduler::Schedule
     Properties:
@@ -230,8 +204,10 @@ Resources:
       ScheduleExpressionTimezone: UTC
       FlexibleTimeWindow: {Mode: "OFF"}
       Target:
-        Arn: arn:aws:scheduler:::aws-sdk:ecs:updateService
-        RoleArn: !GetAtt SchedulerRole.Arn
-        Input: !Sub
-          - '{"Cluster": "${Cluster}", "Service": "${Service.Name}", "DesiredCount": 0}'
-          - Cluster: !ImportValue metamorph-cluster
+        Arn: arn:aws:scheduler:::aws-sdk:ec2:stopInstances
+        RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${SchedulerRole}"
+        Input: !Sub '{"InstanceIds": ["${Instance}"]}'
+
+Outputs:
+  InstanceId: {Value: !Ref Instance}
+  MinerUUrl: {Value: !Sub "http://${LoadBalancer.DNSName}:8010"}

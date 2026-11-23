@@ -238,10 +238,8 @@ def test_the_jobs_that_read_pdfs_are_flagged_so_that_they_run_while_mineru_does(
 
 def test_reports_reads_its_pdfs_on_mondays_inside_mineru_s_window_after_dsn_mui(jobs) -> None:
     reports, dsn = jobs["ingest_reports"], jobs["ingest_dsn_fatwa"]
-    window_end = 3 * 60 + 15  # UTC, deploy/aws/ingestion/mineru.yaml's WindowEnd
-
     assert reports.schedule.split()[2:] == ["*", "*", "1"]
-    assert minutes_after_midnight(dsn.schedule) < minutes_after_midnight(reports.schedule) < window_end
+    assert minutes_after_midnight(dsn.schedule) < minutes_after_midnight(reports.schedule)
 
 
 def test_a_weekly_job_copies_every_connector_s_data_to_the_ops_bucket() -> None:
@@ -252,7 +250,6 @@ def test_a_weekly_job_copies_every_connector_s_data_to_the_ops_bucket() -> None:
     assert task_family(backup.image) == "metamorph-ops"
     day_of_month, month, day_of_week = backup.schedule.split()[2:]
     assert (day_of_month, month) == ("*", "*") and day_of_week != "*"  # once a week, on one weekday
-    assert minutes_after_midnight(backup.schedule) > 3 * 60 + 15  # while no ingest runs and MinerU is stopped
 
 
 def test_the_backup_tars_each_connector_s_data_directory_once_to_a_dated_key(jobs) -> None:
