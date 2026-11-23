@@ -480,3 +480,157 @@ def test_the_airflow_waf_script_is_beside_the_templates_and_valid_shell() -> Non
 
 def test_the_tunnel_is_gone() -> None:
     assert not (INGESTION / "tunnel.sh").exists()
+
+
+# --- MinerU: one scheduled instance behind an internal load balancer (mineru.yaml) ---------------------------------
+
+MINERU = template("mineru.yaml")
+
+
+def minerus(of_type: str) -> dict[str, dict]:
+    return shared_resources(of_type, MINERU)
+
+
+def window(name: str) -> tuple[int, str]:
+    """A window parameter's default, cron(minute hour day-of-month * ? *): minutes after midnight UTC, and its day-of-month."""
+    expression = re.fullmatch(r"cron\((.*)\)", MINERU["Parameters"][name]["Default"])
+    minute, hour, day_of_month, *_ = expression.group(1).split()
+    return int(hour) * 60 + int(minute), day_of_month
+
+
+def job_start(job: ConnectorJob) -> int:
+    minute, hour = job.schedule.split()[:2]
+    return int(hour) * 60 + int(minute)
+
+
+def test_the_window_is_a_start_a_daily_end_and_a_later_end_on_the_first() -> None:
+    start, start_days = window("WindowStart")
+    end, end_days = window("WindowEnd")
+    monthly_end, monthly_days = window("MonthlyWindowEnd")
+
+    assert start_days == "*"  # the instance starts every day
+    assert (end_days, monthly_days) == ("2-31", "1")  # the two stops share the days of the month between them
+    assert (start, end, monthly_end) == (20, 3 * 60 + 15, 4 * 60 + 30)
+
+
+def test_every_job_that_reads_pdfs_starts_inside_the_window(jobs) -> None:
+    start, _ = window("WindowStart")
+    end, _ = window("WindowEnd")
+    monthly_end, _ = window("MonthlyWindowEnd")
+    readers = [job for job in jobs if job.reads_pdfs]
+
+    assert readers
+    for job in readers:
+        day_of_month = job.schedule.split()[2]
+        # a job that runs only on the 1st has until the monthly end; any other job starts before the daily end
+        assert start <= job_start(job) < (monthly_end if day_of_month == "1" else end), job.dag_id
+
+
+def test_the_weekly_backup_starts_after_the_last_stop() -> None:
+    from metamorph_pipeline.jobs import backup_job
+
+    assert job_start(backup_job()) > window("MonthlyWindowEnd")[0]  # the Sunday it runs may be the 1st
+
+
+def test_the_mineru_stack_has_no_auto_scaling_iam_cloud_map_or_launch_template() -> None:
+    types = {body["Type"] for body in MINERU["Resources"].values()}
+    banned = (
+        "AWS::IAM::", "AWS::AutoScaling::", "AWS::ServiceDiscovery::", "AWS::EC2::LaunchTemplate",
+        "AWS::ECS::Capacity", "AWS::ECS::ClusterCapacity",
+    )  # fmt: skip
+
+    assert not {kind for kind in types if kind.startswith(banned)}
+
+
+def test_the_gpu_instance_is_one_g5_xlarge_with_a_small_public_tagged_root_disk() -> None:
+    ((_, instance),) = minerus("AWS::EC2::Instance").items()
+    props = instance["Properties"]
+    tags = {t["Key"]: t["Value"] for t in props["Tags"]}
+    (disk,) = props["BlockDeviceMappings"]
+    (nic,) = props["NetworkInterfaces"]
+
+    assert MINERU["Parameters"]["InstanceType"]["Default"] == "g5.xlarge"
+    assert props["InstanceType"] == {"Ref": "InstanceType"}
+    assert MINERU["Parameters"]["GpuImageId"]["Default"].endswith("/gpu/recommended/image_id")
+    assert props["ImageId"] == {"Ref": "GpuImageId"}
+    assert tags == {"Name": "metamorph-mineru", "Owner": "project3"}  # the scheduler role may stop only this name
+    assert MINERU["Parameters"]["VolumeGiB"]["MaxValue"] <= 100  # the account's limit
+    assert disk["Ebs"]["VolumeSize"] == {"Ref": "VolumeGiB"}
+    assert nic["AssociatePublicIpAddress"] is True  # ECR without a NAT gateway
+    assert nic["GroupSet"] == [{"Fn::ImportValue": "metamorph-sg-gpu-host"}]
+
+
+def test_the_instance_profile_is_a_parameter_defaulting_to_the_one_devops_made() -> None:
+    ((_, instance),) = minerus("AWS::EC2::Instance").items()
+
+    assert MINERU["Parameters"]["InstanceProfile"]["Default"] == "metamorph-mineru-instance"
+    assert instance["Properties"]["IamInstanceProfile"] == {"Ref": "InstanceProfile"}
+
+
+def test_the_instance_joins_the_cluster_with_gpu_support_and_an_attribute_the_service_requires() -> None:
+    ((_, instance),) = minerus("AWS::EC2::Instance").items()
+    user_data = instance["Properties"]["UserData"]["Fn::Base64"]["Fn::Sub"][0]
+    attribute = re.search(r'ECS_INSTANCE_ATTRIBUTES=\{"(\w+)": ?"(\w+)"\}', user_data)
+    (service,) = minerus("AWS::ECS::Service").values()
+    (constraint,) = service["Properties"]["PlacementConstraints"]
+
+    assert "ECS_CLUSTER=${Cluster}" in user_data
+    assert "ECS_ENABLE_GPU_SUPPORT=true" in user_data
+    assert attribute
+    assert constraint == {"Type": "memberOf", "Expression": f"attribute:{attribute[1]} == {attribute[2]}"}
+
+
+def test_the_service_runs_one_mineru_task_on_ec2_behind_the_load_balancer() -> None:
+    (service,) = minerus("AWS::ECS::Service").values()
+    props = service["Properties"]
+    (task,) = minerus("AWS::ECS::TaskDefinition").values()
+    (balanced,) = props["LoadBalancers"]
+    network = props["NetworkConfiguration"]["AwsvpcConfiguration"]
+
+    assert props["LaunchType"] == "EC2"
+    assert props["DesiredCount"] == 1  # it places itself whenever the instance runs
+    assert task["Properties"]["RequiresCompatibilities"] == ["EC2"]
+    assert (balanced["ContainerName"], balanced["ContainerPort"]) == ("main", 8010)
+    assert network["SecurityGroups"] == [{"Fn::ImportValue": "metamorph-sg-mineru"}]
+    assert "ServiceRegistries" not in props
+
+
+def test_the_load_balancer_is_internal_and_checks_mineru_s_health_endpoint() -> None:
+    ((_, balancer),) = minerus("AWS::ElasticLoadBalancingV2::LoadBalancer").items()
+    (target,) = minerus("AWS::ElasticLoadBalancingV2::TargetGroup").values()
+    (listener,) = minerus("AWS::ElasticLoadBalancingV2::Listener").values()
+    (task,) = minerus("AWS::ECS::TaskDefinition").values()
+    (container,) = task["Properties"]["ContainerDefinitions"]
+
+    assert balancer["Properties"]["Scheme"] == "internal"
+    assert balancer["Properties"]["SecurityGroups"] == [{"Fn::ImportValue": "metamorph-sg-mineru-lb"}]
+    assert target["Properties"]["TargetType"] == "ip"  # the task has its own interface (awsvpc)
+    assert target["Properties"]["HealthCheckPath"] == "/v1/health"
+    assert "/v1/health" in container["HealthCheck"]["Command"][-1]
+    assert listener["Properties"]["Port"] == 8010  # the port the load balancer group admits from the jobs
+    for resource in (balancer, target):
+        assert {"Key": "Owner", "Value": "project3"} in resource["Properties"]["Tags"]
+
+
+def test_the_connectors_mineru_url_is_written_from_the_load_balancer_s_address() -> None:
+    ((_, setting),) = minerus("AWS::SSM::Parameter").items()
+    props = setting["Properties"]
+
+    assert props["Name"] == "/metamorph/connectors/mineru-url"
+    assert props["Value"] == {"Fn::Sub": "http://${LoadBalancer.DNSName}:8010"}
+    assert props["Tags"] == {"Owner": "project3"}
+
+
+def test_three_schedules_start_and_stop_the_instance_with_the_scheduler_role() -> None:
+    bodies = minerus("AWS::Scheduler::Schedule").values()
+    schedules = {body["Properties"]["ScheduleExpression"]["Ref"]: body["Properties"] for body in bodies}
+
+    assert MINERU["Parameters"]["SchedulerRole"]["Default"] == "metamorph-scheduler"
+    assert set(schedules) == {"WindowStart", "WindowEnd", "MonthlyWindowEnd"}
+    assert schedules["WindowStart"]["Target"]["Arn"] == "arn:aws:scheduler:::aws-sdk:ec2:startInstances"
+    for stop in ("WindowEnd", "MonthlyWindowEnd"):
+        assert schedules[stop]["Target"]["Arn"] == "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
+    for props in schedules.values():
+        assert props["ScheduleExpressionTimezone"] == "UTC"
+        assert props["Target"]["RoleArn"] == {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${SchedulerRole}"}
+        assert props["Target"]["Input"] == {"Fn::Sub": '{"InstanceIds": ["${Instance}"]}'}
