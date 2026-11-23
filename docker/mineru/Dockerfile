@@ -18,7 +18,10 @@ ENV MINERU_HOME=/opt/mineru \
 
 # vLLM's Triton kernels compile a small C launcher on their first run: the slim image has no compiler.
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-RUN uv pip install --system --no-cache "mineru[full]==4.0.12"
+# MinerU is pinned, but its dependencies are not: resolve them as they were on the day step 9 was read (2026-10-22).
+# A fresh resolve on 2026-11-23 took transformers 5.24, which fails vLLM's start ("Found 1 <|video_pad|> tokens in
+# the text but no videos were passed"), so the GPU service answered 503 forever.
+RUN uv pip install --system --no-cache --exclude-newer 2026-10-22T00:00:00Z "mineru[full]==4.0.12"
 
 # The service runs as mineru, which owns MINERU_HOME: MinerU writes its config and model locks there.
 RUN useradd --create-home --uid 10001 mineru && mkdir -p "$MINERU_HOME" /uploads && chown mineru "$MINERU_HOME" /uploads

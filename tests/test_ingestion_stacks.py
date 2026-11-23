@@ -676,31 +676,33 @@ def test_the_edge_function_passes_the_right_password_and_drops_the_header() -> N
 
 
 @needs_node
-def test_the_edge_function_tells_airflow_the_viewers_host_and_that_the_viewer_used_https() -> None:
-    # The origin sees Host = the load balancer's name, and the load balancer overwrites X-Forwarded-Proto with its own
-    # http: only these two headers carry what the viewer used. They are set, never trusted from the viewer.
+def test_the_edge_function_tells_airflow_the_viewers_host() -> None:
+    # The origin sees Host = the load balancer's name: only this header carries the host the viewer used. It is set,
+    # never trusted from the viewer. No scheme header: the load balancer always sends X-Forwarded-Proto: http, and
+    # gunicorn answers 400 to a request whose scheme headers contradict each other (seen live, 2026-11-23).
     host = "d111111abcdef8.cloudfront.net"
     answer = run_password_check(basic("admin", PASSWORD), extra={"host": host})
     assert answer["headers"]["x-forwarded-host"] == {"value": host}
-    assert answer["headers"]["x-forwarded-ssl"] == {"value": "on"}
+    assert "x-forwarded-ssl" not in answer["headers"]
 
-    spoofed = {"host": host, "x-forwarded-host": "evil.example", "x-forwarded-ssl": "off"}
+    spoofed = {"host": host, "x-forwarded-host": "evil.example"}
     answer = run_password_check(basic("admin", PASSWORD), extra=spoofed)
     assert answer["headers"]["x-forwarded-host"] == {"value": host}
-    assert answer["headers"]["x-forwarded-ssl"] == {"value": "on"}
 
 
-def test_airflow_takes_its_host_and_scheme_from_those_headers() -> None:
-    # gunicorn marks a request https on X-Forwarded-Ssl: on (one of its default secure-scheme headers), from a peer in
-    # FORWARDED_ALLOW_IPS: the load balancer, reachable from nothing but CloudFront's prefix list (security group).
-    # ProxyFix then must not read what the load balancer wrote: its X-Forwarded-Proto (http) and -Port (80).
+def test_airflow_takes_its_host_from_that_header_and_http_links_come_back_as_https() -> None:
+    # ProxyFix reads X-Forwarded-Host and nothing the load balancer wrote (its X-Forwarded-Proto is http, -Port 80).
+    # Airflow's absolute links (a sign-in's next=) then say http, and CloudFront sends those back to https.
     (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
     (container,) = task["Properties"]["ContainerDefinitions"]
     environment = {e["Name"]: e["Value"] for e in container["Environment"]}
-    assert environment["FORWARDED_ALLOW_IPS"] == "*"
+    assert "FORWARDED_ALLOW_IPS" not in environment
     assert environment["AIRFLOW__WEBSERVER__PROXY_FIX_X_HOST"] == "1"
     assert environment["AIRFLOW__WEBSERVER__PROXY_FIX_X_PROTO"] == "0"
     assert environment["AIRFLOW__WEBSERVER__PROXY_FIX_X_PORT"] == "0"
+    (distribution,) = resources("airflow.yaml", "AWS::CloudFront::Distribution")
+    behavior = distribution["Properties"]["DistributionConfig"]["DefaultCacheBehavior"]
+    assert behavior["ViewerProtocolPolicy"] == "redirect-to-https"
 
 
 @needs_node
@@ -717,7 +719,6 @@ def test_the_edge_function_is_a_published_cloudfront_function_on_every_request()
     behavior = distribution["Properties"]["DistributionConfig"]["DefaultCacheBehavior"]
     (association,) = behavior["FunctionAssociations"]
     assert association["EventType"] == "viewer-request"
-    assert behavior["ViewerProtocolPolicy"] == "https-only"
     assert behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"  # CachingDisabled
 
 
