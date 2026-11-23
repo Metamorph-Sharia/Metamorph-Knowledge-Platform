@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Ingestion alerts, by email: a failed Metamorph task (EventBridge, ECS Task State Change) and a dead Airflow
+  Ingestion alerts, by email: a failed Metamorph task (EventBridge, ECS Task State Change; a task that ECS stops itself in a service deploy is no failure) and a dead Airflow
   (a CloudWatch alarm). No IAM resources: the topic policy lets EventBridge publish, and CloudWatch alarms publish
   to topics of their own account without one. Independent of the other ingestion stacks; needs only the core.
   After deploying, confirm the subscription from the email SNS sends.
@@ -41,6 +41,7 @@ Resources:
         detail:
           clusterArn: [!ImportValue metamorph-cluster-arn]
           lastStatus: [STOPPED]
+          stopCode: [EssentialContainerExited]   # the container ended on its own; not ServiceSchedulerInitiated, which is ECS replacing a service's task in a deploy (exit 137 or 143)
           taskDefinitionArn: [{prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-"}]
           containers:
             exitCode: [{anything-but: [0]}]

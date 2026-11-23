@@ -160,6 +160,7 @@ Resources:
         Rules:
           - {Id: transfer, Status: Enabled, Prefix: transfer/, ExpirationInDays: 14}
           - {Id: exports, Status: Enabled, Prefix: exports/, ExpirationInDays: 30}   # copies shared from the database
+          - {Id: backups, Status: Enabled, Prefix: backups/, ExpirationInDays: 35}   # the weekly copy of the connectors' data (five of them, and a week of slack)
           - {Id: multipart, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 2}}
   OpsPolicy:
     Type: AWS::S3::BucketPolicy

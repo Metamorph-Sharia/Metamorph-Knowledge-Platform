@@ -27,10 +27,12 @@ Parameters:
     Description: The account's limit on a volume. The image is 19.6 GB, and the models and caches need room beside it
   InstanceSubnetIndex:
     Type: Number
-    Default: 0
+    # g5.xlarge is offered only in ap-southeast-3a and 3c. The core's metamorph-subnets lists its subnets in the
+    # order 3b, 3c, 3a, so index 0 (3b) would fail at launch; 1 is 3c. Check the order again if the core changes.
+    Default: 1
     MinValue: 0
     MaxValue: 2
-    Description: Which of the default VPC's subnets (metamorph-subnets, in order) holds the instance. Try another if its zone has no G5 capacity
+    Description: Which of the default VPC's subnets (metamorph-subnets, in order) holds the instance. Only index 1 (3c) and 2 (3a) offer g5.xlarge; try the other if the zone has no capacity
   InstanceProfile:
     Type: String
     Default: metamorph-mineru-instance
