@@ -144,7 +144,7 @@ Resources:
       RootDirectory: {Path: /bundles, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
       AccessPointTags: [{Key: Owner, Value: project3}]
 
-  # The ingestion images: scanned on push, tags that cannot be overwritten, the last 10 kept.
+  # The ingestion images: scanned on push, tags that cannot be overwritten, the last 10 kept (MinerU's, at 20 GB, the last 2).
   OjkImages:
     Type: AWS::ECR::Repository
     Properties:
@@ -231,15 +231,7 @@ Resources:
       RepositoryName: metamorph/mineru
       ImageScanningConfiguration: {ScanOnPush: true}
       ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  OpsImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/ops
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
+      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}'}
       Tags: [{Key: Owner, Value: project3}]
 
   # The wiring the ingestion tasks read from Parameter Store. (/metamorph/connectors/mineru-url names MinerU's load

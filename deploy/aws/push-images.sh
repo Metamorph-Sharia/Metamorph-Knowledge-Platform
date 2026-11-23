@@ -5,6 +5,8 @@
 #   deploy/aws/push-images.sh                          the core's images: platform, curation-web
 #   deploy/aws/push-images.sh retrieval                Metamorph Retrieval, once deploy/aws/retrieval.yaml made its repository
 #   deploy/aws/push-images.sh airflow bpk-connector    others, once the ingestion layer has their repositories
+#   deploy/aws/push-images.sh airflow ojk-connector bpk-connector bi-connector dsn-mui-connector \
+#       ojk-register ojk-stats bi-stats bps-stats reports     the whole ingestion layer (jobs.yaml's tags are these)
 #   TAG=20261024-1 deploy/aws/push-images.sh           a tag of your own (default: the UTC time)
 #
 # It builds the working trees as they are: commit first, so a tag always names code that is in git.
@@ -16,7 +18,8 @@ region="${AWS_REGION:-ap-southeast-3}"
 registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$region.amazonaws.com"
 tag="${TAG:-$(date -u +%Y%m%d-%H%M)}"
 CORE=(platform curation-web)
-IMAGES=("${CORE[@]}" retrieval airflow ojk-connector bpk-connector bi-connector dsn-mui-connector)
+INGESTION=(airflow ojk-connector bpk-connector bi-connector dsn-mui-connector ojk-register ojk-stats bi-stats bps-stats reports)
+IMAGES=("${CORE[@]}" retrieval "${INGESTION[@]}")
 
 build() {  # repository, build context, Dockerfile
   docker build --platform linux/arm64 -t "$registry/metamorph/$1:$tag" -f "$3" "$2"
@@ -35,6 +38,11 @@ for image in "$@"; do
     bpk-connector)     build bpk-connector "$workspace" "$workspace/BPK-Source-Connector/Dockerfile" ;;
     bi-connector)      build bi-connector "$workspace" "$workspace/BI-Source-Connector/Dockerfile" ;;
     dsn-mui-connector) build dsn-mui-connector "$workspace" "$workspace/DSN-MUI-Source-Connector/Dockerfile" ;;
+    ojk-register)      build ojk-register "$workspace" "$workspace/OJK-Register-Connector/Dockerfile" ;;
+    ojk-stats)         build ojk-stats "$workspace" "$workspace/OJK-Stats-Connector/Dockerfile" ;;
+    bi-stats)          build bi-stats "$workspace" "$workspace/BI-Stats-Connector/Dockerfile" ;;
+    bps-stats)         build bps-stats "$workspace" "$workspace/BPS-Stats-Connector/Dockerfile" ;;
+    reports)           build reports "$workspace" "$workspace/Reports-Connector/Dockerfile" ;;
     *) echo "unknown image: $image (one of: ${IMAGES[*]})" >&2; exit 2 ;;
   esac
 done
