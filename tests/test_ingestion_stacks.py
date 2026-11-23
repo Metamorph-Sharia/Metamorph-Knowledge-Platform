@@ -10,7 +10,15 @@ from typing import Any
 
 import pytest
 import yaml
-from metamorph_pipeline.jobs import ConnectorJob, ingest_jobs
+from metamorph_pipeline.jobs import (
+    CONNECTOR_SETTINGS,
+    OPS_IMAGE,
+    PLATFORM_IMAGE,
+    RETRIEVAL_IMAGE,
+    ConnectorJob,
+    ingest_jobs,
+    task_family,
+)
 
 INGESTION = Path(__file__).parents[1] / "deploy/aws/ingestion"
 TEMPLATES = sorted(INGESTION.glob("*.yaml"))
@@ -277,21 +285,22 @@ def test_every_resource_that_takes_tags_carries_owner(jobs) -> None:
     assert not missing
 
 
-def test_every_image_a_dag_runs_has_a_scanned_immutable_repository_keeping_ten(jobs) -> None:
+def test_every_ingestion_image_has_a_scanned_immutable_repository_keeping_ten_mineru_two(jobs) -> None:
     repositories = {
         body["Properties"]["RepositoryName"]: body["Properties"]
         for body in shared_resources("AWS::ECR::Repository").values()
     }
     images = {job.image.rsplit(":", 1)[0] for job in jobs} - {i.rsplit(":", 1)[0] for i in NOT_INGESTION_IMAGES}
     assert len(images) == 9
-    wanted = images | {"metamorph/airflow", "metamorph/mineru", "metamorph/ops"}
+    # No ops repository: the ops task runs the platform image, and its family only borrows the name
+    wanted = images | {"metamorph/airflow", "metamorph/mineru"}
     assert set(repositories) == wanted
-    for properties in repositories.values():
+    for name, properties in repositories.items():
         assert properties["ImageScanningConfiguration"] == {"ScanOnPush": True}
         assert properties["ImageTagMutability"] == "IMMUTABLE"
         policy = yaml.safe_load(properties["LifecyclePolicy"]["LifecyclePolicyText"])
         (rule,) = policy["rules"]
-        assert rule["selection"]["countNumber"] == 10
+        assert rule["selection"]["countNumber"] == (2 if name == "metamorph/mineru" else 10)  # MinerU's are 20 GB
         assert rule["action"]["type"] == "expire"
 
 
@@ -302,3 +311,179 @@ def test_the_database_group_accepts_airflow_and_the_tasks() -> None:
         if body["Properties"]["GroupId"] == {"Fn::ImportValue": "metamorph-sg-database"}
     }
     assert sources == {"AirflowGroup", "JobsGroup"}
+
+
+# The jobs stack: one task definition per image a DAG runs.
+JOBS = template("jobs.yaml")
+
+
+def task_definitions() -> dict[str, dict[str, Any]]:
+    """Family → the task definition's properties."""
+    return {
+        body["Properties"]["Family"]: body["Properties"]
+        for body in JOBS["Resources"].values()
+        if body["Type"] == "AWS::ECS::TaskDefinition"
+    }
+
+
+def main_container(definition: dict[str, Any]) -> dict[str, Any]:
+    (main,) = [c for c in definition["ContainerDefinitions"] if c["Name"] == "main"]
+    return main
+
+
+def mounted(definition: dict[str, Any], container: dict[str, Any]) -> dict[str, str]:
+    """Container path → the export name of the access point mounted there."""
+    access_points = {
+        volume["Name"]: volume["EFSVolumeConfiguration"]["AuthorizationConfig"]["AccessPointId"]["Fn::ImportValue"]
+        for volume in definition.get("Volumes", [])
+    }
+    return {m["ContainerPath"]: access_points[m["SourceVolume"]] for m in container.get("MountPoints", [])}
+
+
+def image_tag_parameter(container: dict[str, Any]) -> str:
+    match = re.search(r"\$\{(\w+)\}$", container["Image"]["Fn::Sub"][0])
+    assert match
+    return match.group(1)
+
+
+def data_mounts(job: ConnectorJob) -> dict[str, str]:
+    """The job's data directory as its container sees it → its access point's export."""
+    return {m.target: f"metamorph-efs-{job.connector}-data" for m in job.mounts if m.target.startswith("/workspace/")}
+
+
+def dag_images(jobs: list[ConnectorJob]) -> set[str]:
+    """Every image a DAG launches, but Retrieval's: its refresh task belongs to the retrieval stack."""
+    return {job.image for job in jobs} | {PLATFORM_IMAGE, OPS_IMAGE}
+
+
+def test_every_image_a_dag_runs_has_a_task_definition_named_for_it(jobs) -> None:
+    assert RETRIEVAL_IMAGE not in dag_images(jobs)
+    assert set(task_definitions()) == {task_family(image) for image in dag_images(jobs)}
+    assert len(task_definitions()) == 11  # nine connectors, the platform and ops
+
+
+def test_every_task_definition_has_one_essential_main_container_logging_under_its_family() -> None:
+    for family, definition in task_definitions().items():
+        main = main_container(definition)
+        assert main["Essential"] is True
+        assert "Command" not in main or family == "metamorph-ops"  # Airflow passes the command
+        assert main["LogConfiguration"]["Options"]["awslogs-stream-prefix"] == family  # read at <family>/main
+        assert definition["RequiresCompatibilities"] == ["FARGATE"]
+
+
+def test_each_connector_mounts_its_own_access_point_and_the_bundles_and_no_other(jobs) -> None:
+    for job in jobs:
+        definition = task_definitions()[task_family(job.image)]
+        own = data_mounts(job)
+        assert len(own) == 1
+        assert mounted(definition, main_container(definition)) == {**own, "/bundles": "metamorph-efs-bundles"}
+
+
+def test_the_platform_mounts_only_the_bundles_read_only() -> None:
+    definition = task_definitions()["metamorph-platform"]
+    main = main_container(definition)
+    assert mounted(definition, main) == {"/bundles": "metamorph-efs-bundles"}
+    assert all(m["ReadOnly"] is True for m in main["MountPoints"])
+
+
+def test_the_ops_task_mounts_every_connectors_data_at_its_connector_path_and_the_bundles(jobs) -> None:
+    definition = task_definitions()["metamorph-ops"]
+    expected = {"/bundles": "metamorph-efs-bundles"}
+    for job in jobs:
+        expected.update(data_mounts(job))
+    assert len(expected) == 10
+    assert mounted(definition, main_container(definition)) == expected
+
+
+def test_no_task_mounts_ojk_credentials() -> None:  # JDIH OJK needs none
+    assert "credentials" not in (INGESTION / "jobs.yaml").read_text()
+
+
+def test_task_roles_come_from_parameters_named_after_the_devops_roles() -> None:
+    parameters = JOBS["Parameters"]
+    assert parameters["ConnectorTaskRole"]["Default"] == "metamorph-connector-task"
+    assert parameters["PlatformTaskRole"]["Default"] == "metamorph-platform-task"
+    for family, definition in task_definitions().items():
+        parameter = "PlatformTaskRole" if family == "metamorph-platform" else "ConnectorTaskRole"  # ops: connector role
+        assert definition["TaskRoleArn"] == {"Fn::Sub": f"arn:aws:iam::${{AWS::AccountId}}:role/${{{parameter}}}"}
+        assert definition["ExecutionRoleArn"] == {"Fn::ImportValue": "metamorph-execution-role"}
+
+
+def test_the_jobs_stack_declares_no_iam_resource_and_imports_only_live_exports() -> None:
+    assert not [name for name, r in JOBS["Resources"].items() if r["Type"].startswith("AWS::IAM::")]
+    ingestion_exports = {name for path in TEMPLATES for name in exported(template(path.name))}
+    assert imported(INGESTION / "jobs.yaml") <= LIVE_CORE_EXPORTS | ingestion_exports
+    assert not exported(JOBS)
+
+
+def test_every_task_definition_is_tagged_owner_project3() -> None:
+    for family, definition in task_definitions().items():
+        assert {"Key": "Owner", "Value": "project3"} in definition["Tags"], family
+
+
+def test_sizes_follow_the_plan_and_stay_inside_the_accounts_task_cap() -> None:
+    parameters = JOBS["Parameters"]
+    defaults = {name: parameters[name]["Default"] for name in ("ConnectorCpu", "ConnectorMemory", "PlatformCpu", "PlatformMemory")}
+    assert defaults == {"ConnectorCpu": "1024", "ConnectorMemory": "2048", "PlatformCpu": "1024", "PlatformMemory": "4096"}
+    for name in defaults:
+        limit = 2048 if name.endswith("Cpu") else 8192
+        assert max(int(v) for v in parameters[name]["AllowedValues"]) <= limit
+    for family, definition in task_definitions().items():
+        size = "Platform" if family == "metamorph-platform" else "Connector"
+        assert definition["Cpu"] == {"Ref": f"{size}Cpu"}
+        assert definition["Memory"] == {"Ref": f"{size}Memory"}
+
+
+def test_each_connector_gets_the_connector_settings_and_its_own_secrets_from_parameter_store(jobs) -> None:
+    for job in jobs:
+        main = main_container(task_definitions()[task_family(job.image)])
+        names = {secret["Name"] for secret in main["Secrets"]}
+        assert set(CONNECTOR_SETTINGS) <= names, job.dag_id
+        if "DATABASE_URL" in job.secrets:
+            assert {"Name": "DATABASE_URL", "ValueFrom": "/metamorph/bi/database-url"} in main["Secrets"]
+
+
+def test_each_image_comes_from_its_own_repository_at_a_tag_parameter(jobs) -> None:
+    tags = {}
+    for family, definition in task_definitions().items():
+        main = main_container(definition)
+        tags[family] = image_tag_parameter(main)
+        assert JOBS["Parameters"][tags[family]]["Type"] == "String"
+    for job in jobs:
+        main = main_container(task_definitions()[task_family(job.image)])
+        assert main["Image"]["Fn::Sub"][0].startswith("${Registry}/" + job.image.rsplit(":", 1)[0] + ":")
+    assert tags["metamorph-ops"] == tags["metamorph-platform"]  # ops runs the platform image
+    assert len(set(tags.values())) == len(tags) - 1
+
+
+def test_the_bi_statistics_task_copies_the_seki_inbox_from_the_ops_bucket_before_main_starts() -> None:
+    definition = task_definitions()["metamorph-bi-stats"]
+    init, main = definition["ContainerDefinitions"][0], main_container(definition)
+    assert init["Name"] != "main" and init["Essential"] is False
+    assert "aws-cli" in init["Image"]
+    assert "s3://$OPS_BUCKET/inbox/bi-seki/" in init["Command"][0]
+    assert "/workspace/BI-Stats-Connector/data/inbox" in init["Command"][0]
+    assert {"Name": "OPS_BUCKET", "ValueFrom": "/metamorph/ops/bucket"} in init["Secrets"]
+    assert main["DependsOn"] == [{"ContainerName": init["Name"], "Condition": "SUCCESS"}]
+    assert mounted(definition, init) == {"/workspace/BI-Stats-Connector/data": "metamorph-efs-bi-stats-data"}
+    others = [f for f, d in task_definitions().items() if f != "metamorph-bi-stats" and len(d["ContainerDefinitions"]) > 1]
+    assert not others
+
+
+def test_the_ops_task_is_a_shell_in_the_platform_image_with_the_ops_bucket_for_the_backup() -> None:
+    definition = task_definitions()["metamorph-ops"]
+    main = main_container(definition)
+    assert main["EntryPoint"] == ["sh", "-c"]
+    assert "/metamorph/platform:" in main["Image"]["Fn::Sub"][0]
+    assert {"Name": "OPS_BUCKET", "ValueFrom": "/metamorph/ops/bucket"} in main["Secrets"]  # dags/backup.py reads it
+
+
+def test_push_images_builds_every_ingestion_image_and_airflow() -> None:
+    script = (Path(__file__).parents[1] / "deploy/aws/push-images.sh").read_text()
+    repositories = {
+        body["Properties"]["RepositoryName"].removeprefix("metamorph/")
+        for body in shared_resources("AWS::ECR::Repository").values()
+    } - {"mineru"}  # built on the GPU instance, not here
+    assert len(repositories) == 10  # nine connectors and airflow
+    for image in repositories:
+        assert re.search(rf"^\s+{re.escape(image)}\)\s+build {re.escape(image)} ", script, re.M), image

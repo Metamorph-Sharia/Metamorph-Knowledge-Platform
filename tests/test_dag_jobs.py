@@ -31,10 +31,6 @@ from metamorph_pipeline.jobs import (
 )
 
 WORKSPACE = "/Users/someone/Metamorph-Sharia"
-# Images whose ECS task definition waits: the market data layer joins the AWS ingestion layer after every phase is
-# built (docs/market-data-layer-plan.md, Step 10, deferred by the project owner on 2026-10-27).
-ECS_DEFERRED = {"metamorph/ojk-register:dev", "metamorph/ojk-stats:dev", "metamorph/bi-stats:dev",
-                "metamorph/bps-stats:dev", "metamorph/reports:dev"}
 CREDENTIALS = "/Users/someone/.config/ojk-connector/credentials"
 
 
@@ -134,10 +130,11 @@ def test_on_ecs_an_image_runs_as_the_task_definition_named_after_it() -> None:
 def test_every_image_a_dag_runs_has_its_task_definition_on_ecs(jobs) -> None:
     template = (Path(__file__).parents[1] / "deploy/aws/ingestion/jobs.yaml").read_text()
     defined = set(re.findall(r"^      Family: (\S+)$", template, re.MULTILINE))
-    images = {job.image for job in jobs.values()} - ECS_DEFERRED | {PLATFORM_IMAGE, OPS_IMAGE}
+    images = {job.image for job in jobs.values()} | {PLATFORM_IMAGE, OPS_IMAGE}
 
-    assert {task_family(image) for image in images} <= defined
-    assert re.findall(r"ContainerDefinitions:\n        - Name: (\S+)", template) == [TASK_CONTAINER] * len(defined)
+    assert {task_family(image) for image in images} == defined
+    # each definition has one "main" the DAGs override (BI statistics' also has the container that fills its inbox)
+    assert re.findall(rf"^        - Name: {TASK_CONTAINER}$", template, re.MULTILINE) == [f"        - Name: {TASK_CONTAINER}"] * len(defined)
 
 
 def test_bundles_are_kept_per_connector_and_run() -> None:
