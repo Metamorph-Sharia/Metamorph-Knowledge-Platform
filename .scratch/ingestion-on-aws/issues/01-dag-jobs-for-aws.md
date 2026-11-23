@@ -1,6 +1,6 @@
 # 01 DAG jobs: PDF flag, Reports in the window, weekly backup DAG
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: `../spec.md`, the "DAG jobs" decision, plus user stories 16, 17 and 31.
@@ -18,3 +18,7 @@ Spec: `../spec.md`, the "DAG jobs" decision, plus user stories 16, 17 and 31.
 
 ## Acceptance
 - `uv run pytest tests/test_dag_jobs.py` passes, along with the whole suite.
+
+## Comments
+
+2026-11-23: implemented on branch `ingestion-on-aws` (merge of `t01-*`); review fixes in the "Merge review fixes" commit.

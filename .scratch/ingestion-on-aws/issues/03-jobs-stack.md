@@ -1,6 +1,6 @@
 # 03 Jobs stack: nine connectors, platform, ops; roles by name
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 02
 
 Spec: `../spec.md`, the decisions "The jobs stack" and "Roles come in as names". Notes: see ticket 02.
@@ -25,3 +25,7 @@ Tests go in `tests/test_ingestion_stacks.py`, beside 02's:
 ## Acceptance
 - The full test suite passes.
 - `cfn-lint` is clean.
+
+## Comments
+
+2026-11-23: implemented on branch `ingestion-on-aws` (merge of `t03-*`); review fixes in the "Merge review fixes" commit.

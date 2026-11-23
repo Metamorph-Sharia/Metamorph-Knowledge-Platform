@@ -1,6 +1,6 @@
 # 02 Shared ingestion stack: no IAM, nine access points, no Cloud Map
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: `../spec.md`, the decisions "Roles come in as names" and "The shared ingestion stack". Notes: `/private/tmp/claude-501/-Users-biru-Work-Metamorph-Sharia/a4b9134c-ad85-4425-806e-c4d22bfe291f/scratchpad/ingestion-notes.md`.
@@ -28,3 +28,7 @@ Run `cfn-lint` on the template if it is installed (`uvx cfn-lint`).
 ## Acceptance
 - The full test suite passes.
 - `cfn-lint` is clean.
+
+## Comments
+
+2026-11-23: implemented on branch `ingestion-on-aws` (merge of `t02-*`); review fixes in the "Merge review fixes" commit.

@@ -1,6 +1,6 @@
 # Spec: the ingestion layer on AWS
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 

@@ -1,6 +1,6 @@
 # 05 Airflow stack: role by name, UI through CloudFront with a password
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02
 
 Spec: `../spec.md`, the decision "The Airflow stack", and user stories 9–10 and 22–26. Notes: see ticket 02.
@@ -28,3 +28,7 @@ Tests go in `tests/test_ingestion_stacks.py`:
 ## Acceptance
 - The full test suite passes.
 - `cfn-lint` is clean.
+
+## Comments
+
+2026-11-23: implemented on branch `ingestion-on-aws` (merge of `t05-*`); review fixes in the "Merge review fixes" commit.

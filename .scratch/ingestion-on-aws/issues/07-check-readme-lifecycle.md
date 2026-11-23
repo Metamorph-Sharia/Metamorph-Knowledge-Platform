@@ -1,6 +1,6 @@
 # 07 The check command, the README deployment order, backup expiry
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02, 03, 04, 05, 06
 
 Spec: `../spec.md`, Testing Decisions "Seam 2", the "Deployment order" and "The gate" decisions, and user story 32.
@@ -19,3 +19,7 @@ Spec: `../spec.md`, Testing Decisions "Seam 2", the "Deployment order" and "The 
 ## Acceptance
 - The full test suite passes, including the no-IAM test without `xfail`.
 - `bash -n check.sh` is clean.
+
+## Comments
+
+2026-11-23: implemented on branch `ingestion-on-aws` (merge of `t07-*`); review fixes in the "Merge review fixes" commit.

@@ -1,6 +1,6 @@
 # 06 Alerts stack: failed tasks and a dead Airflow, to email
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 Spec: `../spec.md`, the decision "Alerts", and user stories 27–29.
@@ -19,3 +19,7 @@ A test in `tests/test_ingestion_stacks.py`: the rule matches only stopped tasks 
 ## Acceptance
 - The full test suite passes.
 - `cfn-lint` is clean.
+
+## Comments
+
+2026-11-23: implemented on branch `ingestion-on-aws` (merge of `t06-*`); review fixes in the "Merge review fixes" commit.
