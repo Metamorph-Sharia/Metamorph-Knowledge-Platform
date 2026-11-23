@@ -2,48 +2,67 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EfsCreateTagged",
+      "Sid": "AddedToProjectServices",
       "Effect": "Allow",
+      "Action": [
+        "elasticfilesystem:*",
+        "servicequotas:Get*",
+        "servicequotas:List*"
+      ],
+      "Resource": "*"
+    },
+    {
       "Action": [
         "elasticfilesystem:CreateFileSystem",
-        "elasticfilesystem:CreateAccessPoint",
-        "elasticfilesystem:TagResource"
+        "elasticfilesystem:CreateAccessPoint"
       ],
-      "Resource": "*",
       "Condition": {
-        "StringEquals": {
+        "StringNotEquals": {
           "aws:RequestTag/Owner": "project3"
         }
-      }
+      },
+      "Effect": "Deny",
+      "Resource": "*",
+      "Sid": "EfsCreateWithOwnerTag"
     },
     {
-      "Sid": "EfsManageOwn",
-      "Effect": "Allow",
-      "Action": "elasticfilesystem:*",
-      "Resource": [
-        "arn:aws:elasticfilesystem:ap-southeast-3:129712841299:file-system/*",
-        "arn:aws:elasticfilesystem:ap-southeast-3:/Users/biru/Work/Metamorph-Sharia/Metamorph-Knowledge-Platform/deploy/aws/iam/129712841299ccess-point/*"
+      "Action": [
+        "elasticfilesystem:Client*",
+        "elasticfilesystem:Delete*",
+        "elasticfilesystem:Put*",
+        "elasticfilesystem:Update*",
+        "elasticfilesystem:Modify*",
+        "elasticfilesystem:Untag*",
+        "elasticfilesystem:Replication*",
+        "elasticfilesystem:Backup",
+        "elasticfilesystem:Restore",
+        "elasticfilesystem:CreateAccessPoint",
+        "elasticfilesystem:CreateMountTarget",
+        "elasticfilesystem:CreateReplicationConfiguration",
+        "elasticfilesystem:CreateTags"
       ],
       "Condition": {
-        "StringEquals": {
+        "StringNotEquals": {
           "aws:ResourceTag/Owner": "project3"
         }
-      }
+      },
+      "Effect": "Deny",
+      "Resource": "*",
+      "Sid": "EfsOwnResourcesOnly"
     },
     {
-      "Sid": "EfsDescribe",
-      "Effect": "Allow",
-      "Action": "elasticfilesystem:Describe*",
-      "Resource": "*"
-    },
-    {
-      "Sid": "ReadQuotas",
-      "Effect": "Allow",
-      "Action": [
-        "servicequotas:GetServiceQuota",
-        "servicequotas:ListServiceQuotas"
-      ],
-      "Resource": "*"
+      "Action": "elasticfilesystem:TagResource",
+      "Condition": {
+        "Null": {
+          "elasticfilesystem:CreateAction": "true"
+        },
+        "StringNotEquals": {
+          "aws:ResourceTag/Owner": "project3"
+        }
+      },
+      "Effect": "Deny",
+      "Resource": "*",
+      "Sid": "EfsTagOwnResourcesOnly"
     }
   ]
 }

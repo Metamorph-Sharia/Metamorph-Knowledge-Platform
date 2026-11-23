@@ -1,10 +1,19 @@
 {
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Sid": "OpenAndCloseMineruWindow",
-    "Effect": "Allow",
-    "Action": ["ec2:StartInstances", "ec2:StopInstances"],
-    "Resource": "arn:aws:ec2:ap-southeast-3:129712841299:instance/*",
-    "Condition": {"StringEquals": {"aws:ResourceTag/Name": "metamorph-mineru", "aws:ResourceTag/Owner": "project3"}}
-  }]
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/Name": "metamorph-mineru"
+                }
+            },
+            "Effect": "Allow",
+            "Resource": "arn:aws:ec2:*:129712841299:instance/*",
+            "Sid": "StartStopMineru"
+        }
+    ]
 }

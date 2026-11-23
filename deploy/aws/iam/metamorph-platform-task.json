@@ -1,27 +1,29 @@
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "ReadBundles",
-      "Effect": "Allow",
-      "Action": "elasticfilesystem:ClientMount",
-      "Resource": "arn:aws:elasticfilesystem:ap-southeast-3:129712841299:file-system/*",
-      "Condition": {
-        "StringEquals": {"aws:ResourceTag/Owner": "project3", "aws:ResourceTag/Project": "metamorph"},
-        "Bool": {"elasticfilesystem:AccessedViaMountTarget": "true"}
-      }
-    },
-    {
-      "Sid": "ListBlobs",
-      "Effect": "Allow",
-      "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
-      "Resource": "arn:aws:s3:::metamorph-blobs-129712841299"
-    },
-    {
-      "Sid": "ReadWriteBlobsNoDelete",
-      "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:aws:s3:::metamorph-blobs-129712841299/*"
-    }
-  ]
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "elasticfilesystem:ClientMount",
+            "Effect": "Allow",
+            "Resource": "arn:aws:elasticfilesystem:*:129712841299:file-system/*",
+            "Sid": "MountEfs"
+        },
+        {
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetBucketLocation"
+            ],
+            "Effect": "Allow",
+            "Resource": "arn:aws:s3:::metamorph-blobs-129712841299",
+            "Sid": "BlobsBucket"
+        },
+        {
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+            ],
+            "Effect": "Allow",
+            "Resource": "arn:aws:s3:::metamorph-blobs-129712841299/*",
+            "Sid": "BlobsObjects"
+        }
+    ]
 }

@@ -1,76 +1,69 @@
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "RunMetamorphTasks",
-      "Effect": "Allow",
-      "Action": "ecs:RunTask",
-      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299ask-definition/metamorph-*",
-      "Condition": {
-        "ArnEquals": {
-          "ecs:cluster": "arn:aws:ecs:ap-southeast-3:129712841299luster/metamorph"
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "ecs:RunTask",
+            "Condition": {
+                "ArnLike": {
+                    "ecs:cluster": "arn:aws:ecs:*:129712841299:cluster/metamorph"
+                }
+            },
+            "Effect": "Allow",
+            "Resource": "arn:aws:ecs:*:129712841299:task-definition/metamorph-*",
+            "Sid": "RunMetamorphTasks"
+        },
+        {
+            "Action": [
+                "ecs:DescribeTasks",
+                "ecs:StopTask",
+                "ecs:TagResource"
+            ],
+            "Effect": "Allow",
+            "Resource": "arn:aws:ecs:*:129712841299:task/metamorph/*",
+            "Sid": "ManageMetamorphTasks"
+        },
+        {
+            "Action": "ecs:DescribeTaskDefinition",
+            "Effect": "Allow",
+            "Resource": "*",
+            "Sid": "DescribeTaskDefinitions"
+        },
+        {
+            "Action": [
+                "ecs:UpdateService",
+                "ecs:DescribeServices"
+            ],
+            "Effect": "Allow",
+            "Resource": "arn:aws:ecs:*:129712841299:service/*/retrieval-gateway",
+            "Sid": "DeployRetrievalGateway"
+        },
+        {
+            "Action": "iam:PassRole",
+            "Condition": {
+                "StringEquals": {
+                    "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                }
+            },
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:iam::129712841299:role/Project3EcsTaskExecutionRole",
+                "arn:aws:iam::129712841299:role/metamorph-connector-task",
+                "arn:aws:iam::129712841299:role/metamorph-platform-task"
+            ],
+            "Sid": "PassMetamorphTaskRoles"
+        },
+        {
+            "Action": [
+                "logs:GetLogEvents",
+                "logs:FilterLogEvents",
+                "logs:DescribeLogStreams"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:logs:*:129712841299:log-group:/metamorph:*",
+                "arn:aws:logs:*:129712841299:log-group:/metamorph/*"
+            ],
+            "Sid": "ReadMetamorphLogs"
         }
-      }
-    },
-    {
-      "Sid": "TagTasksAtLaunch",
-      "Effect": "Allow",
-      "Action": "ecs:TagResource",
-      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299ask/metamorph/*",
-      "Condition": {
-        "StringEquals": {
-          "ecs:CreateAction": "RunTask"
-        }
-      }
-    },
-    {
-      "Sid": "WatchAndStopTasks",
-      "Effect": "Allow",
-      "Action": [
-        "ecs:DescribeTasks",
-        "ecs:StopTask"
-      ],
-      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299ask/metamorph/*"
-    },
-    {
-      "Sid": "ReadTaskDefinitions",
-      "Effect": "Allow",
-      "Action": "ecs:DescribeTaskDefinition",
-      "Resource": "*"
-    },
-    {
-      "Sid": "RestartRetrievalGateway",
-      "Effect": "Allow",
-      "Action": [
-        "ecs:UpdateService",
-        "ecs:DescribeServices"
-      ],
-      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299tamorph/retrieval-gateway"
-    },
-    {
-      "Sid": "PassTaskRoles",
-      "Effect": "Allow",
-      "Action": "iam:PassRole",
-      "Resource": [
-        "arn:aws:iam::129712841299ole/Project3EcsTaskExecutionRole",
-        "arn:aws:iam::129712841299ole/metamorph-connector-task",
-        "arn:aws:iam::129712841299ole/metamorph-platform-task"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "iam:PassedToService": "ecs-tasks.amazonaws.com"
-        }
-      }
-    },
-    {
-      "Sid": "ReadTaskLogs",
-      "Effect": "Allow",
-      "Action": [
-        "logs:GetLogEvents",
-        "logs:FilterLogEvents",
-        "logs:DescribeLogStreams"
-      ],
-      "Resource": "arn:aws:logs:ap-southeast-3:129712841299og-group:/metamorph:*"
-    }
-  ]
+    ]
 }
