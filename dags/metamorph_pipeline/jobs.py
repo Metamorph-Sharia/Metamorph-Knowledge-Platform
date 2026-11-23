@@ -141,9 +141,58 @@ def backup_job() -> BackupJob:
     return BackupJob(
         dag_id="backup_connector_data",
         image=OPS_IMAGE,
-        schedule="0 5 * * 0",  # Sundays 05:00 UTC: no ingest runs, so no store is written while it is copied
+        # Sundays 05:00 UTC, after MinerU's window closes. The daily ingests run on Sundays too, and a store can be
+        # mid-write, so the backup snapshots each SQLite file (PACK_DATA) instead of copying it as it is
+        schedule="0 5 * * 0",
         description="Weekly: each connector's data/ as a tarball in the ops bucket, backups/<date>/<connector>.tgz",
     )
+
+
+# The ops task's packing step: a connector's data directory as a tarball. A connector's SQLite store may be written
+# while it is copied (the daily ingests run on Sundays too), and a plain copy of its file can be torn or miss what is
+# still in its -wal. So each SQLite file goes in as a snapshot taken with sqlite3's backup API (consistent, with the
+# -wal folded in), and the -wal/-shm/-journal files are left out. A file with a SQLite extension that SQLite cannot
+# open goes in as it is, with a warning. Run as `python - <directory> <tarball>`.
+PACK_DATA = """\
+import os, sqlite3, sys, tarfile, tempfile
+
+root, out = sys.argv[1:3]
+STORES = (".sqlite", ".sqlite3", ".db")
+SIDECARS = ("-wal", "-shm", "-journal")
+
+
+def snapshot(path, copy):
+    source = sqlite3.connect(path, timeout=60)
+    try:
+        target = sqlite3.connect(copy)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+
+
+with tempfile.TemporaryDirectory() as scratch, tarfile.open(out, "w:gz") as archive:
+    for folder, folders, files in os.walk(root):
+        folders.sort()
+        for name in sorted(files):
+            path = os.path.join(folder, name)
+            arcname = os.path.relpath(path, root)
+            if name.endswith(SIDECARS) and name.rsplit("-", 1)[0].endswith(STORES):
+                continue
+            if name.endswith(STORES):
+                copy = os.path.join(scratch, "snapshot")
+                try:
+                    snapshot(path, copy)
+                except sqlite3.Error as error:
+                    print(f"warning: {arcname} is not read as SQLite ({error}); copied as it is", file=sys.stderr)
+                else:
+                    archive.add(copy, arcname=arcname)
+                    os.remove(copy)
+                    continue
+            archive.add(path, arcname=arcname)
+"""
 
 
 def backup_command(jobs: Sequence[ConnectorJob], date: str) -> list[str]:
@@ -161,12 +210,12 @@ def backup_command(jobs: Sequence[ConnectorJob], date: str) -> list[str]:
         "rc=0",
         # boto3 is in the image (the platform's); the ops task's role may write backups/* in $OPS_BUCKET
         """upload() { python -c 'import boto3, sys; boto3.client("s3").upload_file(*sys.argv[1:])' "$1" "$OPS_BUCKET" "$2"; }""",
+        f"pack() {{ python - \"$1\" \"$2\" <<'PYTHON'\n{PACK_DATA}PYTHON\n}}",
     ]
     for connector, directory in data.items():
         tarball = f"/tmp/{connector}.tgz"
         lines.append(
-            f'( tar -czf {tarball} -C "{directory}" . && upload {tarball} backups/{date}/{connector}.tgz'
-            f" && rm {tarball} ) || rc=1"
+            f'( pack "{directory}" {tarball} && upload {tarball} backups/{date}/{connector}.tgz && rm {tarball} ) || rc=1'
         )
     lines.append('exit "$rc"')
     return ["\n".join(lines)]
@@ -193,7 +242,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             connector="ojk",
             image="metamorph/ojk-connector:dev",
             reads_pdfs=True,
-            schedule="0 1 * * *",  # 08:00 WIB; every ingest that reads PDFs (reads_pdfs) runs in MinerU's window, 00:30–03:15 UTC
+            schedule="0 1 * * *",  # 08:00 WIB; every ingest that reads PDFs (reads_pdfs) runs in MinerU's window, 00:30–04:00 UTC
             collect="ojk-connector run",
             export="ojk-connector export --format v2 --out {out} --run-id {run_id}",
             mounts=(data("OJK-Source-Connector"), Mount(ojk_credentials, OJK_CREDENTIALS), bundles),

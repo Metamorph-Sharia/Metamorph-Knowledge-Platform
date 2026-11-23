@@ -31,6 +31,7 @@ Two scripts sit beside the templates:
 2. **The settings and Airflow's database.**
    - SecureString (`secret NAME VALUE`): `/metamorph/mineru/api-key`, `/metamorph/airflow/admin-password`, `/metamorph/airflow/webserver-secret`, `/metamorph/airflow/database-url` (`postgresql+psycopg2://metamorph:…@<database host>:5432/airflow`), `/metamorph/bi/database-url` (`postgresql+psycopg://bi:<bi-password>@<database host>:5432/bi`). Optional: `/metamorph/airflow/alert-webhook-url`, Slack's webhook, with `AlertWebhook=yes` on the Airflow stack.
    - String: `/metamorph/connectors/pdf-engine` (`mineru`), `/metamorph/connectors/pdf-lines` (`printed`), `/metamorph/connectors/mineru-cache` (`data/mineru-cache`).
+   - String, the contact each of four connectors adds to its User-Agent: `/metamorph/connectors/ojk-register-contact`, `/metamorph/connectors/ojk-stats-contact`, `/metamorph/connectors/bps-stats-contact`, `/metamorph/connectors/reports-contact`. Each is an email address or URL the sites can reach the operator at. They must exist (SSM takes no empty value, so use a real contact): ECS cannot start a task whose secret has no parameter, so the OjkRegister, OjkStats, BpsStats and Reports tasks would fail at start without them.
    - The database: `run_task dbops metamorph-sg-database-ops psql -c 'CREATE DATABASE airflow'`, run in the way the guide runs its other `metamorph-dbops` commands.
 3. **The images.** From the platform's directory, with the tag on its own line:
    ```bash
@@ -62,7 +63,7 @@ Two scripts sit beside the templates:
      ```
    - `deploy ingestion/mineru`. It writes `/metamorph/connectors/mineru-url` itself (the internal load balancer's address, port 8010).
    - **`InstanceSubnetIndex` defaults to 1, not 0.** `g5.xlarge` is offered only in ap-southeast-3a and 3c, and the core's `metamorph-subnets` lists its subnets in the order 3b, 3c, 3a: index 1 is 3c and index 2 is 3a. Redeploy with `InstanceSubnetIndex=2` if 3c has no G5 capacity.
-   - The instance starts at 00:20 UTC and stops at 03:15 (04:30 on the 1st), by schedule (`WindowStart`, `WindowEnd`, `MonthlyWindowEnd`). To test outside the window, start it by hand with `aws ec2 start-instances` (its Name tag is `metamorph-mineru`), and stop it after.
+   - The instance starts at 00:20 UTC and stops at 04:00 (04:30 on the 1st), by schedule (`WindowStart`, `WindowEnd`, `MonthlyWindowEnd`). To test outside the window, start it by hand with `aws ec2 start-instances` (its Name tag is `metamorph-mineru`), and stop it after.
    - The first start pulls the 20 GB image, and the service's 15 minute grace period covers that and the model load. Later starts reuse the image on the root disk.
    - Check `nvidia-smi` shows a driver of 580 or newer (a task can start only if it does).
    - Read the two step 9 PDFs with `packages/metamorph-pdf-text/scripts/mineru_check.py` from a BPK task. If MinerU can't be reached, the jobs and Airflow stacks still work alone with `/metamorph/connectors/pdf-engine` set to `pymupdf`: the connectors then read PDFs as they did before MinerU, and the readings already in the caches are kept for later.
@@ -82,7 +83,7 @@ After that the alerts and the daily `health` DAG monitor without blocking: a tas
 
 ## The window
 
-MinerU's window starts at 00:20 UTC (ten minutes to boot and place the service, then the models load before `ingest_ojk` at 01:00) and ends at 03:15, or at 04:30 on the 1st for DSN-MUI's monthly full pass. Every job with `reads_pdfs` in `dags/metamorph_pipeline/jobs.py` must start inside it, and `tests/test_ingestion_stacks.py` checks that: change the DAG schedules and the stack's window parameters together. The weekly backup (`backup_connector_data`, Sundays 05:00 UTC) starts after the last stop.
+MinerU's window starts at 00:20 UTC (ten minutes to boot and place the service, then the models load before `ingest_ojk` at 01:00) and ends at 04:00, or at 04:30 on the 1st for DSN-MUI's monthly full pass. Every job with `reads_pdfs` in `dags/metamorph_pipeline/jobs.py` must start inside it and at least an hour before its end (the Monday jobs run from 02:00 to 02:45), and `tests/test_ingestion_stacks.py` checks that: change the DAG schedules and the stack's window parameters together. The weekly backup (`backup_connector_data`, Sundays 05:00 UTC) starts after the last stop.
 
 ## Rollback
 
@@ -100,6 +101,6 @@ Jakarta prices, rounded. The database is the existing `metamorph-pg`, so there i
 | Airflow: 0.5 vCPU, 3 GB, Fargate, and its public IPv4 | about $28 |
 | Connector and platform tasks | about $3 |
 | EFS, mostly Infrequent Access | about $2 |
-| The GPU, `g5.xlarge` for about 1.5 to 3 hours a day | about $70 to $130 |
+| The GPU, `g5.xlarge` for about 2 to 3.7 hours a day (the window is 00:20 to 04:00) | about $85 to $160 |
 | CloudFront and WAF in front of the UI | about $8 |
 | The GPU instance's disk while stopped, the internal load balancer and the MinerU image in ECR | about $30 |

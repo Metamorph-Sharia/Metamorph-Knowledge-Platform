@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import re
+import sqlite3
 import subprocess
+import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -17,6 +21,7 @@ from metamorph_pipeline.jobs import (
     REGISTRY,
     TASK_CONTAINER,
     OPS_IMAGE,
+    PACK_DATA,
     ConnectorJob,
     Layer,
     backup_command,
@@ -260,3 +265,83 @@ def test_the_backup_tars_each_connector_s_data_directory_once_to_a_dated_key(job
         assert f"backups/2026-11-22/{connector}.tgz" in script[0]
     assert "$OPS_BUCKET" in script[0]
 
+
+
+def pack(directory: Path, tarball: Path) -> None:
+    """Runs the backup's packing step as the ops task does: the program on stdin, then the directory and the tarball."""
+    subprocess.run([sys.executable, "-", str(directory), str(tarball)], input=PACK_DATA, text=True, check=True)
+
+
+def test_the_backup_packs_a_consistent_copy_of_a_sqlite_store_that_is_being_written(tmp_path) -> None:
+    data = tmp_path / "data"
+    (data / "db").mkdir(parents=True)
+    store = data / "db" / "connector.sqlite"
+    live = sqlite3.connect(store, isolation_level=None)
+    live.execute("PRAGMA journal_mode=WAL")
+    live.execute("CREATE TABLE entries (id INTEGER PRIMARY KEY, title TEXT)")
+    live.executemany("INSERT INTO entries (title) VALUES (?)", [(f"Pasal {n}",) for n in range(500)])
+    live.execute("PRAGMA wal_autocheckpoint=0")  # the writer is mid-run: its rows are in the -wal file, not the main one
+    live.execute("INSERT INTO entries (title) VALUES ('newest')")
+    assert (data / "db" / "connector.sqlite-wal").exists()
+    (data / "raw").mkdir()
+    (data / "raw" / "a.pdf").write_bytes(b"%PDF plain file")
+    (data / "dsn.db").write_bytes(b"not a database, whatever the extension")  # kept as it is: the backup does not fail on it
+
+    tarball = tmp_path / "out.tgz"
+    pack(data, tarball)
+    live.close()
+
+    restored = tmp_path / "restored"
+    with tarfile.open(tarball) as archive:
+        archive.extractall(restored, filter="data")
+        names = archive.getnames()
+    assert not [name for name in names if name.endswith(("-wal", "-shm", "-journal"))]  # the copy stands alone
+    copy = sqlite3.connect(restored / "db" / "connector.sqlite")
+    assert copy.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert copy.execute("SELECT count(*), max(title) FROM entries").fetchone() == (501, "newest")  # the -wal's row too
+    assert (restored / "raw" / "a.pdf").read_bytes() == b"%PDF plain file"
+    assert (restored / "dsn.db").read_bytes() == b"not a database, whatever the extension"
+
+
+def test_the_backup_script_packs_with_that_program_and_does_not_tar_a_live_store(jobs) -> None:
+    script = backup_command(list(jobs.values()), "2026-11-22")[0]
+
+    assert "tar -czf" not in script
+    assert PACK_DATA.strip() in script
+    assert script.count('pack "/workspace/') == 9  # one per connector
+
+
+def test_the_backups_folder_is_dated_by_the_day_it_runs() -> None:
+    # `ds` is the start of the data interval: for a weekly schedule, the Sunday a week before the run. Airflow is not
+    # installed here, so the DAG file is read as text.
+    source = (Path(__file__).parents[1] / "dags" / "backup.py").read_text()
+    assert 'DATE = "{{ data_interval_end | ds }}"' in source
+    assert "{{ ds }}" not in source
+
+
+def test_the_backup_script_runs_under_sh_and_uploads_a_readable_tarball_per_connector(jobs, tmp_path) -> None:
+    (tmp_path / "boto3.py").write_text(  # S3 is a directory: upload_file(file, bucket, key) copies it there
+        "import os, shutil\n"
+        "class Client:\n"
+        "    def upload_file(self, path, bucket, key):\n"
+        "        target = os.path.join(os.environ['FAKE_S3'], bucket, key)\n"
+        "        os.makedirs(os.path.dirname(target), exist_ok=True)\n"
+        "        shutil.copy(path, target)\n"
+        "def client(name):\n"
+        "    return Client()\n"
+    )
+    store = tmp_path / "ojk-data"
+    store.mkdir()
+    with sqlite3.connect(store / "ojk.sqlite") as db:
+        db.execute("CREATE TABLE t (a)")
+        db.execute("INSERT INTO t VALUES (1)")
+    script = backup_command([jobs["ingest_ojk"]], "2026-11-22")[0]
+    script = script.replace("/workspace/OJK-Source-Connector/data", str(store))
+    env = {**os.environ, "PYTHONPATH": str(tmp_path), "FAKE_S3": str(tmp_path / "s3"), "OPS_BUCKET": "ops"}
+
+    done = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, check=False)
+
+    assert done.returncode == 0, done.stderr
+    with tarfile.open(tmp_path / "s3" / "ops" / "backups" / "2026-11-22" / "ojk.tgz") as archive:
+        archive.extractall(tmp_path / "restored", filter="data")
+    assert sqlite3.connect(tmp_path / "restored" / "ojk.sqlite").execute("SELECT a FROM t").fetchall() == [(1,)]

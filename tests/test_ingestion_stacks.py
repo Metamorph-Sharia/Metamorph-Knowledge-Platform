@@ -147,6 +147,28 @@ def test_the_alert_rule_ignores_other_clusters_and_families() -> None:
     assert not matches(alert_pattern(), stopped(exit_code=1, family="mira-api"))
 
 
+def families(name: str) -> set[str]:
+    return {r["Properties"]["Family"] for r in resources(name, "AWS::ECS::TaskDefinition")}
+
+
+def test_the_alert_rule_lists_exactly_the_ingestion_task_families() -> None:
+    # An explicit list, not the prefix `metamorph-`: metamorph-mineru's task dies every night when its instance stops.
+    (rule,) = resources("alerts.yaml", "AWS::Events::Rule")
+    prefixes = resolve(rule["Properties"]["EventPattern"])["detail"]["taskDefinitionArn"]
+    base = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/"
+    listed = {option["prefix"].removeprefix(base).removesuffix(":") for option in prefixes}
+
+    assert all(option["prefix"].startswith(base) and option["prefix"].endswith(":") for option in prefixes)
+    assert listed == families("jobs.yaml") | families("airflow.yaml")
+    assert "metamorph-mineru" in families("mineru.yaml") - listed
+
+
+def test_the_alert_rule_ignores_the_mineru_task_that_stops_with_its_instance() -> None:
+    assert not matches(alert_pattern(), stopped(exit_code=137, family="metamorph-mineru"))
+    for family in families("jobs.yaml") | families("airflow.yaml"):
+        assert matches(alert_pattern(), stopped(exit_code=1, family=family)), family
+
+
 def test_the_alert_rule_sends_to_the_email_topic() -> None:
     (rule,) = resources("alerts.yaml", "AWS::Events::Rule")
     (target,) = rule["Properties"]["Targets"]
@@ -161,6 +183,7 @@ def test_the_topic_policy_lets_only_eventbridge_publish() -> None:
     (statement,) = policy["Properties"]["PolicyDocument"]["Statement"]
     assert statement["Principal"] == {"Service": "events.amazonaws.com"}
     assert statement["Action"] == "sns:Publish"
+    assert statement["Condition"] == {"ArnEquals": {"aws:SourceArn": {"Fn::GetAtt": "Rule.Arn"}}}  # this stack's rule
 
 
 def test_the_airflow_alarm_fires_when_its_service_has_no_running_task() -> None:
@@ -456,6 +479,27 @@ def test_each_connector_gets_the_connector_settings_and_its_own_secrets_from_par
             assert {"Name": "DATABASE_URL", "ValueFrom": "/metamorph/bi/database-url"} in main["Secrets"]
 
 
+def test_every_secret_a_job_passes_on_is_in_its_task_definition(jobs) -> None:
+    # jobs.py names the variables Airflow passes into the container; one the definition lacks arrives empty.
+    for job in jobs:
+        main = main_container(task_definitions()[task_family(job.image)])
+        names = {secret["Name"] for secret in main["Secrets"]}
+        assert set(job.secrets) <= names, job.dag_id
+
+
+def test_a_connectors_contact_comes_from_the_parameter_named_after_it(jobs) -> None:
+    # OJK_REGISTER_CONTACT is /metamorph/connectors/ojk-register-contact (a String the README lists to create).
+    contacts = [(job, name) for job in jobs for name in job.secrets if name.endswith("_CONTACT")]
+
+    assert {name for _, name in contacts} == {"OJK_REGISTER_CONTACT", "OJK_STATS_CONTACT", "BPS_STATS_CONTACT", "REPORTS_CONTACT"}
+    readme = (INGESTION / "README.md").read_text()
+    for job, name in contacts:
+        parameter = f"/metamorph/connectors/{name.lower().replace('_', '-')}"
+        main = main_container(task_definitions()[task_family(job.image)])
+        assert {"Name": name, "ValueFrom": parameter} in main["Secrets"], job.dag_id
+        assert parameter in readme, parameter
+
+
 def test_each_image_comes_from_its_own_repository_at_a_tag_parameter(jobs) -> None:
     tags = {}
     for family, definition in task_definitions().items():
@@ -583,8 +627,12 @@ def password_check(sha256: str = PASSWORD_SHA256) -> str:
     return function["Properties"]["FunctionCode"]["Fn::Sub"].replace("${PasswordSha256}", sha256)
 
 
-def run_password_check(authorization: str | None, sha256: str = PASSWORD_SHA256) -> dict[str, Any]:
-    headers = {} if authorization is None else {"authorization": {"value": authorization}}
+def run_password_check(
+    authorization: str | None, sha256: str = PASSWORD_SHA256, extra: dict[str, str] | None = None
+) -> dict[str, Any]:
+    headers = {"host": {"value": "d111111abcdef8.cloudfront.net"}}  # CloudFront always gives the function the viewer's host
+    headers |= {} if authorization is None else {"authorization": {"value": authorization}}
+    headers |= {name: {"value": value} for name, value in (extra or {}).items()}
     event = json.dumps({"request": {"headers": headers}})
     script = f"{password_check(sha256)}\nconsole.log(JSON.stringify(handler({event})));"
     done = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)  # noqa: S603, S607
@@ -622,6 +670,34 @@ def test_the_edge_function_passes_the_right_password_and_drops_the_header() -> N
     answer = run_password_check(basic("anyone", PASSWORD))
     assert "statusCode" not in answer
     assert "authorization" not in answer["headers"]
+
+
+@needs_node
+def test_the_edge_function_tells_airflow_the_viewers_host_and_that_the_viewer_used_https() -> None:
+    # The origin sees Host = the load balancer's name, and the load balancer overwrites X-Forwarded-Proto with its own
+    # http: only these two headers carry what the viewer used. They are set, never trusted from the viewer.
+    host = "d111111abcdef8.cloudfront.net"
+    answer = run_password_check(basic("admin", PASSWORD), extra={"host": host})
+    assert answer["headers"]["x-forwarded-host"] == {"value": host}
+    assert answer["headers"]["x-forwarded-ssl"] == {"value": "on"}
+
+    spoofed = {"host": host, "x-forwarded-host": "evil.example", "x-forwarded-ssl": "off"}
+    answer = run_password_check(basic("admin", PASSWORD), extra=spoofed)
+    assert answer["headers"]["x-forwarded-host"] == {"value": host}
+    assert answer["headers"]["x-forwarded-ssl"] == {"value": "on"}
+
+
+def test_airflow_takes_its_host_and_scheme_from_those_headers() -> None:
+    # gunicorn marks a request https on X-Forwarded-Ssl: on (one of its default secure-scheme headers), from a peer in
+    # FORWARDED_ALLOW_IPS: the load balancer, reachable from nothing but CloudFront's prefix list (security group).
+    # ProxyFix then must not read what the load balancer wrote: its X-Forwarded-Proto (http) and -Port (80).
+    (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
+    (container,) = task["Properties"]["ContainerDefinitions"]
+    environment = {e["Name"]: e["Value"] for e in container["Environment"]}
+    assert environment["FORWARDED_ALLOW_IPS"] == "*"
+    assert environment["AIRFLOW__WEBSERVER__PROXY_FIX_X_HOST"] == "1"
+    assert environment["AIRFLOW__WEBSERVER__PROXY_FIX_X_PROTO"] == "0"
+    assert environment["AIRFLOW__WEBSERVER__PROXY_FIX_X_PORT"] == "0"
 
 
 @needs_node
@@ -702,10 +778,13 @@ def test_the_window_is_a_start_a_daily_end_and_a_later_end_on_the_first() -> Non
 
     assert start_days == "*"  # the instance starts every day
     assert (end_days, monthly_days) == ("2-31", "1")  # the two stops share the days of the month between them
-    assert (start, end, monthly_end) == (20, 3 * 60 + 15, 4 * 60 + 30)
+    assert (start, end, monthly_end) == (20, 4 * 60, 4 * 60 + 30)
 
 
-def test_every_job_that_reads_pdfs_starts_inside_the_window(jobs) -> None:
+HOUR = 60  # a PDF job needs time to run before the instance stops under it: it must start this long before the end
+
+
+def test_every_job_that_reads_pdfs_starts_inside_the_window_with_an_hour_to_run(jobs) -> None:
     start, _ = window("WindowStart")
     end, _ = window("WindowEnd")
     monthly_end, _ = window("MonthlyWindowEnd")
@@ -714,8 +793,10 @@ def test_every_job_that_reads_pdfs_starts_inside_the_window(jobs) -> None:
     assert readers
     for job in readers:
         day_of_month = job.schedule.split()[2]
-        # a job that runs only on the 1st has until the monthly end; any other job starts before the daily end
-        assert start <= job_start(job) < (monthly_end if day_of_month == "1" else end), job.dag_id
+        # a job that runs only on the 1st has until the monthly end; any other job runs by the daily end (on a 1st
+        # that is also a Monday it has the longer monthly one)
+        job_end = monthly_end if day_of_month == "1" else end
+        assert start <= job_start(job) <= job_end - HOUR, job.dag_id
 
 
 def test_the_weekly_backup_starts_after_the_last_stop() -> None:
