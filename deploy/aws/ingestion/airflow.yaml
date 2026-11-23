@@ -49,8 +49,10 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       NetworkMode: awsvpc
       RuntimePlatform: {CpuArchitecture: ARM64, OperatingSystemFamily: LINUX}
-      Cpu: "512"
-      Memory: "3072"
+      # Scheduler, web server and one process per running task share it. At 0.5 vCPU / 3 GB three tasks at once reached
+      # 95 % memory and the health check failed (2026-11-23).
+      Cpu: "1024"
+      Memory: "6144"
       ExecutionRoleArn: !ImportValue metamorph-execution-role
       TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/${AirflowTaskRole}
       Tags: [{Key: Owner, Value: project3}]
@@ -66,6 +68,7 @@ Resources:
             - {Name: AIRFLOW__CORE__EXECUTOR, Value: LocalExecutor}
             - {Name: AIRFLOW__CORE__LOAD_EXAMPLES, Value: "false"}
             - {Name: AIRFLOW__WEBSERVER__EXPOSE_CONFIG, Value: "false"}
+            - {Name: AIRFLOW__WEBSERVER__WORKERS, Value: "2"}   # one person uses the UI; each worker holds ~250 MB
             # Behind CloudFront and a load balancer: links and redirects use CloudFront's address and https
             - {Name: AIRFLOW__WEBSERVER__BASE_URL, Value: !Sub "https://${Distribution.DomainName}"}
             # The host comes from X-Forwarded-Host, which the CloudFront function sets (PasswordCheck below): Host is

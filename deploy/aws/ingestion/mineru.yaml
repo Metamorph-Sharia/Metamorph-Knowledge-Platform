@@ -95,6 +95,9 @@ Resources:
       Scheme: internal
       Subnets: !Split [",", !ImportValue metamorph-subnets]
       SecurityGroups: [!ImportValue metamorph-sg-mineru-lb]
+      # MinerU's server (uvicorn) closes an idle connection after 5 s. The balancer must drop it first, or it now and then
+      # sends a poll down a closed connection and answers 502 (seen 2026-11-23: two fatwas lost their OCR).
+      LoadBalancerAttributes: [{Key: idle_timeout.timeout_seconds, Value: "4"}]
       Tags: [{Key: Owner, Value: project3}]
   Target:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup

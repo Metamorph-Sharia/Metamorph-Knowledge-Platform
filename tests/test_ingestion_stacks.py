@@ -889,6 +889,12 @@ def test_the_load_balancer_is_internal_and_checks_mineru_s_health_endpoint() -> 
         assert {"Key": "Owner", "Value": "project3"} in resource["Properties"]["Tags"]
 
 
+def test_the_load_balancer_drops_idle_connections_before_mineru_s_server_does() -> None:
+    (balancer,) = minerus("AWS::ElasticLoadBalancingV2::LoadBalancer").values()
+    attributes = {a["Key"]: a["Value"] for a in balancer["Properties"]["LoadBalancerAttributes"]}
+    assert int(attributes["idle_timeout.timeout_seconds"]) < 5  # uvicorn's keep-alive; otherwise a poll can get a 502
+
+
 def test_the_connectors_mineru_url_is_written_from_the_load_balancer_s_address() -> None:
     ((_, setting),) = minerus("AWS::SSM::Parameter").items()
     props = setting["Properties"]
