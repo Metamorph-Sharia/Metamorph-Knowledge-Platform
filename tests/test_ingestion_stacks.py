@@ -96,7 +96,12 @@ def _leaf(option: Any, value: Any) -> bool:
 
 
 def stopped(
-    *, exit_code: int | None, cluster: str = CLUSTER, family: str = "metamorph-bi-connector", status: str = "STOPPED"
+    *,
+    exit_code: int | None,
+    cluster: str = CLUSTER,
+    family: str = "metamorph-bi-connector",
+    status: str = "STOPPED",
+    stop_code: str = "EssentialContainerExited",
 ) -> dict[str, Any]:
     container: dict[str, Any] = {"name": "app"} if exit_code is None else {"name": "app", "exitCode": exit_code}
     return {
@@ -105,6 +110,7 @@ def stopped(
         "detail": {
             "clusterArn": cluster,
             "lastStatus": status,
+            "stopCode": stop_code,
             "taskDefinitionArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/{family}:7",
             "containers": [container],
         },
@@ -119,6 +125,12 @@ def alert_pattern() -> dict[str, Any]:
 def test_the_alert_rule_matches_a_failed_metamorph_task() -> None:
     assert matches(alert_pattern(), stopped(exit_code=1))
     assert matches(alert_pattern(), stopped(exit_code=137))  # killed for memory
+
+
+def test_the_alert_rule_ignores_tasks_ecs_stops_itself_during_a_service_deploy() -> None:
+    # A deploy replaces a service's tasks: ECS kills the old container (exit 137 or 143) and stops it with this code.
+    assert not matches(alert_pattern(), stopped(exit_code=137, stop_code="ServiceSchedulerInitiated"))
+    assert not matches(alert_pattern(), stopped(exit_code=143, stop_code="ServiceSchedulerInitiated"))
 
 
 def test_the_alert_rule_ignores_a_clean_exit() -> None:
@@ -218,10 +230,6 @@ def jobs() -> list[ConnectorJob]:
     return ingest_jobs("/Users/someone/Metamorph-Sharia", ojk_credentials="/unused")
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="airflow, jobs and mineru still declare roles until tickets 03-05 land; ticket 07 removes this mark",
-)
 def test_no_ingestion_template_declares_an_iam_resource() -> None:
     declared = {
         f"{path.name}:{name}"
@@ -818,3 +826,62 @@ def test_three_schedules_start_and_stop_the_instance_with_the_scheduler_role() -
         assert props["ScheduleExpressionTimezone"] == "UTC"
         assert props["Target"]["RoleArn"] == {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${SchedulerRole}"}
         assert props["Target"]["Input"] == {"Fn::Sub": '{"InstanceIds": ["${Instance}"]}'}
+
+
+# --- The weekly backup's expiry, the check command and the README ---------------------------------------------------
+
+FOUNDATION = yaml.load((INGESTION.parent / "foundation.yaml").read_text(), Loader=_Loader)  # noqa: S506
+
+
+def test_the_ops_bucket_expires_the_weekly_backups_after_35_days() -> None:
+    rules = FOUNDATION["Resources"]["Ops"]["Properties"]["LifecycleConfiguration"]["Rules"]
+    (backups,) = [rule for rule in rules if rule.get("Prefix") == "backups/"]
+    assert backups["Status"] == "Enabled"
+    assert backups["ExpirationInDays"] == 35  # five weekly copies, and a week of slack
+    assert {"transfer/", "exports/"} <= {rule.get("Prefix") for rule in rules}  # the existing rules are kept
+
+
+CHECK = INGESTION / "check.sh"
+
+
+def test_the_check_command_is_valid_shell_and_calls_aws_only_to_read() -> None:
+    subprocess.run(["bash", "-n", str(CHECK)], check=True)  # noqa: S603, S607
+    verbs = re.findall(r"\baws\s+(?:--\S+\s+\S+\s+)*[a-z0-9-]+\s+([a-z0-9-]+)", CHECK.read_text())
+    assert verbs
+    assert all(verb.startswith(("describe-", "get-", "list-")) for verb in verbs), verbs
+
+
+def test_the_check_command_looks_at_every_thing_it_promises() -> None:
+    text = CHECK.read_text()
+    for role in ("metamorph-airflow-task", "metamorph-connector-task", "metamorph-platform-task"):
+        assert role in text
+    assert "metamorph-scheduler" in text
+    assert "metamorph-mineru-instance" in text  # the role and the instance profile
+    for service in ("ecs-tasks.amazonaws.com", "scheduler.amazonaws.com", "ec2.amazonaws.com"):
+        assert service in text
+    assert "metamorph-ingestion-$name" in text
+    assert "for name in shared jobs mineru airflow alerts" in text  # the five stacks, each complete
+    for call in ("describe-access-points", "describe-instances", "describe-services"):
+        assert call in text
+
+
+README = INGESTION / "README.md"
+
+
+def test_the_readme_names_every_template_and_every_image_tag_the_jobs_stack_takes() -> None:
+    text = README.read_text()
+    for path in TEMPLATES:
+        assert path.name in text, path.name
+    for parameter in JOBS["Parameters"]:
+        if parameter.endswith("Tag"):
+            assert parameter in text, parameter
+    assert "check.sh" in text and "waf.sh" in text
+
+
+def test_the_readme_describes_nothing_that_is_gone() -> None:
+    text = README.read_text()
+    for gone in ("tunnel.sh", "CAPABILITY_NAMED_IAM", "ssm:StartSession", "Superseded"):
+        assert gone not in text, gone
+    rows = [line for line in text.splitlines() if line.startswith("| `metamorph-ingestion-")]
+    assert len(rows) == 5
+    assert not [row for row in rows if "Cloud Map" in row]  # the shared stack no longer makes the namespace

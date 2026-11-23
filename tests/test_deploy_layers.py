@@ -6,8 +6,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 AWS = Path(__file__).parents[1] / "deploy/aws"
 CORE = sorted(AWS.glob("*.yaml"))
 INGESTION = sorted((AWS / "ingestion").glob("*.yaml"))
@@ -26,11 +24,6 @@ def test_the_core_deploys_without_the_ingestion_layer() -> None:
     assert imports(CORE) <= exports(CORE)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="shared no longer exports the roles, Cloud Map or the OJK credentials access point that jobs, airflow and "
-    "mineru still import, until tickets 03-05 land; ticket 07 removes this mark",
-)
 def test_the_ingestion_layer_needs_nothing_but_the_core_and_itself() -> None:
     assert imports(INGESTION) <= exports(CORE) | exports(INGESTION)
 
