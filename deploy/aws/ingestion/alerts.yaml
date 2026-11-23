@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Ingestion alerts, by email: a failed Metamorph task (EventBridge, ECS Task State Change) and a dead Airflow
+  (a CloudWatch alarm). No IAM resources: the topic policy lets EventBridge publish, and CloudWatch alarms publish
+  to topics of their own account without one. Independent of the other ingestion stacks; needs only the core.
+  After deploying, confirm the subscription from the email SNS sends.
+
+Parameters:
+  AlertEmail: {Type: String, AllowedPattern: '[^@\s]+@[^@\s]+', Description: Where the alerts go}
+
+Resources:
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: metamorph-ingestion-alerts
+      Subscription: [{Protocol: email, Endpoint: !Ref AlertEmail}]
+      Tags: [{Key: Owner, Value: project3}]
+
+  TopicPolicy:   # EventBridge is no principal of the topic's account: the rule needs this to publish
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref Topic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EventBridgePublishes
+            Effect: Allow
+            Principal: {Service: events.amazonaws.com}
+            Action: sns:Publish
+            Resource: !Ref Topic
+
+  Rule:   # a task of ours ended with a failing container: any non-zero exit code, OOM kills (137) included
+    Type: AWS::Events::Rule
+    Properties:
+      Name: metamorph-task-failed
+      Description: A Metamorph ECS task stopped with a non-zero exit code
+      State: ENABLED
+      EventPattern:
+        source: [aws.ecs]
+        detail-type: [ECS Task State Change]
+        detail:
+          clusterArn: [!ImportValue metamorph-cluster-arn]
+          lastStatus: [STOPPED]
+          taskDefinitionArn: [{prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-"}]
+          containers:
+            exitCode: [{anything-but: [0]}]
+      Targets: [{Id: email, Arn: !Ref Topic}]
+      Tags: [{Key: Owner, Value: project3}]
+
+  Alarm:
+    # The ECS service metrics of AWS/ECS (CPUUtilization, MemoryUtilization) exist without Container Insights, but
+    # only while the service has running tasks. SampleCount of CPUUtilization over five minutes is then at least 1,
+    # and a service with no task publishes nothing: missing data counts as breaching. Two periods are ten minutes.
+    # (RunningTaskCount needs Container Insights, which costs per metric.) A deliberate DesiredCount=0 alarms too.
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: metamorph-airflow-down
+      AlarmDescription: The airflow service has had no running task for 10 minutes
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions:
+        - {Name: ClusterName, Value: metamorph}
+        - {Name: ServiceName, Value: airflow}
+      Statistic: SampleCount
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref Topic]
+      Tags: [{Key: Owner, Value: project3}]
+
+Outputs:
+  TopicArn: {Value: !Ref Topic}
