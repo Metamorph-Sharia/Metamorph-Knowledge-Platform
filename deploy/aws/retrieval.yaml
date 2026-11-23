@@ -70,6 +70,8 @@ Resources:
             - {Name: DNNL_DEFAULT_FPMATH_MODE, Value: BF16}
           Secrets:
             - {Name: METAMORPH_RETRIEVAL_DATABASE_URL, ValueFrom: /metamorph/retrieval/indexer-database-url}
+            # the regulation index's refresh (regulation_index DAG) reads its own name for the same database
+            - {Name: METAMORPH_REGULATION_INDEX_URL, ValueFrom: /metamorph/retrieval/indexer-database-url}
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-retrieval}
