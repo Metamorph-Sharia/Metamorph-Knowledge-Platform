@@ -56,11 +56,7 @@ Two scripts sit beside the templates:
      && tar -xzf /tmp/d.tgz --no-same-owner --no-same-permissions -C /workspace && rm /tmp/d.tgz && du -sh /workspace/*/data'
    ```
 6. **MinerU, then its image checked against the step 9 PDFs.**
-   - **The image must be in ECR before the stack deploys:** the service starts a task the moment the instance registers, and the instance role only pulls. MinerU's image is x86-64, so build it for that platform and push it with your own credentials, at the tag the stack takes (`MinerUTag`, default `4.0.12`):
-     ```bash
-     docker buildx build --platform linux/amd64 -t "$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/metamorph/mineru:4.0.12" \
-       --push docker/mineru
-     ```
+   - **The image must be in ECR before the stack deploys:** the service starts a task the moment the instance registers, and the instance role only pulls. MinerU's image is x86-64 and about 7 GB compressed. It is built natively by the CodeBuild project `metamorph-mineru-image` (medium, privileged, role `Project3CodeBuildRole`, which may push to ECR): zip `docker/mineru/Dockerfile` to `s3://metamorph-ops-$ACCOUNT/transfer/mineru-src.zip`, then `aws codebuild start-build --project-name metamorph-mineru-image` (about 11 minutes). Its buildspec tags the image with the stack's `MinerUTag` (default `4.0.12-r2`). Tags are immutable: a rebuild takes a new tag, in the buildspec and in `MinerUTag` together. Building on the Mac also works (`docker buildx build --platform linux/amd64 … --push docker/mineru`), but it emulates x86-64 and is far slower.
    - `deploy ingestion/mineru`. It writes `/metamorph/connectors/mineru-url` itself (the internal load balancer's address, port 8010).
    - **`InstanceSubnetIndex` defaults to 1, not 0.** `g5.xlarge` is offered only in ap-southeast-3a and 3c, and the core's `metamorph-subnets` lists its subnets in the order 3b, 3c, 3a: index 1 is 3c and index 2 is 3a. Redeploy with `InstanceSubnetIndex=2` if 3c has no G5 capacity.
    - The instance starts at 00:20 UTC and stops at 04:00 (04:30 on the 1st), by schedule (`WindowStart`, `WindowEnd`, `MonthlyWindowEnd`). To test outside the window, start it by hand with `aws ec2 start-instances` (its Name tag is `metamorph-mineru`), and stop it after.

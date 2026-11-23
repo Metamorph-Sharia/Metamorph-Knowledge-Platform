@@ -9,8 +9,8 @@ Description: >-
 Parameters:
   MinerUTag:
     Type: String
-    Default: 4.0.12
-    Description: The metamorph/mineru image's tag, built off the GPU instance and pushed to ECR (the guide's Phase 3)
+    Default: 4.0.12-r2
+    Description: The metamorph/mineru image's tag, built by CodeBuild (README step 6). -r2 resolves its dependencies as of 2026-10-22
   InstanceType:
     Type: String
     Default: g5.xlarge
