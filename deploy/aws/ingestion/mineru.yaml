@@ -47,12 +47,12 @@ Parameters:
     Description: UTC. Ten minutes for boot and placement, then the models load before the first ingest at 01:00 (jobs.py)
   WindowEnd:
     Type: String
-    Default: cron(15 3 2-31 * ? *)
-    Description: UTC. After the last daily ingest that reads PDFs. Not on the 1st, which has its own end
+    Default: cron(0 4 2-31 * ? *)
+    Description: UTC. An hour after the last daily ingest that reads PDFs starts (ingest_ojk_register, Mondays 02:45), so its run is not cut. Not on the 1st, which has its own end
   MonthlyWindowEnd:
     Type: String
     Default: cron(30 4 1 * ? *)
-    Description: UTC. On the 1st, after DSN-MUI's full pass (02:30)
+    Description: UTC. On the 1st, two hours after DSN-MUI's full pass starts (02:30)
 
 Resources:
   Instance:

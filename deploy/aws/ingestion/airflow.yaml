@@ -68,7 +68,16 @@ Resources:
             - {Name: AIRFLOW__WEBSERVER__EXPOSE_CONFIG, Value: "false"}
             # Behind CloudFront and a load balancer: links and redirects use CloudFront's address and https
             - {Name: AIRFLOW__WEBSERVER__BASE_URL, Value: !Sub "https://${Distribution.DomainName}"}
+            # The host and scheme come from two headers the CloudFront function sets (PasswordCheck below), because the
+            # load balancer in between rewrites X-Forwarded-Proto to http and -Port to 80 (so ProxyFix must not read
+            # them) and Host is its own name. ProxyFix takes X-Forwarded-Host; gunicorn marks a request https on
+            # X-Forwarded-Ssl: on (a default secure-scheme header) when the peer is in FORWARDED_ALLOW_IPS. Any peer:
+            # the task's security group admits only the load balancer, which admits only CloudFront.
             - {Name: AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX, Value: "true"}
+            - {Name: AIRFLOW__WEBSERVER__PROXY_FIX_X_HOST, Value: "1"}
+            - {Name: AIRFLOW__WEBSERVER__PROXY_FIX_X_PROTO, Value: "0"}
+            - {Name: AIRFLOW__WEBSERVER__PROXY_FIX_X_PORT, Value: "0"}
+            - {Name: FORWARDED_ALLOW_IPS, Value: "*"}
             # The image's entrypoint migrates the database and makes the admin account, with the password in
             # Parameter Store, before `standalone` starts: a new task keeps the same sign-in.
             - {Name: _AIRFLOW_DB_MIGRATE, Value: "true"}
@@ -199,6 +208,12 @@ Resources:
                 const password = credentials.slice(credentials.indexOf(':') + 1);
                 if (crypto.createHash('sha256').update(password).digest('hex') === PASSWORD_SHA256) {
                     delete request.headers.authorization;
+                    // What the viewer used. The origin sees Host = the load balancer's name, and the load balancer
+                    // overwrites X-Forwarded-Proto with its own http, so Airflow would build links and redirects to
+                    // http://internal-load-balancer. Set here, never taken from the viewer: Airflow reads the host
+                    // (ProxyFix) and, on X-Forwarded-Ssl, the scheme (gunicorn); see the container's environment.
+                    request.headers['x-forwarded-host'] = {value: request.headers.host.value};
+                    request.headers['x-forwarded-ssl'] = {value: 'on'};
                     return request;
                 }
             }

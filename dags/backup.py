@@ -1,7 +1,8 @@
 """The weekly backup of the connectors' data: each connector's data/ as a tarball in the ops bucket.
 
-backup_connector_data   the ops task (metamorph_pipeline/jobs.py: backup_command) tars every connector's data directory from
-                        EFS to `s3://<ops bucket>/backups/<date>/<connector>.tgz`; the bucket expires them after 35 days
+backup_connector_data   the ops task (metamorph_pipeline/jobs.py: backup_command) packs every connector's data directory from
+                        EFS to `s3://<ops bucket>/backups/<date>/<connector>.tgz`; the bucket expires them after 35 days.
+                        A SQLite store goes in as a snapshot (the daily ingests run on Sundays too), not as a live file
 
 It runs as an ECS task: the scheduler role on AWS may only start and stop EC2, so EventBridge cannot run it. On the local
 Docker stack there is no EFS to copy, so the DAG skips its task.
@@ -18,7 +19,7 @@ from metamorph_pipeline.containers import LAUNCHER, container, host_path
 from metamorph_pipeline.jobs import backup_command, backup_job, ingest_jobs
 
 DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_callback": on_failure}
-DATE = "{{ ds }}"
+DATE = "{{ data_interval_end | ds }}"  # the day it runs; `ds` would be the Sunday a week before
 
 job = backup_job()
 with DAG(

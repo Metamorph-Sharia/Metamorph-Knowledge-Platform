@@ -289,6 +289,7 @@ Resources:
             - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
             - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
             - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+            - {Name: OJK_REGISTER_CONTACT, ValueFrom: /metamorph/connectors/ojk-register-contact}   # a String: the contact the User-Agent carries
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-ojk-register}
@@ -331,6 +332,7 @@ Resources:
             - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
             - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
             - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+            - {Name: OJK_STATS_CONTACT, ValueFrom: /metamorph/connectors/ojk-stats-contact}   # a String: the contact the User-Agent carries
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-ojk-stats}
@@ -429,6 +431,7 @@ Resources:
             - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
             - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
             - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+            - {Name: BPS_STATS_CONTACT, ValueFrom: /metamorph/connectors/bps-stats-contact}   # a String: the contact the User-Agent carries
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-bps-stats}
@@ -471,6 +474,7 @@ Resources:
             - {Name: METAMORPH_MINERU_URL, ValueFrom: /metamorph/connectors/mineru-url}
             - {Name: METAMORPH_MINERU_API_KEY, ValueFrom: /metamorph/mineru/api-key}
             - {Name: METAMORPH_MINERU_CACHE, ValueFrom: /metamorph/connectors/mineru-cache}
+            - {Name: REPORTS_CONTACT, ValueFrom: /metamorph/connectors/reports-contact}   # a String: the contact the User-Agent carries
           LogConfiguration:
             LogDriver: awslogs
             Options: {awslogs-group: /metamorph, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: metamorph-reports}
