@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Ingestion alerts, by email: a failed Metamorph task (EventBridge, ECS Task State Change; a task that ECS stops itself in a service deploy is no failure) and a dead Airflow
-  (a CloudWatch alarm). No IAM resources: the topic policy lets EventBridge publish, and CloudWatch alarms publish
-  to topics of their own account without one. Independent of the other ingestion stacks; needs only the core.
+  (a CloudWatch alarm). No IAM resources: the topic policy lets this stack's EventBridge rule and this account's CloudWatch alarms publish.
+  Independent of the other ingestion stacks; needs only the core.
   After deploying, confirm the subscription from the email SNS sends.
 
 Parameters:
@@ -30,6 +30,13 @@ Resources:
             Resource: !Ref Topic
             Condition:   # only this stack's rule, not any rule in the account
               ArnEquals: {"aws:SourceArn": !GetAtt Rule.Arn}
+          - Sid: CloudWatchAlarmsPublish   # a custom topic policy replaces SNS's default, so the alarm needs its own grant
+            Effect: Allow
+            Principal: {Service: cloudwatch.amazonaws.com}
+            Action: sns:Publish
+            Resource: !Ref Topic
+            Condition:
+              StringEquals: {"aws:SourceAccount": !Ref AWS::AccountId}
 
   Rule:   # a task of ours ended with a failing container: any non-zero exit code, OOM kills (137) included
     Type: AWS::Events::Rule

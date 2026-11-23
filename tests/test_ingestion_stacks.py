@@ -178,12 +178,15 @@ def test_the_alert_rule_sends_to_the_email_topic() -> None:
     assert subscription["Endpoint"] == {"Ref": "AlertEmail"}
 
 
-def test_the_topic_policy_lets_only_eventbridge_publish() -> None:
+def test_the_topic_policy_lets_only_our_rule_and_our_alarms_publish() -> None:
     (policy,) = resources("alerts.yaml", "AWS::SNS::TopicPolicy")
-    (statement,) = policy["Properties"]["PolicyDocument"]["Statement"]
-    assert statement["Principal"] == {"Service": "events.amazonaws.com"}
-    assert statement["Action"] == "sns:Publish"
-    assert statement["Condition"] == {"ArnEquals": {"aws:SourceArn": {"Fn::GetAtt": "Rule.Arn"}}}  # this stack's rule
+    by_service = {s["Principal"]["Service"]: s for s in policy["Properties"]["PolicyDocument"]["Statement"]}
+    assert set(by_service) == {"events.amazonaws.com", "cloudwatch.amazonaws.com"}
+    assert all(s["Action"] == "sns:Publish" for s in by_service.values())
+    events, alarms = by_service["events.amazonaws.com"], by_service["cloudwatch.amazonaws.com"]
+    assert events["Condition"] == {"ArnEquals": {"aws:SourceArn": {"Fn::GetAtt": "Rule.Arn"}}}  # this stack's rule
+    # A custom topic policy replaces SNS's default one, so the alarm needs its own grant: this account's only.
+    assert alarms["Condition"] == {"StringEquals": {"aws:SourceAccount": {"Ref": "AWS::AccountId"}}}
 
 
 def test_the_airflow_alarm_fires_when_its_service_has_no_running_task() -> None:
