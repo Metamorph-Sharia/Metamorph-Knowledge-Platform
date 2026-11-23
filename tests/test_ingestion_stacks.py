@@ -4,7 +4,12 @@ the live core. The account lets us create no IAM resource and no Cloud Map; ever
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -302,3 +307,176 @@ def test_the_database_group_accepts_airflow_and_the_tasks() -> None:
         if body["Properties"]["GroupId"] == {"Fn::ImportValue": "metamorph-sg-database"}
     }
     assert sources == {"AirflowGroup", "JobsGroup"}
+
+
+# The Airflow stack: the role by name, the UI through CloudFront behind a password check.
+AIRFLOW = template("airflow.yaml")
+PASSWORD = "correct horse battery staple"
+PASSWORD_SHA256 = hashlib.sha256(PASSWORD.encode()).hexdigest()
+
+
+def template_text(name: str) -> str:
+    return (INGESTION / name).read_text()
+
+
+def test_the_airflow_stack_declares_no_iam_resource() -> None:
+    assert not [name for name, body in AIRFLOW["Resources"].items() if body["Type"].startswith("AWS::IAM::")]
+
+
+def test_the_airflow_task_role_comes_from_a_parameter_defaulting_to_the_devops_role() -> None:
+    parameter = AIRFLOW["Parameters"]["AirflowTaskRole"]
+    assert parameter["Default"] == "metamorph-airflow-task"
+    (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
+    role = task["Properties"]["TaskRoleArn"]["Fn::Sub"]
+    assert role == "arn:aws:iam::${AWS::AccountId}:role/${AirflowTaskRole}"
+    assert task["Properties"]["ExecutionRoleArn"] == {"Fn::ImportValue": "metamorph-execution-role"}
+
+
+def test_airflow_starts_its_tasks_on_ecs() -> None:
+    (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
+    (container,) = task["Properties"]["ContainerDefinitions"]
+    environment = {e["Name"]: e["Value"] for e in container["Environment"]}
+    assert environment["METAMORPH_TASK_LAUNCHER"] == "ecs"
+    secrets = {s["Name"] for s in container["Secrets"] if isinstance(s, dict) and "Name" in s}
+    assert {"METAMORPH_ECS_CLUSTER", "METAMORPH_ECS_SUBNETS", "METAMORPH_ECS_SECURITY_GROUP"} <= secrets
+
+
+def test_the_airflow_stack_imports_only_what_exists() -> None:
+    ingestion_exports = {name for path in TEMPLATES for name in exported(template(path.name))}
+    assert imported(INGESTION / "airflow.yaml") <= LIVE_CORE_EXPORTS | ingestion_exports
+
+
+def test_every_airflow_resource_that_takes_tags_carries_owner() -> None:
+    wanted = {
+        "AWS::EC2::SecurityGroup", "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        "AWS::ElasticLoadBalancingV2::TargetGroup", "AWS::ECS::TaskDefinition", "AWS::ECS::Service",
+        "AWS::CloudFront::Distribution", "AWS::CloudFront::VpcOrigin",
+    }  # fmt: skip
+    missing = []
+    for name, body in AIRFLOW["Resources"].items():
+        if body["Type"] not in wanted:
+            continue
+        tags = body["Properties"].get("Tags")
+        pairs = {(t["Key"], t["Value"]) for t in tags or []}
+        if ("Owner", "project3") not in pairs:
+            missing.append(name)
+    assert not missing
+
+
+def test_the_ui_sits_behind_an_internal_load_balancer_that_only_cloudfront_reaches() -> None:
+    (balancer,) = resources("airflow.yaml", "AWS::ElasticLoadBalancingV2::LoadBalancer")
+    assert balancer["Properties"]["Scheme"] == "internal"
+    (origin,) = resources("airflow.yaml", "AWS::CloudFront::VpcOrigin")
+    assert origin["Properties"]["VpcOriginEndpointConfig"]["Arn"] == {"Ref": "LoadBalancer"}
+    (group,) = [
+        body for body in AIRFLOW["Resources"].values() if body["Type"] == "AWS::EC2::SecurityGroup"
+    ]
+    (rule,) = group["Properties"]["SecurityGroupIngress"]
+    assert rule["SourcePrefixListId"] == {"Ref": "CloudFrontPrefixList"}
+    (service,) = resources("airflow.yaml", "AWS::ECS::Service")
+    (attached,) = service["Properties"]["LoadBalancers"]
+    assert attached["ContainerPort"] == 8080
+
+
+def test_airflows_base_url_is_the_cloudfront_address() -> None:
+    (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
+    (container,) = task["Properties"]["ContainerDefinitions"]
+    environment = {e["Name"]: e["Value"] for e in container["Environment"]}
+    assert environment["AIRFLOW__WEBSERVER__BASE_URL"] == {"Fn::Sub": "https://${Distribution.DomainName}"}
+    assert environment["AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX"] == "true"
+
+
+def password_check(sha256: str = PASSWORD_SHA256) -> str:
+    (function,) = resources("airflow.yaml", "AWS::CloudFront::Function")
+    return function["Properties"]["FunctionCode"]["Fn::Sub"].replace("${PasswordSha256}", sha256)
+
+
+def run_password_check(authorization: str | None, sha256: str = PASSWORD_SHA256) -> dict[str, Any]:
+    headers = {} if authorization is None else {"authorization": {"value": authorization}}
+    event = json.dumps({"request": {"headers": headers}})
+    script = f"{password_check(sha256)}\nconsole.log(JSON.stringify(handler({event})));"
+    done = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)  # noqa: S603, S607
+    return json.loads(done.stdout)
+
+
+def basic(user: str, password: str) -> str:
+    return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node runs the edge function")
+
+
+@needs_node
+def test_the_edge_function_asks_for_basic_auth_when_no_password_comes() -> None:
+    answer = run_password_check(None)
+    assert answer["statusCode"] == 401
+    assert answer["headers"]["www-authenticate"]["value"].startswith("Basic")
+
+
+@needs_node
+def test_the_edge_function_refuses_a_wrong_password() -> None:
+    answer = run_password_check(basic("admin", "wrong"))
+    assert answer["statusCode"] == 401
+    assert "Basic" in answer["headers"]["www-authenticate"]["value"]
+
+
+@needs_node
+def test_the_edge_function_refuses_a_header_that_is_not_basic() -> None:
+    assert run_password_check("Bearer " + PASSWORD)["statusCode"] == 401
+
+
+@needs_node
+def test_the_edge_function_passes_the_right_password_and_drops_the_header() -> None:
+    answer = run_password_check(basic("anyone", PASSWORD))
+    assert "statusCode" not in answer
+    assert "authorization" not in answer["headers"]
+
+
+@needs_node
+def test_a_password_with_a_colon_still_matches() -> None:
+    tricky = PASSWORD + ":with:colons"
+    answer = run_password_check(basic("admin", tricky), hashlib.sha256(tricky.encode()).hexdigest())
+    assert "statusCode" not in answer
+
+
+def test_the_edge_function_is_a_published_cloudfront_function_on_every_request() -> None:
+    (function,) = resources("airflow.yaml", "AWS::CloudFront::Function")
+    assert function["Properties"]["AutoPublish"] is True
+    (distribution,) = resources("airflow.yaml", "AWS::CloudFront::Distribution")
+    behavior = distribution["Properties"]["DistributionConfig"]["DefaultCacheBehavior"]
+    (association,) = behavior["FunctionAssociations"]
+    assert association["EventType"] == "viewer-request"
+    assert behavior["ViewerProtocolPolicy"] == "https-only"
+    assert behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"  # CachingDisabled
+
+
+def test_the_distribution_takes_an_optional_web_acl() -> None:
+    assert AIRFLOW["Parameters"]["WebAclArn"]["Default"] == ""
+    (distribution,) = resources("airflow.yaml", "AWS::CloudFront::Distribution")
+    assert distribution["Properties"]["DistributionConfig"]["WebACLId"] == {
+        "Fn::If": ["HasWebAcl", {"Ref": "WebAclArn"}, {"Ref": "AWS::NoValue"}]
+    }
+
+
+def test_nothing_in_the_airflow_template_embeds_a_plain_password() -> None:
+    passwords = [name for name in AIRFLOW["Parameters"] if "password" in name.lower()]
+    assert passwords == ["PasswordSha256"]
+    parameter = AIRFLOW["Parameters"]["PasswordSha256"]
+    assert parameter["AllowedPattern"] == "[0-9a-f]{64}"
+    assert "Default" not in parameter  # no stand-in hash, so no stand-in password
+    assert "${PasswordSha256}" in template_text("airflow.yaml")  # the code takes the hash from the parameter
+    environment_values = json.dumps(AIRFLOW["Resources"]["Task"]["Properties"])
+    assert "_AIRFLOW_WWW_USER_PASSWORD" in environment_values
+    assert re.search(r"_AIRFLOW_WWW_USER_PASSWORD.*ValueFrom.*/metamorph/airflow/admin-password", environment_values)
+
+
+def test_the_airflow_waf_script_is_beside_the_templates_and_valid_shell() -> None:
+    script = INGESTION / "waf.sh"
+    text = script.read_text()
+    assert "--scope CLOUDFRONT" in text and "us-east-1" in text and "Key=Owner,Value=project3" in text
+    assert "metamorph-airflow" in text
+    subprocess.run(["bash", "-n", str(script)], check=True)  # noqa: S603, S607
+
+
+def test_the_tunnel_is_gone() -> None:
+    assert not (INGESTION / "tunnel.sh").exists()
