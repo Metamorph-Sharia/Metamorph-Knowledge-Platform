@@ -16,6 +16,7 @@ The **Data/Source Management layer** of Metamorph's legal knowledge base for the
 | [dags](dags/README.md) | Airflow DAGs: one ingest DAG per connector job, `registry_build`, `market_publish`, `health` |
 | [docs/published-schema.md](docs/published-schema.md) | **The read contract** for the Knowledge and Retrieval layer: tables, IDs, provision addresses, links, validity |
 | [docs/published-market-schema.md](docs/published-market-schema.md) | **The market read contract** (`published_market`): registers, editions, companies, licenses and registrations, listings; statistics as datasets, series and observations. Loaded with `metamorph market load BUNDLE`, rebuilt with `metamorph market publish` |
+| [Service levels](docs/service-levels.md) | Catalogue availability and latency, source collection, and publication freshness |
 | [docs/curation-workflow-design.md](docs/curation-workflow-design.md) | The publish gate, held documents, approving as is, and text correction |
 | [docs/curation-workflow-implementation-plan.md](docs/curation-workflow-implementation-plan.md) | How that design is built: two releases, step by step, test lists first |
 | [docs/aws-step9-guide.md](docs/aws-step9-guide.md) | Running the plan's step 9 (MinerU re-extraction) on one AWS GPU instance in Jakarta, then the live rollout from its cached readings: design, costs, runbook with the AWS CLI |

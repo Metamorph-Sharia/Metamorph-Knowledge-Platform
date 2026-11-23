@@ -1,0 +1,49 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EfsCreateTagged",
+      "Effect": "Allow",
+      "Action": [
+        "elasticfilesystem:CreateFileSystem",
+        "elasticfilesystem:CreateAccessPoint",
+        "elasticfilesystem:TagResource"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Owner": "project3"
+        }
+      }
+    },
+    {
+      "Sid": "EfsManageOwn",
+      "Effect": "Allow",
+      "Action": "elasticfilesystem:*",
+      "Resource": [
+        "arn:aws:elasticfilesystem:ap-southeast-3:129712841299:file-system/*",
+        "arn:aws:elasticfilesystem:ap-southeast-3:/Users/biru/Work/Metamorph-Sharia/Metamorph-Knowledge-Platform/deploy/aws/iam/129712841299ccess-point/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Owner": "project3"
+        }
+      }
+    },
+    {
+      "Sid": "EfsDescribe",
+      "Effect": "Allow",
+      "Action": "elasticfilesystem:Describe*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadQuotas",
+      "Effect": "Allow",
+      "Action": [
+        "servicequotas:GetServiceQuota",
+        "servicequotas:ListServiceQuotas"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

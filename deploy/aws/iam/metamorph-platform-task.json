@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadBundles",
+      "Effect": "Allow",
+      "Action": "elasticfilesystem:ClientMount",
+      "Resource": "arn:aws:elasticfilesystem:ap-southeast-3:129712841299:file-system/*",
+      "Condition": {
+        "StringEquals": {"aws:ResourceTag/Owner": "project3", "aws:ResourceTag/Project": "metamorph"},
+        "Bool": {"elasticfilesystem:AccessedViaMountTarget": "true"}
+      }
+    },
+    {
+      "Sid": "ListBlobs",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": "arn:aws:s3:::metamorph-blobs-129712841299"
+    },
+    {
+      "Sid": "ReadWriteBlobsNoDelete",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::metamorph-blobs-129712841299/*"
+    }
+  ]
+}

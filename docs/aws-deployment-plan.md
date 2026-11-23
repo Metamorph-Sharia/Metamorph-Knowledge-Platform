@@ -538,6 +538,8 @@ Jakarta on-demand prices are from AWS's public price list files, read on 2026-10
 
 ## 7. Permissions to request
 
+> **For ingestion, superseded 2026-11-23** by [aws-ingestion-permissions.md](aws-ingestion-permissions.md), the checklist sent to DevOps. It uses five roles that DevOps creates instead of `iam:CreateRole`, and one scheduled `g5.xlarge` for MinerU instead of the Auto Scaling group and Cloud Map. The account now allows EC2 up to `*.12xlarge`. The sections below are kept as history.
+
 ### 7.0 What the account allows on 2026-10-30, and what is still missing
 
 **How this was read:** from the `Project3Learner` role's inline policy (`AwsSSOInlinePolicy`). `Project3CloudFormationRole`, `Project3EcsTaskExecutionRole` and `Project3StepFunctionsRole` carry the same ceiling, so deploying through them widens nothing.

@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "MountConnectorFileSystem",
+      "Effect": "Allow",
+      "Action": ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"],
+      "Resource": "arn:aws:elasticfilesystem:ap-southeast-3:129712841299:file-system/*",
+      "Condition": {
+        "StringEquals": {"aws:ResourceTag/Owner": "project3", "aws:ResourceTag/Project": "metamorph"},
+        "Bool": {"elasticfilesystem:AccessedViaMountTarget": "true"}
+      }
+    },
+    {
+      "Sid": "ListOpsBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::metamorph-ops-129712841299",
+      "Condition": {"StringLike": {"s3:prefix": ["inbox/*", "transfer/*", "backups/*"]}}
+    },
+    {
+      "Sid": "ReadInbox",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::metamorph-ops-129712841299/inbox/*"
+    },
+    {
+      "Sid": "TransferAndWeeklyBackup",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": ["arn:aws:s3:::metamorph-ops-129712841299/transfer/*", "arn:aws:s3:::metamorph-ops-129712841299/backups/*"]
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunMetamorphTasks",
+      "Effect": "Allow",
+      "Action": "ecs:RunTask",
+      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299ask-definition/metamorph-*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:ap-southeast-3:129712841299luster/metamorph"
+        }
+      }
+    },
+    {
+      "Sid": "TagTasksAtLaunch",
+      "Effect": "Allow",
+      "Action": "ecs:TagResource",
+      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299ask/metamorph/*",
+      "Condition": {
+        "StringEquals": {
+          "ecs:CreateAction": "RunTask"
+        }
+      }
+    },
+    {
+      "Sid": "WatchAndStopTasks",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeTasks",
+        "ecs:StopTask"
+      ],
+      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299ask/metamorph/*"
+    },
+    {
+      "Sid": "ReadTaskDefinitions",
+      "Effect": "Allow",
+      "Action": "ecs:DescribeTaskDefinition",
+      "Resource": "*"
+    },
+    {
+      "Sid": "RestartRetrievalGateway",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:UpdateService",
+        "ecs:DescribeServices"
+      ],
+      "Resource": "arn:aws:ecs:ap-southeast-3:129712841299tamorph/retrieval-gateway"
+    },
+    {
+      "Sid": "PassTaskRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::129712841299ole/Project3EcsTaskExecutionRole",
+        "arn:aws:iam::129712841299ole/metamorph-connector-task",
+        "arn:aws:iam::129712841299ole/metamorph-platform-task"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ecs-tasks.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "ReadTaskLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:ap-southeast-3:129712841299og-group:/metamorph:*"
+    }
+  ]
+}
