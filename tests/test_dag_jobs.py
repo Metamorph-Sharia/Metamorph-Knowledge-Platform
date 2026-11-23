@@ -16,8 +16,11 @@ from metamorph_pipeline.jobs import (
     PUBLISHED_MARKET,
     REGISTRY,
     TASK_CONTAINER,
+    OPS_IMAGE,
     ConnectorJob,
     Layer,
+    backup_command,
+    backup_job,
     bundle_path,
     collect_command,
     ingest_jobs,
@@ -131,7 +134,7 @@ def test_on_ecs_an_image_runs_as_the_task_definition_named_after_it() -> None:
 def test_every_image_a_dag_runs_has_its_task_definition_on_ecs(jobs) -> None:
     template = (Path(__file__).parents[1] / "deploy/aws/ingestion/jobs.yaml").read_text()
     defined = set(re.findall(r"^      Family: (\S+)$", template, re.MULTILINE))
-    images = {job.image for job in jobs.values()} - ECS_DEFERRED | {PLATFORM_IMAGE}
+    images = {job.image for job in jobs.values()} - ECS_DEFERRED | {PLATFORM_IMAGE, OPS_IMAGE}
 
     assert {task_family(image) for image in images} <= defined
     assert re.findall(r"ContainerDefinitions:\n        - Name: (\S+)", template) == [TASK_CONTAINER] * len(defined)
@@ -218,4 +221,48 @@ def test_the_reports_job_syncs_lpksi_and_loads_into_the_market_layer(jobs) -> No
     assert reports.export == "reports export --out {out} --run-id {run_id}"
     assert [m.source for m in reports.mounts] == [f"{WORKSPACE}/Reports-Connector/data", "metamorph-bundles"]
     assert {"METAMORPH_MINERU_URL", "REPORTS_CONTACT"} <= set(passed_on(reports))
+
+
+def minutes_after_midnight(cron: str) -> int:
+    minute, hour = cron.split()[:2]
+    return int(hour) * 60 + int(minute)
+
+
+def test_the_jobs_that_read_pdfs_are_flagged_so_that_they_run_while_mineru_does(jobs) -> None:
+    # Each connector's repository calls metamorph_pdf_text (checked 2026-11-23); the three statistics connectors read tables.
+    readers = {"ingest_ojk", "ingest_bpk", "ingest_bi", "ingest_dsn_fatwa", "ingest_dsn_fatwa_full",
+               "ingest_ojk_register", "ingest_reports"}
+
+    assert {dag for dag, job in jobs.items() if job.reads_pdfs} == readers
+
+
+def test_reports_reads_its_pdfs_on_mondays_inside_mineru_s_window_after_dsn_mui(jobs) -> None:
+    reports, dsn = jobs["ingest_reports"], jobs["ingest_dsn_fatwa"]
+    window_end = 3 * 60 + 15  # UTC, deploy/aws/ingestion/mineru.yaml's WindowEnd
+
+    assert reports.schedule.split()[2:] == ["*", "*", "1"]
+    assert minutes_after_midnight(dsn.schedule) < minutes_after_midnight(reports.schedule) < window_end
+
+
+def test_a_weekly_job_copies_every_connector_s_data_to_the_ops_bucket() -> None:
+    backup = backup_job()
+
+    assert backup.dag_id == "backup_connector_data"
+    assert backup.image == OPS_IMAGE
+    assert task_family(backup.image) == "metamorph-ops"
+    day_of_month, month, day_of_week = backup.schedule.split()[2:]
+    assert (day_of_month, month) == ("*", "*") and day_of_week != "*"  # once a week, on one weekday
+    assert minutes_after_midnight(backup.schedule) > 3 * 60 + 15  # while no ingest runs and MinerU is stopped
+
+
+def test_the_backup_tars_each_connector_s_data_directory_once_to_a_dated_key(jobs) -> None:
+    script = backup_command(list(jobs.values()), "2026-11-22")
+
+    assert len(script) == 1  # the ops task's entry point is `sh -c`: its command is the script alone
+    assert script[0].count("backups/2026-11-22/") == 9  # nine connectors; the two DSN-MUI jobs share one directory
+    for connector, repository in {"ojk": "OJK-Source-Connector", "bi-website": "BI-Source-Connector",
+                                  "dsn-fatwa": "DSN-MUI-Source-Connector", "reports": "Reports-Connector"}.items():
+        assert f"/workspace/{repository}/data" in script[0]
+        assert f"backups/2026-11-22/{connector}.tgz" in script[0]
+    assert "$OPS_BUCKET" in script[0]
 

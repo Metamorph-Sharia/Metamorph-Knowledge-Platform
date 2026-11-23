@@ -20,6 +20,7 @@ directories, bind-mounted, so a scheduled run and a person's CLI run see the sam
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -29,6 +30,7 @@ PUBLISHED = "metamorph://published"  # its read contract
 MARKET_REGISTRY = "metamorph://market-registry"  # the market layer's system of record (`market`)
 PUBLISHED_MARKET = "metamorph://published-market"  # its read contract
 MARKET_INDEX = "metamorph://market-index"  # the retrieval layer's index of it (`retrieval_market`)
+OPS_IMAGE = "metamorph/ops:dev"  # an operator's shell with every connector's data/ mounted: the weekly backup's task
 RETRIEVAL_IMAGE = "metamorph/retrieval:dev"  # Metamorph-Retrieval: the gateway and the market index's refresh
 REGULATION_INDEX = "metamorph://regulation-index"  # the regulation index, judged before it is activated
 MODELS = "/models"  # where the retrieval image keeps its embedding models
@@ -78,6 +80,17 @@ class ConnectorJob:
     description: str = ""
     tags: tuple[str, ...] = ()
     layer: Layer = Layer.REGULATION
+    # The connector calls metamorph_pdf_text, so it needs MinerU: its schedule must start inside MinerU's window
+    # (deploy/aws/ingestion/mineru.yaml), which runs only then on AWS.
+    reads_pdfs: bool = False
+
+
+@dataclass(frozen=True)
+class BackupJob:
+    dag_id: str
+    image: str
+    schedule: str
+    description: str
 
 
 def passed_on(job: ConnectorJob) -> tuple[str, ...]:
@@ -123,6 +136,42 @@ def discard_command(job: ConnectorJob, run_id: str) -> list[str]:
     return ["rm", "-rf", bundle_path(job.connector, run_id)]
 
 
+def backup_job() -> BackupJob:
+    """The weekly copy of the connectors' data to the ops bucket. On Sundays, after the last ingest of the week."""
+    return BackupJob(
+        dag_id="backup_connector_data",
+        image=OPS_IMAGE,
+        schedule="0 5 * * 0",  # Sundays 05:00 UTC: no ingest runs, so no store is written while it is copied
+        description="Weekly: each connector's data/ as a tarball in the ops bucket, backups/<date>/<connector>.tgz",
+    )
+
+
+def backup_command(jobs: Sequence[ConnectorJob], date: str) -> list[str]:
+    """The ops task's command: one tarball per connector, uploaded to `backups/<date>/<connector>.tgz`.
+
+    The ops task definition's entry point is `sh -c`, so the command is the script alone. Every tarball is tried;
+    the task fails if any was not uploaded.
+    """
+    data: dict[str, str] = {}  # connector → its data directory (the DSN-MUI jobs share one)
+    for job in jobs:
+        for mount in job.mounts:
+            if mount.kind == "bind" and mount.target.startswith("/workspace/") and mount.target.endswith("/data"):
+                data.setdefault(job.connector, mount.target)
+    lines = [
+        "rc=0",
+        # boto3 is in the image (the platform's); the ops task's role may write backups/* in $OPS_BUCKET
+        """upload() { python -c 'import boto3, sys; boto3.client("s3").upload_file(*sys.argv[1:])' "$1" "$OPS_BUCKET" "$2"; }""",
+    ]
+    for connector, directory in data.items():
+        tarball = f"/tmp/{connector}.tgz"
+        lines.append(
+            f'( tar -czf {tarball} -C "{directory}" . && upload {tarball} backups/{date}/{connector}.tgz'
+            f" && rm {tarball} ) || rc=1"
+        )
+    lines.append('exit "$rc"')
+    return ["\n".join(lines)]
+
+
 def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
     """`workspace`: the host directory holding the connector repositories (bind mounts are host paths)."""
 
@@ -133,6 +182,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
     dsn = dict(
         connector="dsn-fatwa",
         image="metamorph/dsn-mui-connector:dev",
+        reads_pdfs=True,
         export="dsn export --out {out} --run-id {run_id}",
         mounts=(data("DSN-MUI-Source-Connector"), bundles),
         tags=("dsn-mui",),
@@ -142,7 +192,8 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_ojk",
             connector="ojk",
             image="metamorph/ojk-connector:dev",
-            schedule="0 1 * * *",  # 08:00 WIB; every ingest runs in MinerU's window, 00:30–03:15 UTC
+            reads_pdfs=True,
+            schedule="0 1 * * *",  # 08:00 WIB; every ingest that reads PDFs (reads_pdfs) runs in MinerU's window, 00:30–03:15 UTC
             collect="ojk-connector run",
             export="ojk-connector export --format v2 --out {out} --run-id {run_id}",
             mounts=(data("OJK-Source-Connector"), Mount(ojk_credentials, OJK_CREDENTIALS), bundles),
@@ -153,6 +204,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_bpk",
             connector="bpk",
             image="metamorph/bpk-connector:dev",
+            reads_pdfs=True,
             schedule="20 1 * * *",
             collect="bpk-connector run",
             export="bpk-connector export --format v2 --out {out} --run-id {run_id}",
@@ -164,6 +216,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_bi",
             connector="bi-website",
             image="metamorph/bi-connector:dev",
+            reads_pdfs=True,
             schedule="40 1 * * *",
             collect="python -m src.init_db && python -m src.cli sync",
             export="python -m src.pipeline.exporter_v2 --out {out} --run-id {run_id}",
@@ -191,6 +244,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_ojk_register",
             connector="ojk-register",
             image="metamorph/ojk-register:dev",
+            reads_pdfs=True,
             schedule="45 2 * * 1",  # weekly, Mondays: OJK publishes each list on no fixed day
             collect="ojk-register sync",  # exits 2 on a refusal or an edition it can't read: the task fails
             export="ojk-register export --out {out} --run-id {run_id}",
@@ -231,7 +285,10 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_reports",
             connector="reports",
             image="metamorph/reports:dev",
-            schedule="45 4 * * 1",  # weekly, Mondays: LPKSI comes yearly, OJK's press releases a few a week
+            reads_pdfs=True,
+            # weekly, Mondays, in MinerU's window just after DSN-MUI's 02:00: LPKSI comes yearly, OJK's press releases
+            # a few a week
+            schedule="15 2 * * 1",
             # exits 2 on a refusal; a report MinerU can't read now is kept unread and read on a later run.
             # KEKSI and the roadmaps are imported by hand (`reports import`), into the same data/
             collect="reports sync",
