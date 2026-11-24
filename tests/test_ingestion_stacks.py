@@ -16,8 +16,6 @@ from typing import Any
 import pytest
 import yaml
 from metamorph_pipeline.jobs import (
-    CONNECTOR_SETTINGS,
-    OPS_IMAGE,
     PLATFORM_IMAGE,
     RETRIEVAL_IMAGE,
     ConnectorJob,
@@ -99,7 +97,7 @@ def stopped(
     *,
     exit_code: int | None,
     cluster: str = CLUSTER,
-    family: str = "metamorph-bi-connector",
+    family: str = "metamorph-platform",
     status: str = "STOPPED",
     stop_code: str = "EssentialContainerExited",
 ) -> dict[str, Any]:
@@ -151,22 +149,42 @@ def families(name: str) -> set[str]:
     return {r["Properties"]["Family"] for r in resources(name, "AWS::ECS::TaskDefinition")}
 
 
-def test_the_alert_rule_lists_exactly_the_ingestion_task_families() -> None:
-    # An explicit list, not the prefix `metamorph-`: metamorph-mineru's task dies every night when its instance stops.
+def listed_families() -> set[str]:
     (rule,) = resources("alerts.yaml", "AWS::Events::Rule")
     prefixes = resolve(rule["Properties"]["EventPattern"])["detail"]["taskDefinitionArn"]
     base = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/"
-    listed = {option["prefix"].removeprefix(base).removesuffix(":") for option in prefixes}
-
     assert all(option["prefix"].startswith(base) and option["prefix"].endswith(":") for option in prefixes)
-    assert listed == families("jobs.yaml") | families("airflow.yaml")
-    assert "metamorph-mineru" in families("mineru.yaml") - listed
+    return {option["prefix"].removeprefix(base).removesuffix(":") for option in prefixes}
+
+
+RETRIEVAL_STACK = yaml.load((INGESTION.parent / "retrieval.yaml").read_text(), Loader=_Loader)  # noqa: S506
+PROCESSING_FAMILIES = {
+    "metamorph-airflow",
+    "metamorph-platform",  # load, registry build, market publish, health
+    "metamorph-retrieval",  # the regulation and market indexes' refresh
+}
+
+
+def test_the_alert_rule_lists_exactly_the_processing_task_families() -> None:
+    # An explicit list, not the prefix `metamorph-`: metamorph-mineru's task dies when its instance stops. No connector
+    # family: collection runs on the collection host (docs/adr/0001-collection-on-a-residential-host.md).
+    retrieval_tasks = [r for r in RETRIEVAL_STACK["Resources"].values() if r["Type"] == "AWS::ECS::TaskDefinition"]
+    retrieval = {r["Properties"]["Family"] for r in retrieval_tasks}
+
+    assert listed_families() == PROCESSING_FAMILIES
+    assert families("jobs.yaml") | families("airflow.yaml") | retrieval >= PROCESSING_FAMILIES
+    assert "metamorph-mineru" in families("mineru.yaml") - listed_families()
 
 
 def test_the_alert_rule_ignores_the_mineru_task_that_stops_with_its_instance() -> None:
     assert not matches(alert_pattern(), stopped(exit_code=137, family="metamorph-mineru"))
-    for family in families("jobs.yaml") | families("airflow.yaml"):
+    for family in PROCESSING_FAMILIES:
         assert matches(alert_pattern(), stopped(exit_code=1, family=family)), family
+
+
+def test_the_alert_rule_names_no_connector_that_runs_elsewhere_now() -> None:
+    for family in ("metamorph-ojk-connector", "metamorph-bi-stats", "metamorph-reports", "metamorph-ops"):
+        assert not matches(alert_pattern(), stopped(exit_code=1, family=family)), family
 
 
 def test_the_alert_rule_sends_to_the_email_topic() -> None:
@@ -219,13 +237,9 @@ LIVE_CORE_EXPORTS = {
     "metamorph-sg-web", "metamorph-subnets", "metamorph-vpc",
 }  # fmt: skip
 
-# Images that live outside the ingestion layer: the core's platform repository, and Retrieval's own stack.
-NOT_INGESTION_IMAGES = {"metamorph-platform:dev", "metamorph/retrieval:dev"}
 # Resource types that take tags, and the property that holds them.
 TAGGED = {
     "AWS::EC2::SecurityGroup": "Tags",
-    "AWS::EFS::FileSystem": "FileSystemTags",
-    "AWS::EFS::AccessPoint": "AccessPointTags",
     "AWS::ECR::Repository": "Tags",
     "AWS::SSM::Parameter": "Tags",
 }
@@ -280,38 +294,17 @@ def test_the_shared_stack_exports_nothing_the_live_core_exports() -> None:
     assert not set(exported(SHARED)) & LIVE_CORE_EXPORTS
 
 
-def test_every_connector_has_its_own_access_point(jobs) -> None:
-    points = {name: body["Properties"] for name, body in shared_resources("AWS::EFS::AccessPoint").items()}
-    by_path = {p["RootDirectory"]["Path"]: name for name, p in points.items()}
-    exports = exported(SHARED)
-    connectors = {}
-    for job in jobs:
-        data = next(m.target for m in job.mounts if m.target.startswith("/workspace/"))
-        connectors[job.connector] = data.removeprefix("/workspace")  # /OJK-Source-Connector/data
-    assert len(connectors) == 9
-    for connector, path in connectors.items():
-        assert path in by_path, f"no access point for {connector} at {path}"
-        assert exports.get(f"metamorph-efs-{connector}-data") == by_path[path]
-    assert "/bundles" in by_path
-    assert exports.get("metamorph-efs-bundles") == by_path["/bundles"]
-    assert len(points) == 10  # nine connectors and bundles: no credentials access point (JDIH needs none)
+def test_no_ingestion_stack_keeps_the_connectors_files_on_efs() -> None:
+    # The connectors' state lives on the collection host's disk and the bundles in S3 (ADR 0001).
+    for path in TEMPLATES:
+        kinds = {body["Type"] for body in template(path.name)["Resources"].values()}
+        assert not {kind for kind in kinds if kind.startswith("AWS::EFS::")}, path.name
+        assert not re.search(r"\bEFS\b", path.read_text(), re.I), path.name
+    assert not {"FilesGroup", "FilesFromJobs"} & set(SHARED["Resources"])
+    assert not [name for name in exported(SHARED) if name.startswith("metamorph-efs")]
 
 
-def test_every_access_point_is_owned_by_the_connectors_user() -> None:
-    for body in shared_resources("AWS::EFS::AccessPoint").values():
-        assert body["Properties"]["PosixUser"] == {"Uid": "1000", "Gid": "1000"}
-        assert body["Properties"]["RootDirectory"]["CreationInfo"]["OwnerUid"] == "1000"
-
-
-def test_the_file_system_is_tagged_at_creation_with_owner_and_project() -> None:
-    (files,) = shared_resources("AWS::EFS::FileSystem").values()
-    tags = {tag["Key"]: tag["Value"] for tag in files["Properties"]["FileSystemTags"]}
-    assert tags["Owner"] == "project3"
-    assert tags["Project"] == "metamorph"
-    assert files["Properties"]["Encrypted"] is True
-
-
-def test_every_resource_that_takes_tags_carries_owner(jobs) -> None:
+def test_every_resource_that_takes_tags_carries_owner() -> None:
     missing = []
     for name, body in SHARED["Resources"].items():
         prop = TAGGED.get(body["Type"])
@@ -324,16 +317,13 @@ def test_every_resource_that_takes_tags_carries_owner(jobs) -> None:
     assert not missing
 
 
-def test_every_ingestion_image_has_a_scanned_immutable_repository_keeping_ten_mineru_two(jobs) -> None:
+def test_only_airflow_and_mineru_have_ingestion_image_repositories_scanned_immutable_and_pruned() -> None:
     repositories = {
         body["Properties"]["RepositoryName"]: body["Properties"]
         for body in shared_resources("AWS::ECR::Repository").values()
     }
-    images = {job.image.rsplit(":", 1)[0] for job in jobs} - {i.rsplit(":", 1)[0] for i in NOT_INGESTION_IMAGES}
-    assert len(images) == 9
-    # No ops repository: the ops task runs the platform image, and its family only borrows the name
-    wanted = images | {"metamorph/airflow", "metamorph/mineru"}
-    assert set(repositories) == wanted
+    # The connectors' images are built on the collection host and never pushed (compose.yaml)
+    assert set(repositories) == {"metamorph/airflow", "metamorph/mineru"}
     for name, properties in repositories.items():
         assert properties["ImageScanningConfiguration"] == {"ScanOnPush": True}
         assert properties["ImageTagMutability"] == "IMMUTABLE"
@@ -341,6 +331,17 @@ def test_every_ingestion_image_has_a_scanned_immutable_repository_keeping_ten_mi
         (rule,) = policy["rules"]
         assert rule["selection"]["countNumber"] == (2 if name == "metamorph/mineru" else 10)  # MinerU's are 20 GB
         assert rule["action"]["type"] == "expire"
+
+
+def test_no_task_on_aws_reaches_mineru_directly_any_more() -> None:
+    # Processing reads no PDF. The collection host reaches MinerU through its CloudFront front door.
+    ingress = shared_resources("AWS::EC2::SecurityGroupIngress")
+    assert "MinerULoadBalancerFromJobs" not in ingress
+    assert not [
+        name for name, body in ingress.items()
+        if body["Properties"]["GroupId"] == {"Ref": "MinerULoadBalancerGroup"}
+    ]
+    assert "MinerUFromLoadBalancer" in ingress  # the load balancer still reaches the MinerU task
 
 
 def test_the_database_group_accepts_airflow_and_the_tasks() -> None:
@@ -385,67 +386,52 @@ def image_tag_parameter(container: dict[str, Any]) -> str:
     return match.group(1)
 
 
-def data_mounts(job: ConnectorJob) -> dict[str, str]:
-    """The job's data directory as its container sees it → its access point's export."""
-    return {m.target: f"metamorph-efs-{job.connector}-data" for m in job.mounts if m.target.startswith("/workspace/")}
+def test_the_jobs_stack_defines_only_the_platform_task_the_processing_dags_run_on_ecs() -> None:
+    assert RETRIEVAL_IMAGE != PLATFORM_IMAGE  # Retrieval's refresh belongs to the retrieval stack
+    assert set(task_definitions()) == {task_family(PLATFORM_IMAGE)}
 
 
-def dag_images(jobs: list[ConnectorJob]) -> set[str]:
-    """Every image a DAG launches, but Retrieval's: its refresh task belongs to the retrieval stack."""
-    return {job.image for job in jobs} | {PLATFORM_IMAGE, OPS_IMAGE}
-
-
-def test_every_image_a_dag_runs_has_a_task_definition_named_for_it(jobs) -> None:
-    assert RETRIEVAL_IMAGE not in dag_images(jobs)
-    assert set(task_definitions()) == {task_family(image) for image in dag_images(jobs)}
-    assert len(task_definitions()) == 11  # nine connectors, the platform and ops
-
-
-def test_every_task_definition_has_one_essential_main_container_logging_under_its_family() -> None:
-    for family, definition in task_definitions().items():
-        main = main_container(definition)
-        assert main["Essential"] is True
-        assert "Command" not in main or family == "metamorph-ops"  # Airflow passes the command
-        assert main["LogConfiguration"]["Options"]["awslogs-stream-prefix"] == family  # read at <family>/main
-        assert definition["RequiresCompatibilities"] == ["FARGATE"]
-
-
-def test_each_connector_mounts_its_own_access_point_and_the_bundles_and_no_other(jobs) -> None:
-    for job in jobs:
-        definition = task_definitions()[task_family(job.image)]
-        own = data_mounts(job)
-        assert len(own) == 1
-        assert mounted(definition, main_container(definition)) == {**own, "/bundles": "metamorph-efs-bundles"}
-
-
-def test_the_platform_mounts_only_the_bundles_read_only() -> None:
+def test_the_platform_task_has_one_essential_main_container_logging_under_its_family() -> None:
     definition = task_definitions()["metamorph-platform"]
     main = main_container(definition)
-    assert mounted(definition, main) == {"/bundles": "metamorph-efs-bundles"}
-    assert all(m["ReadOnly"] is True for m in main["MountPoints"])
+    assert len(definition["ContainerDefinitions"]) == 1  # no init container: BI's SEKI inbox is the collection host's
+    assert main["Essential"] is True
+    assert "Command" not in main  # Airflow passes the command
+    assert main["LogConfiguration"]["Options"]["awslogs-stream-prefix"] == "metamorph-platform"  # read at <family>/main
+    assert definition["RequiresCompatibilities"] == ["FARGATE"]
 
 
-def test_the_ops_task_mounts_every_connectors_data_at_its_connector_path_and_the_bundles(jobs) -> None:
-    definition = task_definitions()["metamorph-ops"]
-    expected = {"/bundles": "metamorph-efs-bundles"}
-    for job in jobs:
-        expected.update(data_mounts(job))
-    assert len(expected) == 10
-    assert mounted(definition, main_container(definition)) == expected
+def test_the_platform_task_mounts_no_volume_it_reads_bundles_from_s3() -> None:
+    definition = task_definitions()["metamorph-platform"]
+    assert "Volumes" not in definition
+    assert "MountPoints" not in main_container(definition)
 
 
-def test_no_task_mounts_ojk_credentials() -> None:  # JDIH OJK needs none
-    assert "credentials" not in (INGESTION / "jobs.yaml").read_text()
+def test_the_jobs_stack_keeps_nothing_only_a_connector_task_read() -> None:
+    text = template_text("jobs.yaml")
+    gone_with_the_connectors = (
+        "EFS", "ConnectorTaskRole", "ConnectorCpu", "ConnectorMemory", "_CONTACT", "/metamorph/connectors/", "inbox",
+        "/metamorph/mineru/api-key", "metamorph-ops", "OPS_BUCKET",
+    )  # fmt: skip
+    for gone in gone_with_the_connectors:
+        assert gone not in text, gone
+    assert set(JOBS["Parameters"]) == {"PlatformTaskRole", "PlatformTag", "PlatformCpu", "PlatformMemory"}
 
 
-def test_task_roles_come_from_parameters_named_after_the_devops_roles() -> None:
+def test_the_platform_task_gets_its_database_and_blobs_bucket_from_parameter_store() -> None:
+    secrets = {s["Name"]: s["ValueFrom"] for s in main_container(task_definitions()["metamorph-platform"])["Secrets"]}
+    assert secrets == {
+        "METAMORPH_DATABASE_URL": "/metamorph/platform/database-url",
+        "METAMORPH_S3_BUCKET": "/metamorph/platform/s3-bucket",  # where load-pending reads the bundles
+    }
+
+
+def test_the_platform_task_role_comes_from_a_parameter_named_after_the_devops_role() -> None:
     parameters = JOBS["Parameters"]
-    assert parameters["ConnectorTaskRole"]["Default"] == "metamorph-connector-task"
     assert parameters["PlatformTaskRole"]["Default"] == "metamorph-platform-task"
-    for family, definition in task_definitions().items():
-        parameter = "PlatformTaskRole" if family == "metamorph-platform" else "ConnectorTaskRole"  # ops: connector role
-        assert definition["TaskRoleArn"] == {"Fn::Sub": f"arn:aws:iam::${{AWS::AccountId}}:role/${{{parameter}}}"}
-        assert definition["ExecutionRoleArn"] == {"Fn::ImportValue": "metamorph-execution-role"}
+    definition = task_definitions()["metamorph-platform"]
+    assert definition["TaskRoleArn"] == {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${PlatformTaskRole}"}
+    assert definition["ExecutionRoleArn"] == {"Fn::ImportValue": "metamorph-execution-role"}
 
 
 def test_the_jobs_stack_declares_no_iam_resource_and_imports_only_live_exports() -> None:
@@ -460,93 +446,30 @@ def test_every_task_definition_is_tagged_owner_project3() -> None:
         assert {"Key": "Owner", "Value": "project3"} in definition["Tags"], family
 
 
-def test_sizes_follow_the_plan_and_stay_inside_the_accounts_task_cap() -> None:
+def test_the_platform_task_size_stays_inside_the_accounts_task_cap() -> None:
     parameters = JOBS["Parameters"]
-    defaults = {name: parameters[name]["Default"] for name in ("ConnectorCpu", "ConnectorMemory", "PlatformCpu", "PlatformMemory")}
-    assert defaults == {"ConnectorCpu": "1024", "ConnectorMemory": "2048", "PlatformCpu": "1024", "PlatformMemory": "4096"}
-    for name in defaults:
-        limit = 2048 if name.endswith("Cpu") else 8192
-        assert max(int(v) for v in parameters[name]["AllowedValues"]) <= limit
-    for family, definition in task_definitions().items():
-        size = "Platform" if family == "metamorph-platform" else "Connector"
-        assert definition["Cpu"] == {"Ref": f"{size}Cpu"}
-        assert definition["Memory"] == {"Ref": f"{size}Memory"}
+    assert (parameters["PlatformCpu"]["Default"], parameters["PlatformMemory"]["Default"]) == ("1024", "4096")
+    assert max(int(v) for v in parameters["PlatformCpu"]["AllowedValues"]) <= 2048
+    assert max(int(v) for v in parameters["PlatformMemory"]["AllowedValues"]) <= 8192
+    definition = task_definitions()["metamorph-platform"]
+    assert (definition["Cpu"], definition["Memory"]) == ({"Ref": "PlatformCpu"}, {"Ref": "PlatformMemory"})
 
 
-def test_each_connector_gets_the_connector_settings_and_its_own_secrets_from_parameter_store(jobs) -> None:
-    for job in jobs:
-        main = main_container(task_definitions()[task_family(job.image)])
-        names = {secret["Name"] for secret in main["Secrets"]}
-        assert set(CONNECTOR_SETTINGS) <= names, job.dag_id
-        if "DATABASE_URL" in job.secrets:
-            assert {"Name": "DATABASE_URL", "ValueFrom": "/metamorph/bi/database-url"} in main["Secrets"]
+def test_the_platform_image_comes_from_its_repository_at_a_tag_parameter() -> None:
+    main = main_container(task_definitions()["metamorph-platform"])
+    assert image_tag_parameter(main) == "PlatformTag"
+    assert JOBS["Parameters"]["PlatformTag"]["Type"] == "String"
+    assert main["Image"]["Fn::Sub"][0].startswith("${Registry}/metamorph/platform:")
 
 
-def test_every_secret_a_job_passes_on_is_in_its_task_definition(jobs) -> None:
-    # jobs.py names the variables Airflow passes into the container; one the definition lacks arrives empty.
-    for job in jobs:
-        main = main_container(task_definitions()[task_family(job.image)])
-        names = {secret["Name"] for secret in main["Secrets"]}
-        assert set(job.secrets) <= names, job.dag_id
-
-
-def test_a_connectors_contact_comes_from_the_parameter_named_after_it(jobs) -> None:
-    # OJK_REGISTER_CONTACT is /metamorph/connectors/ojk-register-contact (a String the README lists to create).
-    contacts = [(job, name) for job in jobs for name in job.secrets if name.endswith("_CONTACT")]
-
-    assert {name for _, name in contacts} == {"OJK_REGISTER_CONTACT", "OJK_STATS_CONTACT", "BPS_STATS_CONTACT", "REPORTS_CONTACT"}
-    readme = (INGESTION / "README.md").read_text()
-    for job, name in contacts:
-        parameter = f"/metamorph/connectors/{name.lower().replace('_', '-')}"
-        main = main_container(task_definitions()[task_family(job.image)])
-        assert {"Name": name, "ValueFrom": parameter} in main["Secrets"], job.dag_id
-        assert parameter in readme, parameter
-
-
-def test_each_image_comes_from_its_own_repository_at_a_tag_parameter(jobs) -> None:
-    tags = {}
-    for family, definition in task_definitions().items():
-        main = main_container(definition)
-        tags[family] = image_tag_parameter(main)
-        assert JOBS["Parameters"][tags[family]]["Type"] == "String"
-    for job in jobs:
-        main = main_container(task_definitions()[task_family(job.image)])
-        assert main["Image"]["Fn::Sub"][0].startswith("${Registry}/" + job.image.rsplit(":", 1)[0] + ":")
-    assert tags["metamorph-ops"] == tags["metamorph-platform"]  # ops runs the platform image
-    assert len(set(tags.values())) == len(tags) - 1
-
-
-def test_the_bi_statistics_task_copies_the_seki_inbox_from_the_ops_bucket_before_main_starts() -> None:
-    definition = task_definitions()["metamorph-bi-stats"]
-    init, main = definition["ContainerDefinitions"][0], main_container(definition)
-    assert init["Name"] != "main" and init["Essential"] is False
-    assert "aws-cli" in init["Image"]
-    assert "s3://$OPS_BUCKET/inbox/bi-seki/" in init["Command"][0]
-    assert "/workspace/BI-Stats-Connector/data/inbox" in init["Command"][0]
-    assert {"Name": "OPS_BUCKET", "ValueFrom": "/metamorph/ops/bucket"} in init["Secrets"]
-    assert main["DependsOn"] == [{"ContainerName": init["Name"], "Condition": "SUCCESS"}]
-    assert mounted(definition, init) == {"/workspace/BI-Stats-Connector/data": "metamorph-efs-bi-stats-data"}
-    others = [f for f, d in task_definitions().items() if f != "metamorph-bi-stats" and len(d["ContainerDefinitions"]) > 1]
-    assert not others
-
-
-def test_the_ops_task_is_a_shell_in_the_platform_image_with_the_ops_bucket_for_the_backup() -> None:
-    definition = task_definitions()["metamorph-ops"]
-    main = main_container(definition)
-    assert main["EntryPoint"] == ["sh", "-c"]
-    assert "/metamorph/platform:" in main["Image"]["Fn::Sub"][0]
-    assert {"Name": "OPS_BUCKET", "ValueFrom": "/metamorph/ops/bucket"} in main["Secrets"]  # dags/backup.py reads it
-
-
-def test_push_images_builds_every_ingestion_image_and_airflow() -> None:
+def test_push_images_builds_airflow_but_no_connector_image() -> None:
     script = (Path(__file__).parents[1] / "deploy/aws/push-images.sh").read_text()
-    repositories = {
-        body["Properties"]["RepositoryName"].removeprefix("metamorph/")
-        for body in shared_resources("AWS::ECR::Repository").values()
-    } - {"mineru"}  # built on the GPU instance, not here
-    assert len(repositories) == 10  # nine connectors and airflow
-    for image in repositories:
-        assert re.search(rf"^\s+{re.escape(image)}\)\s+build {re.escape(image)} ", script, re.M), image
+    assert re.search(r"^\s+airflow\)\s+build airflow ", script, re.M)
+    assert re.search(r"^INGESTION=\(airflow\)$", script, re.M)
+    jobs = ingest_jobs("/w", ojk_credentials="/unused")
+    for job in jobs:
+        assert job.image.rsplit(":", 1)[0].removeprefix("metamorph/") not in script, job.image
+    assert "-connector" not in script
 
 # The Airflow stack: the role by name, the UI through CloudFront behind a password check.
 AIRFLOW = template("airflow.yaml")
@@ -1043,13 +966,11 @@ def test_every_front_door_resource_carries_owner() -> None:
         assert {"Key": "Owner", "Value": "project3"} in resource["Properties"]["Tags"], kind
 
 
-def test_the_connectors_mineru_url_is_written_from_the_load_balancer_s_address() -> None:
-    ((_, setting),) = minerus("AWS::SSM::Parameter").items()
-    props = setting["Properties"]
-
-    assert props["Name"] == "/metamorph/connectors/mineru-url"
-    assert props["Value"] == {"Fn::Sub": "http://${LoadBalancer.DNSName}:8010"}
-    assert props["Tags"] == {"Owner": "project3"}
+def test_mineru_is_reached_only_through_its_front_door_so_no_internal_address_is_published() -> None:
+    # The parameter held the load balancer's address for the connector tasks that ran on AWS: they run elsewhere now.
+    assert not minerus("AWS::SSM::Parameter")
+    assert "MinerUUrl" not in MINERU["Outputs"]
+    assert "mineru-url" not in template_text("mineru.yaml")
 
 
 def test_four_schedules_start_and_stop_the_instance_with_the_scheduler_role() -> None:
@@ -1092,7 +1013,7 @@ def test_the_check_command_is_valid_shell_and_calls_aws_only_to_read() -> None:
 
 def test_the_check_command_looks_at_every_thing_it_promises() -> None:
     text = CHECK.read_text()
-    for role in ("metamorph-airflow-task", "metamorph-connector-task", "metamorph-platform-task"):
+    for role in ("metamorph-airflow-task", "metamorph-platform-task"):
         assert role in text
     assert "metamorph-scheduler" in text
     assert "metamorph-mineru-instance" in text  # the role and the instance profile
@@ -1100,8 +1021,17 @@ def test_the_check_command_looks_at_every_thing_it_promises() -> None:
         assert service in text
     assert "metamorph-ingestion-$name" in text
     assert "for name in shared jobs mineru airflow alerts" in text  # the five stacks, each complete
-    for call in ("describe-access-points", "describe-instances", "describe-services"):
+    for call in ("describe-instances", "describe-services"):
         assert call in text
+
+
+def test_the_check_command_looks_at_the_minerus_front_door_and_no_longer_at_what_was_retired() -> None:
+    text = CHECK.read_text()
+    assert "FrontDoorUrl" in text  # the stack's output names the distribution
+    assert "list-distributions" in text  # deployed, with its rate limit's web ACL attached
+    assert "WebACLId" in text
+    for retired in ("metamorph-connector-task", "describe-access-points", "ACCESS_POINTS", "efs", "EFS"):
+        assert retired not in text, retired
 
 
 README = INGESTION / "README.md"
@@ -1119,11 +1049,73 @@ def test_the_readme_names_every_template_and_every_image_tag_the_jobs_stack_take
 
 def test_the_readme_describes_nothing_that_is_gone() -> None:
     text = README.read_text()
-    for gone in ("tunnel.sh", "CAPABILITY_NAMED_IAM", "ssm:StartSession", "Superseded"):
+    gone_things = (
+        "tunnel.sh", "CAPABILITY_NAMED_IAM", "ssm:StartSession", "Superseded", "Every night", "OjkTag", "BiStatsTag",
+        "ReportsTag", "transfer/connector-data", "run_task ops",
+    )  # fmt: skip
+    for gone in gone_things:
         assert gone not in text, gone
     rows = [line for line in text.splitlines() if line.startswith("| `metamorph-ingestion-")]
     assert len(rows) == 5
     assert not [row for row in rows if "Cloud Map" in row]  # the shared stack no longer makes the namespace
+    assert not [row for row in rows if "EFS" in row]
+
+
+def section(heading: str) -> str:
+    """The README's text under one `## ` heading."""
+    text = README.read_text()
+    start = text.index(f"\n## {heading}") + 1
+    end = text.find("\n## ", start + 1)
+    return text[start:] if end == -1 else text[start:end]
+
+
+def test_the_readme_describes_the_two_sides_and_what_joins_them() -> None:
+    text = section("The two sides")
+    for needle in ("collection host", "METAMORPH_SIDE", "collection", "processing", "bundle", "s3://", "_COMPLETE",
+                   "ingest_ojk", "backup_connector_data", "load_bundles", "load-pending"):
+        assert needle in text, needle
+    assert "docs/adr/0001-collection-on-a-residential-host.md" in README.read_text()  # why collection is off AWS
+
+
+def numbered(heading: str) -> list[str]:
+    return re.findall(r"^\d+\. (.*)$", section(heading), re.M)
+
+
+def test_the_readme_gives_the_cutover_order_and_deletes_nothing_before_the_gate() -> None:
+    steps = numbered("The cutover")
+    markers = ("hand run", "loaded on AWS", "check.sh", "first scheduled weekday", "retirement")
+
+    assert len(steps) == len(markers)
+    for step, marker in zip(steps, markers, strict=True):
+        assert marker in step, (marker, step)
+    assert "inside MinerU's window" in steps[0]
+
+
+def test_the_readme_orders_the_retirement_so_no_stack_drops_what_another_still_imports() -> None:
+    text = section("The retirement")
+    order = [text.index(marker) for marker in
+             ("batch-delete-image", "deploy ingestion/jobs", "deploy ingestion/shared", "deploy ingestion/mineru",
+              "deploy ingestion/alerts", "aws ssm delete-parameters")]
+
+    assert order == sorted(order)  # the images first (a repository with images cannot be deleted), tasks before EFS
+    assert "DeletionPolicy: Retain" in text  # the file system outlives its stack: delete it by hand
+    assert "/metamorph/connectors/mineru-url" in text and "/metamorph/mineru/api-key" in text  # one goes, one stays
+
+
+def test_the_readme_tells_the_collection_hosts_operator_to_sign_in_again_and_how_to_start_mineru_by_hand() -> None:
+    text = README.read_text()
+    assert "aws sso login" in text
+    for setting in ("METAMORPH_AWS_PROFILE", "METAMORPH_BUNDLES_BUCKET", "METAMORPH_OPS_BUCKET"):
+        assert setting in text, setting
+    assert "aws ec2 start-instances" in section("The window")  # MinerU's hand start
+    assert "ec2:StartInstances" in text or "start-instances" in text
+
+
+def test_the_readme_says_what_a_held_bundle_does() -> None:
+    text = section("A held bundle")
+    assert "load_bundles" in text and "held" in text and "alert" in text
+    assert "no build runs" in text  # the registry build waits for the held bundle's connector, though others loaded
+    assert "load-pending" in text
 
 
 def test_the_compose_airflow_is_given_the_aws_session_the_buckets_and_minerus_address_from_the_env_file() -> None:

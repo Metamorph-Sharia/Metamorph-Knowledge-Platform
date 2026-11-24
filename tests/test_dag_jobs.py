@@ -17,7 +17,6 @@ from metamorph_pipeline.jobs import (
     BUNDLES,
     LOAD_BUNDLES_SCHEDULE,
     MARKET_REGISTRY,
-    OPS_IMAGE,
     PACK_DATA,
     PLATFORM_IMAGE,
     PUBLISHED,
@@ -33,7 +32,6 @@ from metamorph_pipeline.jobs import (
     collect_command,
     ingest_jobs,
     is_first_weekday,
-    load_command,
     passed_on,
     pending_loads,
     registry_of,
@@ -94,11 +92,6 @@ def test_the_statistics_job_collects_from_the_portal_and_loads_into_the_market_l
     assert "OJK_STATS_CONTACT" in passed_on(stats)
 
 
-def test_a_bundle_loads_into_its_own_layer(jobs) -> None:
-    assert load_command(jobs["ingest_ojk"], "r1") == ["load", "/bundles/ojk/r1"]
-    assert load_command(jobs["ingest_ojk_register"], "r1") == ["market", "load", "/bundles/ojk-register/r1"]
-
-
 def test_a_load_updates_its_layer_s_registry_which_its_own_dag_publishes(jobs) -> None:
     registries = {job.dag_id: registry_of(job) for job in jobs.values()}
 
@@ -138,14 +131,21 @@ def test_on_ecs_an_image_runs_as_the_task_definition_named_after_it() -> None:
     assert task_family(PLATFORM_IMAGE) == "metamorph-platform"
 
 
-def test_every_image_a_dag_runs_has_its_task_definition_on_ecs(jobs) -> None:
-    template = (Path(__file__).parents[1] / "deploy/aws/ingestion/jobs.yaml").read_text()
-    defined = set(re.findall(r"^      Family: (\S+)$", template, re.MULTILINE))
-    images = {job.image for job in jobs.values()} | {PLATFORM_IMAGE, OPS_IMAGE}
+def test_nothing_is_left_of_the_collection_on_aws_model_in_the_job_registry() -> None:
+    import metamorph_pipeline.jobs as registry
 
-    assert {task_family(image) for image in images} == defined
-    # each definition has one "main" the DAGs override (BI statistics' also has the container that fills its inbox)
-    assert re.findall(rf"^        - Name: {TASK_CONTAINER}$", template, re.MULTILINE) == [f"        - Name: {TASK_CONTAINER}"] * len(defined)
+    assert not hasattr(registry, "load_command")  # a bundle is loaded from S3 by `load-pending` (pending_loads)
+    assert not hasattr(registry, "OPS_IMAGE")  # the ops task is gone: the backup runs on the collection host
+
+
+def test_the_only_image_the_jobs_stack_defines_is_the_platforms_since_collection_left_aws() -> None:
+    template = (Path(__file__).parents[1] / "deploy/aws/ingestion/jobs.yaml").read_text()
+    defined = re.findall(r"^      Family: (\S+)$", template, re.MULTILINE)
+
+    assert defined == [task_family(PLATFORM_IMAGE)]
+    # its definition has one "main", which the DAGs override
+    mains = re.findall(rf"^        - Name: {TASK_CONTAINER}$", template, re.MULTILINE)
+    assert mains == [f"        - Name: {TASK_CONTAINER}"]
 
 
 def test_bundles_are_kept_per_connector_and_run() -> None:
@@ -365,7 +365,7 @@ def test_the_ingest_dag_collects_uploads_and_discards_and_no_longer_loads_or_emi
     source = (Path(__file__).parents[1] / "dags" / "ingest.py").read_text()
 
     assert "collect >> upload >> discard" in source
-    assert not re.search(r"\bload_command", source)  # loading is processing's (ticket 05)
+    assert not re.search(r"\bload_command", source)  # loading is processing's
     assert "Dataset" not in source and "outlets" not in source
 
 

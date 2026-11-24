@@ -35,7 +35,6 @@ PUBLISHED = "metamorph://published"  # its read contract
 MARKET_REGISTRY = "metamorph://market-registry"  # the market layer's system of record (`market`)
 PUBLISHED_MARKET = "metamorph://published-market"  # its read contract
 MARKET_INDEX = "metamorph://market-index"  # the retrieval layer's index of it (`retrieval_market`)
-OPS_IMAGE = "metamorph/ops:dev"  # the ECS task definition that still runs the backup on AWS (ingestion/jobs.yaml)
 RETRIEVAL_IMAGE = "metamorph/retrieval:dev"  # Metamorph-Retrieval: the gateway and the market index's refresh
 REGULATION_INDEX = "metamorph://regulation-index"  # the regulation index, judged before it is activated
 MODELS = "/models"  # where the retrieval image keeps its embedding models
@@ -131,12 +130,6 @@ def collect_command(job: ConnectorJob, run_id: str, since: str = "") -> list[str
     return ["sh", "-c", script]
 
 
-def load_command(job: ConnectorJob, run_id: str) -> list[str]:
-    """The platform's command for the job's bundle, in the job's layer."""
-    bundle = bundle_path(job.connector, run_id)
-    return ["market", "load", bundle] if job.layer is Layer.MARKET else ["load", bundle]
-
-
 def registry_of(job: ConnectorJob) -> str:
     """The registry a job's load updates: the Dataset whose DAG publishes it."""
     return MARKET_REGISTRY if job.layer is Layer.MARKET else REGISTRY
@@ -202,8 +195,8 @@ def backup_job() -> BackupJob:
     )
 
 
-# The ops task's packing step: a connector's data directory as a tarball. A connector's SQLite store may be written
-# while it is copied (the daily ingests run on Sundays too), and a plain copy of its file can be torn or miss what is
+# The backup's packing step: a connector's data directory as a tarball. A connector's SQLite store may be written
+# while it is copied (an ingest may still be running), and a plain copy of its file can be torn or miss what is
 # still in its -wal. So each SQLite file goes in as a snapshot taken with sqlite3's backup API (consistent, with the
 # -wal folded in), and the -wal/-shm/-journal files are left out. A file with a SQLite extension that SQLite cannot
 # open goes in as it is, with a warning. Run as `python - <directory> <tarball>`.

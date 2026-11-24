@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  MinerU on one ECS GPU instance (docs/aws-deployment-guide.md), for the connectors only. Fargate has no GPU, and the
-  account allows no Auto Scaling and no Cloud Map, so the stack is one g5.xlarge EC2 instance in the cluster, started
-  and stopped by EventBridge Scheduler around the collection host's weekday window, with the MinerU service on it behind an internal
-  load balancer. The 20 GB image stays on the instance's disk while it is stopped. The collection host, off AWS, reaches
+  MinerU on one ECS GPU instance (docs/aws-deployment-guide.md), for the collection host's connectors only. Fargate
+  has no GPU, and the account allows no Auto Scaling and no Cloud Map, so the stack is one g5.xlarge EC2 instance in
+  the cluster, started and stopped by EventBridge Scheduler around the collection host's weekday window, with the
+  MinerU service on it behind an internal load balancer. The 20 GB image stays on the instance's disk while it is stopped. The collection host, off AWS, reaches
   that balancer through a CloudFront front door (a VPC origin, no caching); MinerU checks its own API key and
   ingestion/waf.sh mineru rate-limits the address. Creates no IAM: the instance's profile and the scheduler's role
   come from parameters. Every create carries Owner=project3.
@@ -104,7 +104,7 @@ Resources:
             EOF
           - Cluster: !ImportValue metamorph-cluster
 
-  LoadBalancer:   # the connectors' stable address; the task behind it changes with every start
+  LoadBalancer:   # the front door's stable origin; the task behind it changes with every start
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       Name: metamorph-mineru
@@ -183,14 +183,6 @@ Resources:
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
           OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader: Authorization reaches MinerU
       Tags: [{Key: Owner, Value: project3}]
-
-  Address:   # what the connectors' tasks read as METAMORPH_MINERU_URL (jobs.yaml)
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /metamorph/connectors/mineru-url
-      Type: String
-      Value: !Sub "http://${LoadBalancer.DNSName}:8010"
-      Tags: {Owner: project3}
 
   Task:
     Type: AWS::ECS::TaskDefinition
@@ -291,7 +283,6 @@ Resources:
 
 Outputs:
   InstanceId: {Value: !Ref Instance}
-  MinerUUrl: {Value: !Sub "http://${LoadBalancer.DNSName}:8010"}
   FrontDoorUrl:
     Description: MinerU's address off AWS (the collection host's METAMORPH_MINERU_URL); its API key is METAMORPH_MINERU_API_KEY
     Value: !Sub "https://${Distribution.DomainName}"

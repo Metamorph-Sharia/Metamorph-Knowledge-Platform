@@ -1,21 +1,22 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Metamorph's ingestion layer, what its stacks share (deploy/aws/ingestion/README.md): the connectors' files on EFS
-  (one access point per connector), the ingestion images' repositories, its security groups and its way into the
-  core's database. It creates no IAM resource and no Cloud Map namespace (the account allows neither): the roles
-  come from DevOps, by name, as parameters of the stacks that use them. It plugs into the core
-  (deploy/aws/foundation.yaml) through the core's live exports only, and the core doesn't change. Every resource
-  carries Owner=project3, which the organization's policy requires on every create.
+  Metamorph's ingestion layer, what its stacks share (deploy/aws/ingestion/README.md): the Airflow and MinerU image
+  repositories, its security groups and its way into the core's database. Collection runs on the collection host, so
+  no connector has files or an image here (docs/adr/0001-collection-on-a-residential-host.md). It creates no IAM
+  resource and no Cloud Map namespace (the account allows neither): the roles come from DevOps, by name, as
+  parameters of the stacks that use them. It plugs into the core (deploy/aws/foundation.yaml) through the core's live
+  exports only, and the core doesn't change. Every resource carries Owner=project3, which the organization's policy
+  requires on every create.
 
 Resources:
   # Security groups, and the ingestion layer's rules into the core's database.
   AirflowGroup:
     Type: AWS::EC2::SecurityGroup
     Properties: {GroupDescription: metamorph Airflow, VpcId: !ImportValue metamorph-vpc, Tags: [{Key: Owner, Value: project3}]}
-  JobsGroup:
+  JobsGroup:   # the description still says "connector": changing it would replace a group the other stacks use
     Type: AWS::EC2::SecurityGroup
     Properties: {GroupDescription: metamorph connector and platform tasks, VpcId: !ImportValue metamorph-vpc, Tags: [{Key: Owner, Value: project3}]}
-  MinerULoadBalancerGroup:   # the internal load balancer the connectors call MinerU through
+  MinerULoadBalancerGroup:   # the internal load balancer in front of MinerU; CloudFront reaches it (mineru.yaml)
     Type: AWS::EC2::SecurityGroup
     Properties: {GroupDescription: metamorph MinerU internal load balancer, VpcId: !ImportValue metamorph-vpc, Tags: [{Key: Owner, Value: project3}]}
   MinerUGroup:   # what the load balancer reaches: the MinerU task
@@ -24,18 +25,9 @@ Resources:
   GpuHostGroup:
     Type: AWS::EC2::SecurityGroup
     Properties: {GroupDescription: metamorph GPU container instance (outbound only), VpcId: !ImportValue metamorph-vpc, Tags: [{Key: Owner, Value: project3}]}
-  FilesGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties: {GroupDescription: metamorph EFS, VpcId: !ImportValue metamorph-vpc, Tags: [{Key: Owner, Value: project3}]}
-  MinerULoadBalancerFromJobs:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties: {GroupId: !Ref MinerULoadBalancerGroup, IpProtocol: tcp, FromPort: 8010, ToPort: 8010, SourceSecurityGroupId: !Ref JobsGroup}
   MinerUFromLoadBalancer:
     Type: AWS::EC2::SecurityGroupIngress
     Properties: {GroupId: !Ref MinerUGroup, IpProtocol: tcp, FromPort: 8010, ToPort: 8010, SourceSecurityGroupId: !Ref MinerULoadBalancerGroup}
-  FilesFromJobs:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties: {GroupId: !Ref FilesGroup, IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref JobsGroup}
   DatabaseFromAirflow:
     Type: AWS::EC2::SecurityGroupIngress
     Properties: {GroupId: !ImportValue metamorph-sg-database, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AirflowGroup}
@@ -43,180 +35,8 @@ Resources:
     Type: AWS::EC2::SecurityGroupIngress
     Properties: {GroupId: !ImportValue metamorph-sg-database, IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref JobsGroup}
 
-  # The connectors' state (stores, PDFs, MinerU caches) and the bundles, on EFS. Files not read for 30 days move
-  # to Infrequent Access, which costs a fifteenth as much. The tags are on the create call: the organization denies
-  # an EFS created without Owner=project3.
-  Files:
-    Type: AWS::EFS::FileSystem
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Encrypted: true
-      PerformanceMode: generalPurpose
-      ThroughputMode: elastic
-      BackupPolicy: {Status: ENABLED}
-      LifecyclePolicies:
-        - TransitionToIA: AFTER_30_DAYS
-        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
-      FileSystemTags:
-        - {Key: Name, Value: metamorph}
-        - {Key: Owner, Value: project3}
-        - {Key: Project, Value: metamorph}
-  FilesMountA:
-    Type: AWS::EFS::MountTarget
-    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [0, !Split [",", !ImportValue metamorph-subnets]], SecurityGroups: [!Ref FilesGroup]}
-  FilesMountB:
-    Type: AWS::EFS::MountTarget
-    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [1, !Split [",", !ImportValue metamorph-subnets]], SecurityGroups: [!Ref FilesGroup]}
-  FilesMountC:
-    Type: AWS::EFS::MountTarget
-    Properties: {FileSystemId: !Ref Files, SubnetId: !Select [2, !Split [",", !ImportValue metamorph-subnets]], SecurityGroups: [!Ref FilesGroup]}
-  # One access point per connector, rooted at its data/ directory (the path its task sees under /workspace), and one
-  # for the bundles. Each is owned by uid 1000 (the connectors' user): a task sees only its own.
-  OjkData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /OJK-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  BpkData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /BPK-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  BiWebsiteData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /BI-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  DsnFatwaData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /DSN-MUI-Source-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  OjkRegisterData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /OJK-Register-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  OjkStatsData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /OJK-Stats-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  BiStatsData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /BI-Stats-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  BpsStatsData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /BPS-Stats-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  ReportsData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /Reports-Connector/data, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-  Bundles:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref Files
-      PosixUser: {Uid: "1000", Gid: "1000"}
-      RootDirectory: {Path: /bundles, CreationInfo: {OwnerUid: "1000", OwnerGid: "1000", Permissions: "755"}}
-      AccessPointTags: [{Key: Owner, Value: project3}]
-
-  # The ingestion images: scanned on push, tags that cannot be overwritten, the last 10 kept (MinerU's, at 20 GB, the last 2).
-  OjkImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/ojk-connector
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  BpkImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/bpk-connector
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  BiWebsiteImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/bi-connector
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  DsnFatwaImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/dsn-mui-connector
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  OjkRegisterImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/ojk-register
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  OjkStatsImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/ojk-stats
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  BiStatsImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/bi-stats
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  BpsStatsImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/bps-stats
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
-  ReportsImages:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: metamorph/reports
-      ImageScanningConfiguration: {ScanOnPush: true}
-      ImageTagMutability: IMMUTABLE
-      LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'}
-      Tags: [{Key: Owner, Value: project3}]
+  # The images built here for AWS: scanned on push, tags that cannot be overwritten, the last 10 kept (MinerU's, at 20 GB,
+  # the last 2). The connectors' images are built on the collection host and pushed nowhere.
   AirflowImages:
     Type: AWS::ECR::Repository
     Properties:
@@ -234,8 +54,7 @@ Resources:
       LifecyclePolicy: {LifecyclePolicyText: '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":2},"action":{"type":"expire"}}]}'}
       Tags: [{Key: Owner, Value: project3}]
 
-  # The wiring the ingestion tasks read from Parameter Store. (/metamorph/connectors/mineru-url names MinerU's load
-  # balancer, so the MinerU stack writes it.)
+  # The wiring the ingestion tasks read from Parameter Store.
   ClusterSetting:
     Type: AWS::SSM::Parameter
     Properties: {Name: /metamorph/airflow/ecs-cluster, Type: String, Value: !ImportValue metamorph-cluster, Tags: {Owner: project3}}
@@ -255,15 +74,4 @@ Outputs:
   MinerULoadBalancerGroup: {Value: !Ref MinerULoadBalancerGroup, Export: {Name: metamorph-sg-mineru-lb}}
   MinerUGroup: {Value: !Ref MinerUGroup, Export: {Name: metamorph-sg-mineru}}
   GpuHostGroup: {Value: !Ref GpuHostGroup, Export: {Name: metamorph-sg-gpu-host}}
-  Files: {Value: !Ref Files, Export: {Name: metamorph-efs}}
-  OjkData: {Value: !Ref OjkData, Export: {Name: metamorph-efs-ojk-data}}
-  BpkData: {Value: !Ref BpkData, Export: {Name: metamorph-efs-bpk-data}}
-  BiWebsiteData: {Value: !Ref BiWebsiteData, Export: {Name: metamorph-efs-bi-website-data}}
-  DsnFatwaData: {Value: !Ref DsnFatwaData, Export: {Name: metamorph-efs-dsn-fatwa-data}}
-  OjkRegisterData: {Value: !Ref OjkRegisterData, Export: {Name: metamorph-efs-ojk-register-data}}
-  OjkStatsData: {Value: !Ref OjkStatsData, Export: {Name: metamorph-efs-ojk-stats-data}}
-  BiStatsData: {Value: !Ref BiStatsData, Export: {Name: metamorph-efs-bi-stats-data}}
-  BpsStatsData: {Value: !Ref BpsStatsData, Export: {Name: metamorph-efs-bps-stats-data}}
-  ReportsData: {Value: !Ref ReportsData, Export: {Name: metamorph-efs-reports-data}}
-  Bundles: {Value: !Ref Bundles, Export: {Name: metamorph-efs-bundles}}
   MinerUImagesArn: {Value: !GetAtt MinerUImages.Arn, Export: {Name: metamorph-ecr-mineru-arn}}

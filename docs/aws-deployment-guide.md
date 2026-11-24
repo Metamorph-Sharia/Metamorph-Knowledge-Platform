@@ -9,7 +9,7 @@
 
 **Files:** [`deploy/aws/`](../deploy/aws)
 
-This guide deploys **the core:** the curation web app, the curation API and the database. It uses only the access the account has today. **Ingestion** (Airflow, the four connectors, MinerU) is a second layer, already designed in [`deploy/aws/ingestion/`](../deploy/aws/ingestion/README.md). It plugs into the core without changing it, once the account can create IAM roles, use EFS and Cloud Map, and run a GPU.
+This guide deploys **the core:** the curation web app, the curation API and the database. It uses only the access the account has today. **Ingestion** is a second layer, described in [`deploy/aws/ingestion/`](../deploy/aws/ingestion/README.md): Airflow and MinerU on AWS, and the connectors on a collection host off AWS ([ADR 0001](adr/0001-collection-on-a-residential-host.md)). It plugs into the core without changing it. This guide's ingestion sections are the record of how it was first planned.
 
 ## Contents
 

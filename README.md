@@ -76,22 +76,30 @@ Each step only does what is new, so a second `build` changes nothing.
 
 ## Run on a schedule (Airflow)
 
-Airflow only schedules. Every task is a container: a connector's own image collects and exports a bundle into the `metamorph-bundles` volume, then the platform image loads it. A regulation load triggers `registry_build` (`metamorph build`, then `metamorph health`), and a market load triggers `market_publish` (`metamorph market publish`), each through its layer's registry Dataset ([how the DAGs depend on each other](dags/README.md)).
+Airflow only schedules. Every task is a container. Two Airflows share this `dags/` folder ([ADR 0001](docs/adr/0001-collection-on-a-residential-host.md)): the **collection host's** (this Compose stack, on a residential line, `METAMORPH_SIDE=collection`) runs each connector's own image to collect and export a bundle, then uploads it to S3; **AWS's** (`METAMORPH_SIDE=processing`) loads every complete bundle and builds, publishes and indexes ([deploy/aws/ingestion](deploy/aws/ingestion/README.md)). A regulation load triggers `registry_build` (`metamorph build`, then `metamorph health`), and a market load triggers `market_publish` (`metamorph market publish`), each through its layer's registry Dataset ([how the DAGs depend on each other](dags/README.md)).
+
+On the collection host (times UTC; WIB is 7 hours ahead):
 
 | DAG | When | What |
 |---|---|---|
-| `ingest_ojk` | daily 01:00 UTC | `ojk-connector run`, then `export --format v2` |
-| `ingest_bpk` | daily 02:00 | `bpk-connector run`, then `export --format v2` |
-| `ingest_bi` | daily 03:00 | `src.cli sync` into BI's own database, then `src.pipeline.exporter_v2` |
-| `ingest_dsn_fatwa` | Mondays 04:00 | `dsn sync`, Arabic OCR, `dsn export` |
-| `ingest_dsn_fatwa_full` | 1st of the month | the same, re-downloading every file |
-| `ingest_ojk_register`, `ingest_ojk_stats`, `ingest_bi_seki`, `ingest_bps_stats`, `ingest_reports` | Mondays, 02:15–04:15 UTC (`ingest_reports` 02:15, inside MinerU's window) | The market data layer: each connector's collect and export, then `metamorph market load` |
-| `backup_connector_data` | Sundays 05:00 UTC | On AWS: each connector's `data/` as a tarball in `s3://<ops bucket>/backups/<date>/` (skipped on the local stack) |
+| `ingest_ojk` | weekdays 02:00 | `ojk-connector run`, then `export --format v2` |
+| `ingest_bpk` | weekdays 02:20 | `bpk-connector run`, then `export --format v2` |
+| `ingest_bi` | weekdays 02:40 | `src.cli sync` into BI's own database, then `src.pipeline.exporter_v2` |
+| `ingest_dsn_fatwa` | Mondays 03:00 | `dsn sync`, Arabic OCR, `dsn export` |
+| `ingest_dsn_fatwa_full` | the month's first weekday, 03:30 | the same, re-downloading every file |
+| `ingest_reports`, `ingest_bi_seki`, `ingest_ojk_stats`, `ingest_bps_stats`, `ingest_ojk_register` | Mondays, 03:15 to 04:30 | The market data layer: each connector's collect and export |
+| `backup_connector_data` | Fridays 07:00 | Each connector's `data/` as a tarball in `s3://<ops bucket>/backups/<date>/` |
+
+Every ingest DAG ends with `metamorph upload-bundle` (the bundle to `s3://<blobs bucket>/bundles/<connector>/<run>/`, `_COMPLETE` last), then discards its local copy. On AWS:
+
+| DAG | When | What |
+|---|---|---|
+| `load_bundles` | every 30 minutes | One task per connector: `metamorph load-pending` (or `market load-pending`) loads its complete bundles, oldest first, and stops at one that fails |
 | `registry_build` | after any regulation load | `metamorph build`, then `metamorph health --fail-on critical` |
 | `market_publish` | after any market load | `metamorph market publish`: `published_market` rebuilt from the market registry |
 | `health` | daily 06:00 | `metamorph health --fail-on critical`: a connector that stopped loading never triggers a build |
 
-A run that raises alerts still exports and loads its snapshot. The collect task fails only at the connector's error exit code. The bundle is removed once it is loaded, and kept when the load fails. Failures go to the task log, and to `METAMORPH_ALERT_WEBHOOK_URL` when set.
+A run that raises alerts still exports and uploads its snapshot. The collect task fails only at the connector's error exit code. Failures go to the task log, and to `METAMORPH_ALERT_WEBHOOK_URL` when set.
 
 Setup, once:
 

@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Ingestion alerts, by email: a failed Metamorph task (EventBridge, ECS Task State Change; a task that ECS stops itself in a service deploy is no failure) and a dead Airflow
+  Processing alerts, by email: a failed Metamorph task (EventBridge, ECS Task State Change; a task that ECS stops itself in a service deploy is no failure) and a dead Airflow
   (a CloudWatch alarm). No IAM resources: the topic policy lets this stack's EventBridge rule and this account's CloudWatch alarms publish.
   Independent of the other ingestion stacks; needs only the core.
   After deploying, confirm the subscription from the email SNS sends.
@@ -51,22 +51,14 @@ Resources:
           clusterArn: [!ImportValue metamorph-cluster-arn]
           lastStatus: [STOPPED]
           stopCode: [EssentialContainerExited]   # the container ended on its own; not ServiceSchedulerInitiated, which is ECS replacing a service's task in a deploy (exit 137 or 143)
-          # The ingestion families by name (jobs.yaml's and airflow.yaml's), not every `metamorph-` task: the MinerU
-          # task (metamorph-mineru, mineru.yaml) is killed every night when its instance stops. The trailing colon
-          # keeps one name from matching another that starts with it. A new family is added here (a test checks).
+          # The processing families by name (jobs.yaml's, airflow.yaml's and retrieval.yaml's), not every `metamorph-`
+          # task: the MinerU task (metamorph-mineru, mineru.yaml) is killed whenever its instance stops. No connector
+          # family: collection runs on the collection host. The trailing colon keeps one name from matching another that
+          # starts with it. A new family is added here (a test checks).
           taskDefinitionArn:
             - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-airflow:"
             - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-platform:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-ops:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-ojk-connector:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-bpk-connector:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-bi-connector:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-dsn-mui-connector:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-ojk-register:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-ojk-stats:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-bi-stats:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-bps-stats:"
-            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-reports:"
+            - prefix: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/metamorph-retrieval:"
           containers:
             exitCode: [{anything-but: [0]}]
       Targets: [{Id: email, Arn: !Ref Topic}]

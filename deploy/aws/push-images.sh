@@ -4,9 +4,8 @@
 #
 #   deploy/aws/push-images.sh                          the core's images: platform, curation-web
 #   deploy/aws/push-images.sh retrieval                Metamorph Retrieval, once deploy/aws/retrieval.yaml made its repository
-#   deploy/aws/push-images.sh airflow bpk-connector    others, once the ingestion layer has their repositories
-#   deploy/aws/push-images.sh airflow ojk-connector bpk-connector bi-connector dsn-mui-connector \
-#       ojk-register ojk-stats bi-stats bps-stats reports     the whole ingestion layer (jobs.yaml's tags are these)
+#   deploy/aws/push-images.sh airflow                  Airflow's image, once the ingestion layer has its repository
+#                                                      (the connectors' images are built on the collection host, never pushed)
 #   TAG=20261024-1 deploy/aws/push-images.sh           a tag of your own (default: the UTC time)
 #
 # It builds the working trees as they are: commit first, so a tag always names code that is in git.
@@ -18,7 +17,7 @@ region="${AWS_REGION:-ap-southeast-3}"
 registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$region.amazonaws.com"
 tag="${TAG:-$(date -u +%Y%m%d-%H%M)}"
 CORE=(platform curation-web)
-INGESTION=(airflow ojk-connector bpk-connector bi-connector dsn-mui-connector ojk-register ojk-stats bi-stats bps-stats reports)
+INGESTION=(airflow)
 IMAGES=("${CORE[@]}" retrieval "${INGESTION[@]}")
 
 build() {  # repository, build context, Dockerfile
@@ -34,15 +33,6 @@ for image in "$@"; do
     curation-web)      build curation-web "$workspace/Metamorph-Curation-Web" "$workspace/Metamorph-Curation-Web/Dockerfile" ;;
     retrieval)         build retrieval "$workspace/Metamorph-Retrieval" "$workspace/Metamorph-Retrieval/Dockerfile" ;;
     airflow)           build airflow "$platform/dags" "$platform/docker/airflow.Dockerfile" ;;
-    ojk-connector)     build ojk-connector "$workspace" "$workspace/OJK-Source-Connector/Dockerfile" ;;
-    bpk-connector)     build bpk-connector "$workspace" "$workspace/BPK-Source-Connector/Dockerfile" ;;
-    bi-connector)      build bi-connector "$workspace" "$workspace/BI-Source-Connector/Dockerfile" ;;
-    dsn-mui-connector) build dsn-mui-connector "$workspace" "$workspace/DSN-MUI-Source-Connector/Dockerfile" ;;
-    ojk-register)      build ojk-register "$workspace" "$workspace/OJK-Register-Connector/Dockerfile" ;;
-    ojk-stats)         build ojk-stats "$workspace" "$workspace/OJK-Stats-Connector/Dockerfile" ;;
-    bi-stats)          build bi-stats "$workspace" "$workspace/BI-Stats-Connector/Dockerfile" ;;
-    bps-stats)         build bps-stats "$workspace" "$workspace/BPS-Stats-Connector/Dockerfile" ;;
-    reports)           build reports "$workspace" "$workspace/Reports-Connector/Dockerfile" ;;
     *) echo "unknown image: $image (one of: ${IMAGES[*]})" >&2; exit 2 ;;
   esac
 done

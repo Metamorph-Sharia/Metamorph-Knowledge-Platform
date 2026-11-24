@@ -6,6 +6,8 @@ We need to deploy the ingestion layer: nine source connectors, Apache Airflow, a
 
 We **do not ask for `iam:CreateRole`**. We ask you to create five roles, add a small set of permissions to `Project3Learner`, and raise one quota. Every policy is ready to apply in [`deploy/aws/iam/`](../deploy/aws/iam/).
 
+> **Update, 2026-11-24:** the connectors now run off AWS (sources refuse AWS addresses: [ADR 0001](adr/0001-collection-on-a-residential-host.md)), so the nine connector tasks, EFS and the `metamorph-connector-task` role below are retired once the cutover passes ([deploy/aws/ingestion/README.md](../deploy/aws/ingestion/README.md)). The rest of this request stands: Airflow, the platform task, MinerU and its roles.
+
 ## What we will deploy
 
 All of it goes in the default VPC, through CloudFormation run as `Project3Learner`, and is tagged `Owner=project3`.

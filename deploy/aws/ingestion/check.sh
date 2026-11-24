@@ -5,9 +5,9 @@
 #   deploy/aws/ingestion/check.sh
 #
 # It looks at:
-#   - the five roles DevOps made and the instance profile, each trusted by the right service;
+#   - the four roles DevOps made and the instance profile, each trusted by the right service;
 #   - the five ingestion stacks, complete;
-#   - EFS, with its ten access points (nine connectors and the bundles);
+#   - MinerU's front door (the collection host's way in), deployed and behind its rate limit;
 #   - the MinerU instance, stopped outside the window the mineru stack was deployed with;
 #   - the Airflow service, with a running task.
 # A check whose stack is missing is skipped (the stack's own check has already failed).
@@ -15,7 +15,6 @@ set -uo pipefail
 
 export AWS_DEFAULT_REGION="${AWS_REGION:-ap-southeast-3}"
 CLUSTER=metamorph
-ACCESS_POINTS=10   # one per connector (nine) and one for the bundles: shared.yaml
 failures=0
 
 pass() { printf 'pass  %s\n' "$1"; }
@@ -38,7 +37,6 @@ role() {   # role name, the service that must be trusted
 }
 
 role metamorph-airflow-task ecs-tasks.amazonaws.com
-role metamorph-connector-task ecs-tasks.amazonaws.com
 role metamorph-platform-task ecs-tasks.amazonaws.com
 role metamorph-scheduler scheduler.amazonaws.com
 role metamorph-mineru-instance ec2.amazonaws.com
@@ -67,19 +65,26 @@ for name in shared jobs mineru airflow alerts; do
   esac
 done
 
-# --- EFS: the access points -----------------------------------------------------------------------------------------
+# --- MinerU's front door: the collection host's way in -----------------------------------------------------------------
 
-if is_deployed shared; then
-  files=$(aws cloudformation list-exports --query "Exports[?Name=='metamorph-efs'].Value" --output text 2>/dev/null)
-  count=$(aws efs describe-access-points --file-system-id "$files" \
-            --query 'length(AccessPoints[?LifeCycleState==`available`])' --output text 2>&1) || count="$(first_line <<<"$count")"
-  if [ "$count" = "$ACCESS_POINTS" ]; then
-    pass "EFS $files has $count access points"
+if is_deployed mineru; then
+  door=$(aws cloudformation describe-stacks --stack-name metamorph-ingestion-mineru \
+           --query "Stacks[0].Outputs[?OutputKey=='FrontDoorUrl'].OutputValue" --output text 2>&1) || door=
+  host=${door#https://}
+  # CloudFront's API answers from us-east-1 whatever the region; the summary holds the status and the web ACL (waf.sh create mineru)
+  summary=$(aws --region us-east-1 cloudfront list-distributions \
+              --query "DistributionList.Items[?DomainName=='$host'].[Status,WebACLId]" --output text 2>&1) || summary=
+  status=$(awk '{print $1}' <<<"$summary")
+  acl=$(awk '{print $2}' <<<"$summary")
+  if [ -z "$host" ] || [ "$host" = None ] || [ "$status" != Deployed ]; then
+    fail "MinerU front door ${door:-?}: ${status:-not found} (the stack's FrontDoorUrl output, a distribution that is Deployed)"
+  elif [ -z "$acl" ] || [ "$acl" = None ]; then
+    fail "MinerU front door $door has no web ACL: deploy/aws/ingestion/waf.sh create mineru, then redeploy the mineru stack with WebAclArn"
   else
-    fail "EFS ${files:-?} has '$count' available access points, not $ACCESS_POINTS"
+    pass "MinerU front door $door is Deployed, behind a web ACL"
   fi
 else
-  skip "EFS access points (no shared stack)"
+  skip "MinerU front door (no mineru stack)"
 fi
 
 # --- MinerU: stopped outside its window -----------------------------------------------------------------------------
