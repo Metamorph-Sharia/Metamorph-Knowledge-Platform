@@ -24,25 +24,6 @@
             "Effect": "Allow",
             "Resource": "arn:aws:s3:::metamorph-blobs-129712841299/*",
             "Sid": "BlobsObjects"
-        },
-        {
-            "Action": "s3:ListBucket",
-            "Condition": {
-                "StringLike": {
-                    "s3:prefix": [
-                        "bundles/*"
-                    ]
-                }
-            },
-            "Effect": "Allow",
-            "Resource": "arn:aws:s3:::metamorph-ops-129712841299",
-            "Sid": "ListOpsBundles"
-        },
-        {
-            "Action": "s3:GetObject",
-            "Effect": "Allow",
-            "Resource": "arn:aws:s3:::metamorph-ops-129712841299/bundles/*",
-            "Sid": "ReadOpsBundles"
         }
     ]
 }

@@ -37,7 +37,7 @@ MODELS = "/models"  # where the retrieval image keeps its embedding models
 MODELS_VOLUME = "metamorph-models"
 BUNDLES = "/bundles"
 BUNDLES_VOLUME = "metamorph-bundles"
-BUNDLES_KEY = "bundles"  # where the ops bucket keeps uploaded bundles: bundles/<connector>/<run id>/
+BUNDLES_KEY = "bundles"  # where uploaded bundles are kept in the blobs bucket, which the platform task can read: bundles/<connector>/<run id>/
 LOAD_BUNDLES_SCHEDULE = "*/30 * * * *"  # how often the processing side looks for bundles to load (dags/load_bundles.py)
 EXPORT_FAILED = 3  # the collect task's exit code when no bundle could be written
 CONTAINER_HOME = "/home/connector"
@@ -147,7 +147,7 @@ class PendingLoad:
         return f"load_{self.connector}"
 
 
-def pending_loads(jobs: Iterable[ConnectorJob], ops_bucket: str) -> list[PendingLoad]:
+def pending_loads(jobs: Iterable[ConnectorJob], bundles_bucket: str) -> list[PendingLoad]:
     """One load per connector. A connector's jobs share its prefix, so they share its load."""
     first_job_of: dict[str, ConnectorJob] = {}
     for job in jobs:
@@ -155,7 +155,7 @@ def pending_loads(jobs: Iterable[ConnectorJob], ops_bucket: str) -> list[Pending
     return [
         PendingLoad(
             connector=connector,
-            command=_load_pending_command(job, f"s3://{ops_bucket}/{BUNDLES_KEY}/{connector}"),
+            command=_load_pending_command(job, f"s3://{bundles_bucket}/{BUNDLES_KEY}/{connector}"),
             registry=registry_of(job),
         )
         for connector, job in first_job_of.items()

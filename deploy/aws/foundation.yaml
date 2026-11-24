@@ -128,7 +128,10 @@ Resources:
       BucketName: !Sub metamorph-blobs-${AWS::AccountId}
       PublicAccessBlockConfiguration: {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
       LifecycleConfiguration:
-        Rules: [{Id: multipart, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 2}}]
+        Rules:
+          - {Id: multipart, Status: Enabled, AbortIncompleteMultipartUpload: {DaysAfterInitiation: 2}}
+          # bundles the collection host uploaded (ADR 0001): loaded within the hour, kept a month to replay one by hand
+          - {Id: bundles, Status: Enabled, Prefix: bundles/, ExpirationInDays: 35}
       CorsConfiguration:   # as the platform's `storage init --upload-origin` sets it (adapters/blobs/s3.py)
         !If
           - HasAppOrigin

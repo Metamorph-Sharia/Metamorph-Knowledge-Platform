@@ -580,20 +580,11 @@ def test_airflow_starts_its_tasks_on_ecs() -> None:
     assert {"METAMORPH_ECS_CLUSTER", "METAMORPH_ECS_SUBNETS", "METAMORPH_ECS_SECURITY_GROUP"} <= secrets
 
 
-def test_airflow_on_aws_knows_the_ops_bucket_to_name_the_bundles_it_loads() -> None:
+def test_airflow_on_aws_knows_the_blobs_bucket_where_the_bundles_it_loads_are() -> None:
     (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
     (container,) = task["Properties"]["ContainerDefinitions"]
     secrets = {s["Name"]: s["ValueFrom"] for s in container["Secrets"] if isinstance(s, dict) and "Name" in s}
-    assert secrets["METAMORPH_OPS_BUCKET"] == "/metamorph/ops/bucket"  # load_bundles builds s3://<bucket>/bundles/...
-
-
-def test_the_platform_task_role_reads_only_the_bundles_of_the_ops_bucket() -> None:
-    policy = json.loads((INGESTION.parent / "iam/metamorph-platform-task.json").read_text())
-    statements = {s["Sid"]: s for s in policy["Statement"]}
-    assert statements["ListOpsBundles"]["Action"] == "s3:ListBucket"
-    assert statements["ListOpsBundles"]["Condition"] == {"StringLike": {"s3:prefix": ["bundles/*"]}}
-    assert statements["ReadOpsBundles"]["Action"] == "s3:GetObject"
-    assert statements["ReadOpsBundles"]["Resource"] == "arn:aws:s3:::metamorph-ops-129712841299/bundles/*"
+    assert secrets["METAMORPH_BUNDLES_BUCKET"] == "/metamorph/platform/s3-bucket"  # the platform task reads it already
 
 
 def test_the_airflow_on_aws_is_the_processing_side() -> None:
@@ -1119,3 +1110,11 @@ def test_the_readme_describes_nothing_that_is_gone() -> None:
     rows = [line for line in text.splitlines() if line.startswith("| `metamorph-ingestion-")]
     assert len(rows) == 5
     assert not [row for row in rows if "Cloud Map" in row]  # the shared stack no longer makes the namespace
+
+
+def test_the_blobs_bucket_expires_uploaded_bundles_after_35_days() -> None:
+    (bucket,) = [r for r in FOUNDATION["Resources"].values() if r["Properties"].get("BucketName") == {"Fn::Sub": "metamorph-blobs-${AWS::AccountId}"}]
+    rules = bucket["Properties"]["LifecycleConfiguration"]["Rules"]
+    (bundles,) = [rule for rule in rules if rule.get("Prefix") == "bundles/"]
+    assert bundles["Status"] == "Enabled"
+    assert bundles["ExpirationInDays"] == 35  # loaded within the hour; a month to replay one by hand

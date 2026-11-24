@@ -96,7 +96,7 @@ Resources:
             - {Name: METAMORPH_ECS_SUBNETS, ValueFrom: /metamorph/airflow/ecs-subnets}
             - {Name: METAMORPH_ECS_SECURITY_GROUP, ValueFrom: /metamorph/airflow/ecs-security-group}
             - {Name: METAMORPH_ECS_LOG_GROUP, ValueFrom: /metamorph/airflow/ecs-log-group}
-            - {Name: METAMORPH_OPS_BUCKET, ValueFrom: /metamorph/ops/bucket}   # load_bundles loads s3://<it>/bundles/<connector>
+            - {Name: METAMORPH_BUNDLES_BUCKET, ValueFrom: /metamorph/platform/s3-bucket}   # load_bundles loads s3://<it>/bundles/<connector>: the blobs bucket, which the platform task already reads
             - !If
               - HasAlertWebhook
               - {Name: METAMORPH_ALERT_WEBHOOK_URL, ValueFrom: /metamorph/airflow/alert-webhook-url}
