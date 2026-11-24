@@ -101,7 +101,7 @@ Collection moves to a collection host on a residential line, at first the owner'
 **The ingest DAG on the collection side**
 - The steps are discard, collect (with export), then upload. The load step moves to the processing side.
 - **Upload:**
-  - It copies one run's bundle to the ops bucket under a key per connector and run, then writes a completion marker as the last object.
+  - It copies one run's bundle to the blobs bucket (which the platform task can already read) under a key per connector and run; a lifecycle rule expires bundles after 35 days, then writes a completion marker as the last object.
   - It runs as the owner's SSO session from the Mac's AWS configuration.
   - It is idempotent: a retry re-uploads and rewrites the marker.
   - An authentication failure exits with a message telling the operator to sign in again.

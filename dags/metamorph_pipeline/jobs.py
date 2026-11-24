@@ -24,7 +24,7 @@ directories, bind-mounted, so a scheduled run and a person's CLI run see the sam
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -42,6 +42,8 @@ MODELS = "/models"  # where the retrieval image keeps its embedding models
 MODELS_VOLUME = "metamorph-models"
 BUNDLES = "/bundles"
 BUNDLES_VOLUME = "metamorph-bundles"
+BUNDLES_KEY = "bundles"  # where uploaded bundles are kept in the blobs bucket, which the platform task can read: bundles/<connector>/<run id>/
+LOAD_BUNDLES_SCHEDULE = "*/30 * * * *"  # how often the processing side looks for bundles to load (dags/load_bundles.py)
 EXPORT_FAILED = 3  # the collect task's exit code when no bundle could be written
 CONTAINER_HOME = "/home/connector"
 # What every connector reads from its environment: how it reads a PDF's text. METAMORPH_PDF_LINES
@@ -149,6 +151,38 @@ def is_first_weekday(day: date) -> bool:
     """Whether `day` is its month's first Monday-to-Friday: the 1st, or the Monday after a weekend 1st."""
     earlier = (day.replace(day=d) for d in range(1, day.day))
     return day.weekday() < 5 and all(d.weekday() >= 5 for d in earlier)
+
+
+@dataclass(frozen=True)
+class PendingLoad:
+    """One task of the processing side's load_bundles DAG: a connector's uploaded bundles, loaded into its layer."""
+
+    connector: str
+    command: list[str]  # the platform's: `load-pending <prefix>`
+    registry: str  # the Dataset a load updates
+
+    @property
+    def task_id(self) -> str:
+        return f"load_{self.connector}"
+
+
+def pending_loads(jobs: Iterable[ConnectorJob], bundles_bucket: str) -> list[PendingLoad]:
+    """One load per connector. A connector's jobs share its prefix, so they share its load."""
+    first_job_of: dict[str, ConnectorJob] = {}
+    for job in jobs:
+        first_job_of.setdefault(job.connector, job)
+    return [
+        PendingLoad(
+            connector=connector,
+            command=_load_pending_command(job, f"s3://{bundles_bucket}/{BUNDLES_KEY}/{connector}"),
+            registry=registry_of(job),
+        )
+        for connector, job in first_job_of.items()
+    ]
+
+
+def _load_pending_command(job: ConnectorJob, prefix: str) -> list[str]:
+    return ["market", "load-pending", prefix] if job.layer is Layer.MARKET else ["load-pending", prefix]
 
 
 def discard_command(job: ConnectorJob, run_id: str) -> list[str]:

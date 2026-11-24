@@ -15,6 +15,7 @@ import pytest
 from metamorph_pipeline.alerts import failure_message
 from metamorph_pipeline.jobs import (
     BUNDLES,
+    LOAD_BUNDLES_SCHEDULE,
     MARKET_REGISTRY,
     OPS_IMAGE,
     PACK_DATA,
@@ -34,6 +35,7 @@ from metamorph_pipeline.jobs import (
     is_first_weekday,
     load_command,
     passed_on,
+    pending_loads,
     registry_of,
     task_family,
     upload_command,
@@ -456,3 +458,33 @@ def test_the_backup_mounts_each_connector_s_data_directory_once(jobs) -> None:
     assert all(m.kind == "bind" and m.target.endswith("/data") for m in mounts)
     assert (f"{WORKSPACE}/OJK-Source-Connector/data", "/workspace/OJK-Source-Connector/data") in [
         (m.source, m.target) for m in mounts]
+
+
+BUNDLES_BUCKET = "metamorph-blobs-example"
+
+
+def test_processing_loads_each_connectors_pending_bundles_from_its_prefix_in_its_layer(jobs) -> None:
+    loads = {load.connector: load for load in pending_loads(jobs.values(), BUNDLES_BUCKET)}
+
+    assert loads["ojk"].command == ["load-pending", f"s3://{BUNDLES_BUCKET}/bundles/ojk"]
+    assert loads["ojk-register"].command == ["market", "load-pending", f"s3://{BUNDLES_BUCKET}/bundles/ojk-register"]
+    assert loads["ojk"].registry == REGISTRY
+    assert loads["ojk-register"].registry == MARKET_REGISTRY
+
+
+def test_each_connector_has_one_load_even_when_it_has_two_jobs(jobs) -> None:
+    # dsn-fatwa's weekly and monthly jobs upload to the same prefix: two loads would race for the same bundles
+    loads = pending_loads(jobs.values(), BUNDLES_BUCKET)
+
+    assert [load.connector for load in loads].count("dsn-fatwa") == 1
+    assert sorted(load.connector for load in loads) == sorted({job.connector for job in jobs.values()})
+    assert len({load.task_id for load in loads}) == len(loads)
+
+
+def test_a_load_s_prefix_is_where_the_upload_puts_the_connector_s_bundles(jobs) -> None:
+    for load in pending_loads(jobs.values(), BUNDLES_BUCKET):
+        assert load.command[-1] == f"s3://{BUNDLES_BUCKET}/bundles/{load.connector}"  # bundles/<connector>/<run id>/
+
+
+def test_the_loads_run_every_half_hour() -> None:
+    assert LOAD_BUNDLES_SCHEDULE == "*/30 * * * *"

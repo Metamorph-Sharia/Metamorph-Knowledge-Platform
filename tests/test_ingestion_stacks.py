@@ -580,6 +580,13 @@ def test_airflow_starts_its_tasks_on_ecs() -> None:
     assert {"METAMORPH_ECS_CLUSTER", "METAMORPH_ECS_SUBNETS", "METAMORPH_ECS_SECURITY_GROUP"} <= secrets
 
 
+def test_airflow_on_aws_knows_the_blobs_bucket_where_the_bundles_it_loads_are() -> None:
+    (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
+    (container,) = task["Properties"]["ContainerDefinitions"]
+    secrets = {s["Name"]: s["ValueFrom"] for s in container["Secrets"] if isinstance(s, dict) and "Name" in s}
+    assert secrets["METAMORPH_BUNDLES_BUCKET"] == "/metamorph/platform/s3-bucket"  # the platform task reads it already
+
+
 def test_the_airflow_on_aws_is_the_processing_side() -> None:
     (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
     (container,) = task["Properties"]["ContainerDefinitions"]
@@ -1129,3 +1136,11 @@ def test_the_compose_airflow_is_given_the_aws_session_the_buckets_and_minerus_ad
         assert key in environment and key in documented, key
     assert environment["METAMORPH_BUNDLES_BUCKET"].startswith("${METAMORPH_BUNDLES_BUCKET")  # from .env, no value
     assert "metamorph-blobs" not in environment["METAMORPH_BUNDLES_BUCKET"]
+
+
+def test_the_blobs_bucket_expires_uploaded_bundles_after_35_days() -> None:
+    (bucket,) = [r for r in FOUNDATION["Resources"].values() if r["Properties"].get("BucketName") == {"Fn::Sub": "metamorph-blobs-${AWS::AccountId}"}]
+    rules = bucket["Properties"]["LifecycleConfiguration"]["Rules"]
+    (bundles,) = [rule for rule in rules if rule.get("Prefix") == "bundles/"]
+    assert bundles["Status"] == "Enabled"
+    assert bundles["ExpirationInDays"] == 35  # loaded within the hour; a month to replay one by hand
