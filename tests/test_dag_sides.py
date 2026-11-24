@@ -57,5 +57,5 @@ def test_collection_loads_the_ingest_dags_and_the_backup_and_processing_the_rest
     sides = declared_sides()
     assert {module for module, side in sides.items() if side == "Side.COLLECTION"} == {"ingest", "backup"}
     assert {module for module, side in sides.items() if side == "Side.PROCESSING"} == {
-        "registry_build", "market_publish", "market_index", "regulation_index",
+        "load_bundles", "registry_build", "market_publish", "market_index", "regulation_index",
     }  # fmt: skip
