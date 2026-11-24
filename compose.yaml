@@ -62,6 +62,8 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-metamorph}:${POSTGRES_PASSWORD:-metamorph-dev}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      # This Airflow is the collection host's: it builds only the ingest DAGs and the backup (ADR 0001).
+      METAMORPH_SIDE: collection
       # What the DAGs hand to their containers (dags/metamorph_pipeline/jobs.py, containers.py).
       METAMORPH_WORKSPACE: ${METAMORPH_WORKSPACE:-}     # host path of the directory holding the connector repositories
       METAMORPH_OJK_CREDENTIALS: ${METAMORPH_OJK_CREDENTIALS:-${HOME}/.config/ojk-connector/credentials}

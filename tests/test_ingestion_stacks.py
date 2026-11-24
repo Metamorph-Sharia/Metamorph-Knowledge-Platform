@@ -580,6 +580,18 @@ def test_airflow_starts_its_tasks_on_ecs() -> None:
     assert {"METAMORPH_ECS_CLUSTER", "METAMORPH_ECS_SUBNETS", "METAMORPH_ECS_SECURITY_GROUP"} <= secrets
 
 
+def test_the_airflow_on_aws_is_the_processing_side() -> None:
+    (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
+    (container,) = task["Properties"]["ContainerDefinitions"]
+    environment = {e["Name"]: e["Value"] for e in container["Environment"]}
+    assert environment["METAMORPH_SIDE"] == "processing"
+
+
+def test_the_compose_airflow_is_the_collection_side() -> None:
+    compose = yaml.safe_load((INGESTION.parents[2] / "compose.yaml").read_text())
+    assert compose["services"]["airflow"]["environment"]["METAMORPH_SIDE"] == "collection"
+
+
 def test_the_airflow_stack_imports_only_what_exists() -> None:
     ingestion_exports = {name for path in TEMPLATES for name in exported(template(path.name))}
     assert imported(INGESTION / "airflow.yaml") <= LIVE_CORE_EXPORTS | ingestion_exports
