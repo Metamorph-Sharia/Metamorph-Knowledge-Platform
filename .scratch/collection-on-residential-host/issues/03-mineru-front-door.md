@@ -1,6 +1,6 @@
 # 03 MinerU's front door: CloudFront to the internal load balancer
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 Spec: ../spec.md ("MinerU" → the front door)
 

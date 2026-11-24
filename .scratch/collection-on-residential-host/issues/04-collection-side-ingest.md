@@ -1,6 +1,6 @@
 # 04 The collection side's ingest DAG: upload instead of load; weekday working hours; MinerU's new window
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 02
 Spec: ../spec.md ("The ingest DAG on the collection side"; "MinerU" → the window)
 

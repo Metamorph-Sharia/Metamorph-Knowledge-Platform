@@ -1,6 +1,6 @@
 # Spec: collection on a residential host, processing on AWS
 
-Status: ready-for-agent
+Status: resolved
 
 Decision record: ADR 0001 (collection runs on a residential host; processing stays on AWS). Vocabulary: GLOSSARY.md (source, connector, connector job, collection, processing, collection host, bundle).
 

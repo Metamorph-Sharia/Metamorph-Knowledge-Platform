@@ -1,6 +1,6 @@
 # 02 Bundles travel through S3: upload, load from S3, load pending
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 Spec: ../spec.md ("The ingest DAG on the collection side" → Upload; "Loading on the processing side")
 

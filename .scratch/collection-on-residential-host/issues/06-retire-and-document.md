@@ -1,6 +1,6 @@
 # 06 Retire collection on AWS in the templates; narrow alerts; document both sides
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 03, 04, 05
 Spec: ../spec.md ("AWS clean-up, only after the gate"; user story 46)
 

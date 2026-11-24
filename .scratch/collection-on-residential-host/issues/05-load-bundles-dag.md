@@ -1,6 +1,6 @@
 # 05 load_bundles: the processing side loads what collection uploaded
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 01, 02
 Spec: ../spec.md ("Loading on the processing side")
 

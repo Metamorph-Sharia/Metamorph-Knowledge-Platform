@@ -1,6 +1,6 @@
 # 01 The side switch: each Airflow loads only its side's DAGs
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 Spec: ../spec.md ("Two sides, one registry"); ADR: docs/adr/0001-collection-on-a-residential-host.md; vocabulary: GLOSSARY.md
 
