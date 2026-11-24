@@ -33,6 +33,28 @@ class BundleAlreadyLoaded(Exception):
     """This connector run was loaded before; loading it again would double-count nothing, so it is refused."""
 
 
+class BundleStoreAuthenticationError(Exception):
+    """The store refused our credentials (an expired SSO session): the operator must sign in again."""
+
+
+class BundleSource(Protocol):
+    """Bundles waiting in a store, as processing reads them. A location is `<connector prefix>/<run id>`."""
+
+    def runs(self, connector_prefix: str) -> list[str]:
+        """The run ids under a connector's prefix, complete or not, in no particular order."""
+
+    def is_complete(self, location: str) -> bool:
+        """Whether the bundle's completion marker is there."""
+
+    def fetch(self, location: str) -> AbstractContextManager[Path]:
+        """A local directory with the bundle's files, removed when the context exits."""
+
+
+class BundleSink(Protocol):
+    def upload(self, directory: Path, location: str) -> None:
+        """Copy the directory's files, then write the completion marker last. Repeating it is harmless."""
+
+
 @dataclass(frozen=True)
 class StoredBlob:
     sha256: str
@@ -56,6 +78,9 @@ class BlobReader(Protocol):
 class IngestLedger(Protocol):
     def start_bundle(self, manifest: Manifest, uri: str) -> int:
         """Record a bundle as received; raises BundleAlreadyLoaded for a connector run seen before."""
+
+    def already_received(self, connector: str, run_id: str) -> bool:
+        """Whether `start_bundle` would refuse this run: it was received or loaded, and did not fail."""
 
     def quarantine(self, bundle_id: int, line: int, raw: str, problems: list[str], source_id: str | None) -> None: ...
 

@@ -170,6 +170,19 @@ def test_a_run_loads_once_but_a_failed_run_may_retry(db, tmp_path) -> None:
     assert load(db, directory).unchanged == 1
 
 
+def test_the_ledger_knows_which_runs_it_would_refuse(db, tmp_path) -> None:
+    ledger = PostgresIngestLedger(db)
+    assert ledger.already_received("ojk", "run-1") is False
+
+    load(db, write_bundle(tmp_path / "b1", [document()], run_id="run-1"))
+    assert ledger.already_received("ojk", "run-1") is True
+    assert ledger.already_received("ojk", "run-2") is False
+    assert ledger.already_received("other", "run-1") is False
+
+    db.execute("UPDATE ingest.bundle SET state = 'failed'")
+    assert ledger.already_received("ojk", "run-1") is False
+
+
 def test_health_is_assessed_from_loads_and_recorded(db, tmp_path) -> None:
     from metamorph_platform.adapters.postgres.health import PostgresHealth
     from metamorph_platform.application.check_health import CheckHealth

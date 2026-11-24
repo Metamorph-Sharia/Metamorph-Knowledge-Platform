@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import metamorph_market
 import psycopg
+from metamorph_contract import Bundle
 
 from metamorph_platform.adapters.api.accounts import Accounts
 from metamorph_platform.adapters.api.app import ApiServices, create_api
 from metamorph_platform.adapters.api.app import ServicesFactory as ApiServicesFactory
 from metamorph_platform.adapters.api.clients import ServiceClients
+from metamorph_platform.adapters.blobs.bundles import S3BundleStore
 from metamorph_platform.adapters.blobs.s3 import S3BlobStore, S3FileLinks
 from metamorph_platform.adapters.postgres.curation import PostgresCurationActions, PostgresOverrides
 from metamorph_platform.adapters.postgres.derived import PostgresCitationLinks, PostgresParsedTexts, PostgresValidity
@@ -30,12 +33,14 @@ from metamorph_platform.application.curate import CorrectText, Curate
 from metamorph_platform.application.curate_market import CurateMarket
 from metamorph_platform.application.load_bundle import LoadBundle
 from metamorph_platform.application.load_market_bundle import LoadMarketBundle
+from metamorph_platform.application.load_pending import LoadPendingBundles
 from metamorph_platform.application.parse_texts import ParseTexts
 from metamorph_platform.application.publish import Publish
 from metamorph_platform.application.publish_market import PublishMarket
 from metamorph_platform.application.relink_market import RelinkMarket
 from metamorph_platform.application.resolve_citations import ResolveCitations
 from metamorph_platform.application.settle_reviews import SettleReviews
+from metamorph_platform.application.upload_bundle import UploadBundle
 from metamorph_platform.config import Settings
 
 
@@ -64,6 +69,33 @@ def load_market_bundle(connection: psycopg.Connection, settings: Settings) -> Lo
         market=PostgresMarket(connection),
         blobs=blob_store(settings),
         reviews=PostgresReviewQueue(connection),
+    )
+
+
+def bundle_store(settings: Settings | None = None) -> S3BundleStore:
+    """Bundles in transit through S3. The collection host has no platform settings, only AWS credentials."""
+    return S3BundleStore(settings.s3_endpoint_url if settings else None)
+
+
+def upload_bundle() -> UploadBundle:
+    return UploadBundle(bundle_store())
+
+
+def load_pending_bundles(connection: psycopg.Connection, settings: Settings) -> LoadPendingBundles:
+    loader = load_bundle(connection, settings)
+    return LoadPendingBundles(
+        bundle_store(settings),
+        PostgresIngestLedger(connection),
+        lambda directory, uri: loader.run(Bundle(directory), uri=uri),
+    )
+
+
+def load_pending_market_bundles(connection: psycopg.Connection, settings: Settings) -> LoadPendingBundles:
+    loader = load_market_bundle(connection, settings)
+    return LoadPendingBundles(
+        bundle_store(settings),
+        PostgresIngestLedger(connection),
+        lambda directory, uri: loader.run(metamorph_market.Bundle(directory), uri=uri),
     )
 
 

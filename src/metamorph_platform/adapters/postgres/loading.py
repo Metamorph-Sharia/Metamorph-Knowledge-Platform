@@ -45,6 +45,12 @@ class PostgresIngestLedger:
             ).fetchone()
             return bundle_id
 
+    def already_received(self, connector: str, run_id: str) -> bool:
+        row = self.connection.execute(
+            "SELECT state FROM ingest.bundle WHERE connector = %s AND run_id = %s", (connector, run_id)
+        ).fetchone()
+        return row is not None and row[0] != "failed"
+
     def quarantine(self, bundle_id: int, line: int, raw: str, problems: list[str], source_id: str | None) -> None:
         self.connection.execute(
             "INSERT INTO ingest.quarantine (bundle_id, line, source_id, problems, payload) VALUES (%s, %s, %s, %s, %s) "

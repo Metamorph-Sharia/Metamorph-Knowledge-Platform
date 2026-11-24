@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -63,11 +64,20 @@ class MemoryLedger:
         self.quarantined: list[dict[str, Any]] = []
 
     def start_bundle(self, manifest: Manifest, uri: str) -> int:
-        if any(b["run"] == (manifest.connector, manifest.run_id) for b in self.bundles.values()):
-            raise BundleAlreadyLoaded(f"{manifest.connector} run {manifest.run_id}")
+        run = (manifest.connector, manifest.run_id)
+        for bundle_id, bundle in self.bundles.items():
+            if bundle["run"] != run:
+                continue
+            if bundle["state"] != "failed":
+                raise BundleAlreadyLoaded(f"{manifest.connector} run {manifest.run_id}")
+            bundle.update(state="received", uri=uri)  # a failed run may be retried
+            return bundle_id
         bundle_id = len(self.bundles) + 1
-        self.bundles[bundle_id] = {"run": (manifest.connector, manifest.run_id), "state": "received"}
+        self.bundles[bundle_id] = {"run": (manifest.connector, manifest.run_id), "state": "received", "uri": uri}
         return bundle_id
+
+    def already_received(self, connector: str, run_id: str) -> bool:
+        return any(b["run"] == (connector, run_id) and b["state"] != "failed" for b in self.bundles.values())
 
     def quarantine(self, bundle_id: int, line: int, raw: str, problems: list[str], source_id: str | None) -> None:
         self.quarantined.append({"bundle_id": bundle_id, "line": line, "problems": problems, "source_id": source_id})
@@ -77,6 +87,35 @@ class MemoryLedger:
 
     def fail_bundle(self, bundle_id: int, error: str) -> None:
         self.bundles[bundle_id].update(state="failed", error=error)
+
+
+class MemoryBundleStore:
+    """Bundles in transit: a directory under each location, complete or not (the marker is written last)."""
+
+    def __init__(self) -> None:
+        self.bundles: dict[str, tuple[Path, bool]] = {}
+        self.fetched: list[str] = []
+        self.uploaded: dict[str, Path] = {}
+
+    def add(self, prefix: str, run_id: str, directory: Path, *, complete: bool = True) -> str:
+        location = f"{prefix.rstrip('/')}/{run_id}"
+        self.bundles[location] = (directory, complete)
+        return location
+
+    def runs(self, prefix: str) -> list[str]:
+        start = prefix.rstrip("/") + "/"
+        return sorted(location.removeprefix(start) for location in self.bundles if location.startswith(start))
+
+    def is_complete(self, location: str) -> bool:
+        return self.bundles[location][1]
+
+    @contextmanager
+    def fetch(self, location: str) -> Iterator[Path]:
+        self.fetched.append(location)
+        yield self.bundles[location][0]
+
+    def upload(self, directory: Path, location: str) -> None:
+        self.uploaded[location] = directory
 
 
 class MemoryRegistry:
@@ -346,8 +385,9 @@ class MemoryMarket:
         for (owner, source_id), record in self.records.items():
             if owner != connector or source_id in present or record["missing"]:
                 continue
-            if within is not None and not (isinstance(record["record"], SeriesRecord)
-                                           and record["record"].series.dataset in within):
+            if within is not None and not (
+                isinstance(record["record"], SeriesRecord) and record["record"].series.dataset in within
+            ):
                 continue  # a bundle of whole datasets leaves the others as they are
             record["missing"] = True
             newly += 1

@@ -1,6 +1,7 @@
 """`metamorph …`: the platform's command line, for people and for Airflow tasks.
 
-Exit codes: 0 ok · 1 refused (an edited migration, a bundle loaded before or unloadable) · 2 misconfigured.
+Exit codes: 0 ok · 1 refused (an edited migration, a bundle loaded before or unloadable, a bundle held) ·
+2 misconfigured · 3 not signed in to AWS (`aws sso login`).
 `metamorph health` instead: 0 ok · 1 warning · 2 critical, like the connectors' own `health`.
 """
 
@@ -9,6 +10,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
@@ -17,11 +20,12 @@ from metamorph_contract import Bundle, UnloadableBundle
 
 from metamorph_platform import wiring
 from metamorph_platform.adapters.postgres import migrate as migrations
-from metamorph_platform.application.ports import BundleAlreadyLoaded
+from metamorph_platform.application.load_pending import PendingReport
+from metamorph_platform.application.ports import BundleAlreadyLoaded, BundleStoreAuthenticationError
 from metamorph_platform.config import ConfigurationError, Settings
 from metamorph_platform.domain.health import Severity
 
-EXIT_OK, EXIT_REFUSED, EXIT_MISCONFIGURED = 0, 1, 2
+EXIT_OK, EXIT_REFUSED, EXIT_MISCONFIGURED, EXIT_NOT_SIGNED_IN = 0, 1, 2, 3
 MIN_PASSWORD_LENGTH = 12
 REFUSALS = (migrations.MigrationError, BundleAlreadyLoaded, UnloadableBundle, metamorph_market.UnloadableBundle)
 
@@ -34,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigurationError as error:
         print(f"configuration: {error}", file=sys.stderr)
         return EXIT_MISCONFIGURED
+    except BundleStoreAuthenticationError as error:
+        print(f"not signed in: {error}", file=sys.stderr)
+        return EXIT_NOT_SIGNED_IN
     except REFUSALS as error:
         print(f"refused: {error}", file=sys.stderr)
         return EXIT_REFUSED
@@ -59,9 +66,23 @@ def _parser() -> argparse.ArgumentParser:
     init.set_defaults(run=_storage_init)
 
     load = commands.add_parser("load", help="load a connector's contract v2 bundle into the registry")
-    load.add_argument("bundle", type=Path, help="the bundle directory (manifest.json, documents.jsonl, blobs/)")
+    load.add_argument(
+        "bundle", help="the bundle directory (manifest.json, documents.jsonl, blobs/), or its s3:// location"
+    )
     load.add_argument("--publish", action="store_true", help="refresh `published` afterwards")
     load.set_defaults(run=_load)
+    load_pending = commands.add_parser(
+        "load-pending",
+        help="load a connector's complete bundles from S3 that aren't loaded yet, oldest first; exit 1 if one is held",
+    )
+    load_pending.add_argument("prefix", help="s3://bucket/bundles/<connector>")
+    load_pending.set_defaults(run=_load_pending)
+    upload = commands.add_parser(
+        "upload-bundle", help="copy a collected bundle to s3://<base>/<connector>/<run id>/, then mark it complete"
+    )
+    upload.add_argument("bundle", type=Path, help="the bundle directory")
+    upload.add_argument("base", help="s3://bucket/bundles")
+    upload.set_defaults(run=_upload_bundle, needs_settings=False)
 
     publish = commands.add_parser("publish", help="refresh `published` for documents that changed")
     publish.add_argument("--all", action="store_true", help="republish every document")
@@ -70,9 +91,14 @@ def _parser() -> argparse.ArgumentParser:
     market = commands.add_parser("market", help="the market data layer: registers of licensed entities, statistics")
     market_actions = market.add_subparsers(required=True, metavar="ACTION")
     market_load = market_actions.add_parser("load", help="load a market connector's bundle (market contract)")
-    market_load.add_argument("bundle", type=Path, help="the bundle directory (manifest.json, records.jsonl, blobs/)")
+    market_load.add_argument(
+        "bundle", help="the bundle directory (manifest.json, records.jsonl, blobs/), or its s3:// location"
+    )
     market_load.add_argument("--publish", action="store_true", help="refresh `published_market` afterwards")
     market_load.set_defaults(run=_market_load)
+    market_pending = market_actions.add_parser("load-pending", help="load-pending, for a market connector's bundles")
+    market_pending.add_argument("prefix", help="s3://bucket/bundles/<connector>")
+    market_pending.set_defaults(run=_market_load_pending)
     market_actions.add_parser("publish", help="rebuild `published_market` from the records held").set_defaults(
         run=_market_publish
     )
@@ -145,14 +171,44 @@ def _storage_init(settings: Settings, arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+@contextmanager
+def _bundle_at(location: str, settings: Settings) -> Iterator[tuple[Path, str]]:
+    """The bundle's directory and the URI to record: S3 is downloaded to scratch, a directory is read in place."""
+    if location.startswith("s3://"):
+        with wiring.bundle_store(settings).fetch(location) as directory:
+            yield directory, location
+    else:
+        yield Path(location), str(Path(location).resolve())
+
+
 def _load(settings: Settings, arguments: argparse.Namespace) -> int:
-    bundle = Bundle(arguments.bundle)
-    with wiring.connect(settings) as connection:
-        report = wiring.load_bundle(connection, settings).run(bundle, uri=str(arguments.bundle.resolve()))
+    with wiring.connect(settings) as connection, _bundle_at(arguments.bundle, settings) as (directory, uri):
+        report = wiring.load_bundle(connection, settings).run(Bundle(directory), uri=uri)
         result = {"bundle_id": report.bundle_id, "connector": report.connector, **report.counts()}
         if arguments.publish:
             result["published"] = wiring.publish(connection, settings).run().counts()
     print(json.dumps(result, indent=2))
+    return EXIT_OK
+
+
+def _load_pending(settings: Settings, arguments: argparse.Namespace) -> int:
+    with wiring.connect(settings) as connection:
+        return _report_pending(wiring.load_pending_bundles(connection, settings).run(arguments.prefix))
+
+
+def _market_load_pending(settings: Settings, arguments: argparse.Namespace) -> int:
+    with wiring.connect(settings) as connection:
+        return _report_pending(wiring.load_pending_market_bundles(connection, settings).run(arguments.prefix))
+
+
+def _report_pending(report: PendingReport) -> int:
+    print(json.dumps(asdict(report), indent=2))
+    return EXIT_REFUSED if report.held else EXIT_OK
+
+
+def _upload_bundle(_: None, arguments: argparse.Namespace) -> int:
+    location = wiring.upload_bundle().run(arguments.bundle, arguments.base)
+    print(json.dumps({"location": location}))
     return EXIT_OK
 
 
@@ -163,9 +219,8 @@ def _publish(settings: Settings, arguments: argparse.Namespace) -> int:
 
 
 def _market_load(settings: Settings, arguments: argparse.Namespace) -> int:
-    bundle = metamorph_market.Bundle(arguments.bundle)
-    with wiring.connect(settings) as connection:
-        report = wiring.load_market_bundle(connection, settings).run(bundle, uri=str(arguments.bundle.resolve()))
+    with wiring.connect(settings) as connection, _bundle_at(arguments.bundle, settings) as (directory, uri):
+        report = wiring.load_market_bundle(connection, settings).run(metamorph_market.Bundle(directory), uri=uri)
         result = {"bundle_id": report.bundle_id, "connector": report.connector, **report.counts()}
         if arguments.publish:
             result["published"] = asdict(wiring.publish_market(connection, settings).run())
