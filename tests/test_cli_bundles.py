@@ -103,6 +103,17 @@ def test_load_pending_reports_counts_and_exits_zero_when_nothing_is_held(world, 
     assert (report["loaded"], report["skipped"], report["held"], report["incomplete"]) == (1, 0, 0, 1)
 
 
+def test_load_pending_exits_with_its_own_code_when_a_pass_loaded_nothing_and_held_nothing(world, tmp_path) -> None:
+    assert cli.main(["load-pending", OJK]) == cli.EXIT_NOTHING_LOADED == 4  # no bundles at all
+
+    world.store.add(OJK, "run-1", write_bundle(tmp_path / "b1", [document()], run_id="run-1"), complete=False)
+    assert cli.main(["load-pending", OJK]) == cli.EXIT_NOTHING_LOADED  # an upload in progress
+
+    world.store.add(OJK, "run-1", write_bundle(tmp_path / "b2", [document()], run_id="run-1"))
+    assert cli.main(["load-pending", OJK]) == 0
+    assert cli.main(["load-pending", OJK]) == cli.EXIT_NOTHING_LOADED  # run-1 is loaded now
+
+
 def test_load_pending_exits_non_zero_when_it_held_a_bundle(world, tmp_path, capsys) -> None:
     world.store.add(OJK, "run-1", tmp_path / "no-such-bundle")
 

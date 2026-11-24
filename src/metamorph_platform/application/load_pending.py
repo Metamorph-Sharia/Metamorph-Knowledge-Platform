@@ -2,8 +2,9 @@
 
 Collection uploads bundles; this runs on a schedule on the processing side. Per connector, oldest run first, so an
 incremental bundle never lands out of order. A bundle that fails to load holds the connector's later bundles back
-(the registry must not skip a step for a source); the next pass retries it, because the ledger lets a failed run
-load again.
+(the registry must not skip a step for a source); an incomplete one (an upload in progress, or abandoned) makes the
+later ones wait. The next pass retries both: only a run the ledger has *loaded* is skipped, so a load that failed or
+was killed part-way is started again.
 """
 
 from __future__ import annotations
@@ -22,7 +23,8 @@ LoadFromDirectory = Callable[[Path, str], object]  # (the bundle's directory, it
 class PendingReport:
     loaded: int = 0
     skipped: int = 0  # the ledger has them already
-    incomplete: int = 0  # no completion marker yet
+    incomplete: int = 0  # no completion marker yet: an upload in progress, or one that was abandoned
+    waiting: int = 0  # complete bundles behind an incomplete one
     held: int = 0  # the failed bundle and the complete ones behind it
     failed_run: str | None = None
     error: str | None = None
@@ -39,8 +41,10 @@ class LoadPendingBundles:
         report = PendingReport()
         for run_id in sorted(self.source.runs(connector_prefix)):
             location = run_location(connector_prefix, run_id)
-            if self.ledger.already_received(connector, run_id):
+            if self.ledger.already_loaded(connector, run_id):
                 report.skipped += 1
+            elif report.incomplete:
+                report.waiting += 1
             elif not self.source.is_complete(location):
                 report.incomplete += 1
             elif report.failed_run:

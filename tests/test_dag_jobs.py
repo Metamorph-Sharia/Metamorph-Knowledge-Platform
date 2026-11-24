@@ -8,11 +8,11 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from metamorph_pipeline.alerts import failure_message
+from metamorph_pipeline.alerts import failure_message, on_first_failure
 from metamorph_pipeline.jobs import (
     BUNDLES,
     LOAD_BUNDLES_SCHEDULE,
@@ -31,7 +31,7 @@ from metamorph_pipeline.jobs import (
     bundle_path,
     collect_command,
     ingest_jobs,
-    is_first_weekday,
+    monthly_pass_due,
     passed_on,
     pending_loads,
     registry_of,
@@ -222,6 +222,27 @@ def test_a_failure_message_names_the_task_and_its_log() -> None:
     )
 
 
+def failing_context(previous_state: str | None) -> dict:
+    previous = None if previous_state is None else type("Ti", (), {"state": previous_state})
+    task = type("Ti", (), {"task_id": "load_ojk", "log_url": "http://airflow/log", "try_number": 2,
+                           "get_previous_ti": lambda self: previous})()  # fmt: skip
+    dag = type("Dag", (), {"dag_id": "load_bundles"})
+    return {"dag": dag, "task_instance": task, "run_id": "r", "exception": "held"}
+
+
+@pytest.mark.parametrize("previous_state", [None, "success", "skipped"])
+def test_a_task_that_starts_failing_alerts(previous_state, caplog) -> None:
+    on_first_failure(failing_context(previous_state))
+
+    assert "load_bundles.load_ojk failed" in caplog.text
+
+
+def test_a_task_that_failed_in_the_previous_run_too_does_not_alert_again(caplog) -> None:
+    on_first_failure(failing_context("failed"))
+
+    assert "failed" not in caplog.text
+
+
 def test_the_reports_job_syncs_lpksi_and_loads_into_the_market_layer(jobs) -> None:
     reports = jobs["ingest_reports"]
 
@@ -400,29 +421,28 @@ def test_a_job_that_reads_pdfs_starts_between_09_00_and_11_30_wib(jobs) -> None:
         assert 9 * 60 <= start <= 11 * 60 + 30, job.dag_id
 
 
-def test_the_monthly_full_pass_runs_on_the_first_weekday_of_the_month(jobs) -> None:
-    assert [job.dag_id for job in jobs.values() if job.first_weekday_only] == ["ingest_dsn_fatwa_full"]
-    assert jobs["ingest_dsn_fatwa_full"].schedule.split()[2:] == ["*", "*", "1-5"]  # every weekday; others skipped
+def test_the_monthly_full_pass_is_tried_every_weekday(jobs) -> None:
+    assert [job.dag_id for job in jobs.values() if job.monthly] == ["ingest_dsn_fatwa_full"]
+    assert jobs["ingest_dsn_fatwa_full"].schedule.split()[2:] == ["*", "*", "1-5"]  # every weekday; most are skipped
 
 
 @pytest.mark.parametrize(
-    ("day", "expected"),
+    ("today", "last_success", "due"),
     [
-        (date(2026, 11, 2), True),  # the 1st is a Sunday: Monday the 2nd is the first weekday
-        (date(2026, 11, 3), False),
-        (date(2026, 8, 3), True),  # the 1st is a Saturday
-        (date(2026, 8, 1), False),  # a Saturday is never one
-        (date(2026, 7, 1), True),  # the 1st is a Wednesday
-        (date(2026, 7, 2), False),
-        (date(2026, 12, 15), False),
+        (date(2026, 11, 2), None, True),  # never run
+        (date(2026, 11, 2), datetime(2026, 10, 30, 3, 30, tzinfo=UTC), True),  # last success was last month
+        (date(2026, 11, 3), datetime(2026, 11, 2, 3, 30, tzinfo=UTC), False),  # done this month
+        (date(2026, 11, 20), datetime(2026, 11, 2, 3, 30, tzinfo=UTC), False),
+        (date(2026, 11, 4), datetime(2026, 10, 30, 3, 30, tzinfo=UTC), True),  # the laptop slept on the 2nd and 3rd
+        (date(2027, 11, 2), datetime(2026, 11, 2, 3, 30, tzinfo=UTC), True),  # the same month a year ago
     ],
 )
-def test_the_first_weekday_of_a_month(day, expected) -> None:
-    assert is_first_weekday(day) is expected
+def test_a_monthly_pass_is_due_on_a_weekday_when_none_succeeded_this_month(today, last_success, due) -> None:
+    assert monthly_pass_due(today, last_success) is due
 
 
-def test_health_expects_a_weekday_connector_every_three_days_and_a_weekly_one_every_seven(jobs) -> None:
-    from metamorph_platform.domain.health import CADENCE
+def test_health_expects_a_weekday_connector_every_weekday_and_a_weekly_one_every_seven_days(jobs) -> None:
+    from metamorph_platform.domain.health import CADENCE, Weekdays
 
     def longest_gap(job: ConnectorJob) -> timedelta:
         days = sorted(set(weekdays(job.schedule)))
@@ -430,8 +450,12 @@ def test_health_expects_a_weekday_connector_every_three_days_and_a_weekly_one_ev
         return timedelta(days=max((later - earlier) % 7 or 7 for earlier, later in pairs))
 
     for connector in CADENCE:
-        schedule_of = [job for job in jobs.values() if job.connector == connector and not job.first_weekday_only]
-        assert CADENCE[connector] == min(longest_gap(job) for job in schedule_of), connector
+        schedule_of = [job for job in jobs.values() if job.connector == connector and not job.monthly]
+        if any(sorted(set(weekdays(job.schedule))) == [1, 2, 3, 4, 5] for job in schedule_of):
+            assert isinstance(CADENCE[connector], Weekdays) and CADENCE[connector] == timedelta(days=1), connector
+        else:
+            assert not isinstance(CADENCE[connector], Weekdays), connector
+            assert CADENCE[connector] == min(longest_gap(job) for job in schedule_of), connector
 
 
 # --- The weekly backup runs on the collection host, under the Docker launcher ---------------------------------------
@@ -488,3 +512,52 @@ def test_a_load_s_prefix_is_where_the_upload_puts_the_connector_s_bundles(jobs) 
 
 def test_the_loads_run_every_half_hour() -> None:
     assert LOAD_BUNDLES_SCHEDULE == "*/30 * * * *"
+
+
+def test_a_load_task_skips_on_the_exit_code_load_pending_gives_a_pass_that_loaded_nothing() -> None:
+    from metamorph_pipeline.jobs import NOTHING_LOADED
+
+    from metamorph_platform import cli
+
+    assert NOTHING_LOADED == cli.EXIT_NOTHING_LOADED
+    source = (Path(__file__).parents[1] / "dags/load_bundles.py").read_text()
+    assert "skip_on_exit_code=NOTHING_LOADED" in source  # DockerOperator's and, on ECS, SkippableEcsRunTask's
+
+
+def test_an_ecs_task_that_exits_with_the_skip_code_is_skipped_and_any_other_failure_still_fails() -> None:
+    from unittest.mock import MagicMock
+
+    pytest.importorskip("airflow.providers.amazon")  # only where Airflow is installed (its image)
+    from airflow.exceptions import AirflowException, AirflowSkipException
+    from metamorph_pipeline.containers import SkippableEcsRunTask
+
+    def finished_with(exit_code: int) -> SkippableEcsRunTask:
+        task = SkippableEcsRunTask(task_id="t", cluster="c", task_definition="d", overrides={}, skip_on_exit_code=4)
+        task.client, task.arn = MagicMock(), "arn"
+        task.client.describe_tasks.return_value = {
+            "tasks": [{"containers": [{"name": "main", "lastStatus": "STOPPED", "exitCode": exit_code}]}]
+        }
+        return task
+
+    with pytest.raises(AirflowSkipException):
+        finished_with(4)._check_success_task()
+    with pytest.raises(AirflowException):
+        finished_with(1)._check_success_task()
+    finished_with(0)._check_success_task()
+
+
+def test_a_run_s_id_is_the_time_it_started_so_hand_and_scheduled_runs_sort_by_when_they_collected() -> None:
+    jinja2 = pytest.importorskip("jinja2")  # only where Airflow is installed (its image)
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from metamorph_pipeline.jobs import RUN_ID_TEMPLATE
+
+    def run_id(started: datetime) -> str:
+        return jinja2.Template(RUN_ID_TEMPLATE).render(dag_run=SimpleNamespace(start_date=started))
+
+    scheduled = run_id(datetime(2026, 11, 24, 2, 0, 3, tzinfo=UTC))  # its logical date would be the day before
+    by_hand = run_id(datetime(2026, 11, 24, 9, 30, 0, tzinfo=UTC))
+
+    assert scheduled == "20261124T020003"  # the format of Airflow's ts_nodash
+    assert scheduled < by_hand

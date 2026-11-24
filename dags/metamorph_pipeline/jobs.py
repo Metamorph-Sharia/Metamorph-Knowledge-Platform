@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 PLATFORM_IMAGE = "metamorph-platform:dev"  # the platform's tasks: load, build, publish, health
@@ -43,7 +43,12 @@ BUNDLES = "/bundles"
 BUNDLES_VOLUME = "metamorph-bundles"
 BUNDLES_KEY = "bundles"  # where uploaded bundles are kept in the blobs bucket, which the platform task can read: bundles/<connector>/<run id>/
 LOAD_BUNDLES_SCHEDULE = "*/30 * * * *"  # how often the processing side looks for bundles to load (dags/load_bundles.py)
+# A run's id (the bundle's name in the store) is the time its DAG run started, in the format of Airflow's ts_nodash, not
+# the run's logical date: a scheduled run's logical date is the interval before it, so by hand and by schedule the
+# ids would not sort by when the runs collected, and the loader takes bundles oldest first.
+RUN_ID_TEMPLATE = "{{ dag_run.start_date.strftime('%Y%m%dT%H%M%S') }}"
 EXPORT_FAILED = 3  # the collect task's exit code when no bundle could be written
+NOTHING_LOADED = 4  # `metamorph load-pending`'s exit code for a pass that loaded and held nothing: the task is skipped
 CONTAINER_HOME = "/home/connector"
 # What every connector reads from its environment: how it reads a PDF's text. METAMORPH_PDF_LINES
 # (metamorph_contract.printed_lines), and the engine with MinerU's settings (metamorph_pdf_text.SETTINGS). In
@@ -89,9 +94,10 @@ class ConnectorJob:
     # The connector calls metamorph_pdf_text, so it needs MinerU: its schedule must start inside MinerU's window
     # (deploy/aws/ingestion/mineru.yaml), which runs only then on AWS.
     reads_pdfs: bool = False
-    # A monthly job: its schedule fires every weekday, and the DAG skips every day but the month's first weekday
-    # (cron cannot say "the first weekday"). MinerU's window runs longer on that day.
-    first_weekday_only: bool = False
+    # A monthly job: its schedule fires every weekday, and the DAG runs it on the first weekday that no successful
+    # run of it has happened this month (monthly_pass_due), so a laptop asleep on the 1st catches up on a later day.
+    # MinerU's window runs longer on the month's first three days, when it normally runs.
+    monthly: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,10 +146,9 @@ def upload_command(job: ConnectorJob, run_id: str, bundles_bucket: str) -> list[
     return ["upload-bundle", bundle_path(job.connector, run_id), f"s3://{bundles_bucket}/bundles"]
 
 
-def is_first_weekday(day: date) -> bool:
-    """Whether `day` is its month's first Monday-to-Friday: the 1st, or the Monday after a weekend 1st."""
-    earlier = (day.replace(day=d) for d in range(1, day.day))
-    return day.weekday() < 5 and all(d.weekday() >= 5 for d in earlier)
+def monthly_pass_due(today: date, last_success: datetime | None) -> bool:
+    """Whether a monthly job's weekday firing runs: no run of it has succeeded this calendar month."""
+    return last_success is None or (last_success.year, last_success.month) != (today.year, today.month)
 
 
 @dataclass(frozen=True)
@@ -345,8 +350,8 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
         ),
         ConnectorJob(
             dag_id="ingest_dsn_fatwa_full",
-            schedule="30 3 * * 1-5",  # monthly, on the first weekday (first_weekday_only), after the weekly run
-            first_weekday_only=True,
+            schedule="30 3 * * 1-5",  # monthly (see `monthly`), after the weekly run
+            monthly=True,
             collect="dsn sync --all --refresh-index --quiet",
             description="DSN-MUI fatwas, full pass: re-download everything to catch silent re-uploads",
             **dsn,

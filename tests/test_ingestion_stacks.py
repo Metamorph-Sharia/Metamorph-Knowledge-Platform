@@ -791,9 +791,9 @@ def test_every_job_that_reads_pdfs_starts_inside_the_window_with_an_hour_to_run(
 
     assert readers
     for job in readers:
-        # the monthly full pass runs only on the first weekday, when the window is longer; any other job must fit the
+        # the monthly full pass is meant for the first weekday, when the window is longer; any other job must fit the
         # usual end, which a first weekday that is also its day only lengthens
-        job_end = monthly_end if job.first_weekday_only else end
+        job_end = monthly_end if job.monthly else end
         assert start <= job_start(job) <= job_end - HOUR, job.dag_id
 
 

@@ -23,13 +23,13 @@ class PostgresIngestLedger:
         self.connection = connection
 
     def start_bundle(self, manifest: Manifest, uri: str) -> int:
-        """A failed run may be retried; a run that was received or loaded is refused."""
+        """A run that failed, or was killed part-way (still received), may be retried; a loaded run is refused."""
         with self.connection.transaction():
             row = self.connection.execute(
                 "SELECT id, state FROM ingest.bundle WHERE connector = %s AND run_id = %s FOR UPDATE",
                 (manifest.connector, manifest.run_id),
             ).fetchone()
-            if row and row[1] != "failed":
+            if row and row[1] == "loaded":
                 raise BundleAlreadyLoaded(f"{manifest.connector} run {manifest.run_id} is already {row[1]}")
             if row:
                 self.connection.execute(
@@ -45,11 +45,11 @@ class PostgresIngestLedger:
             ).fetchone()
             return bundle_id
 
-    def already_received(self, connector: str, run_id: str) -> bool:
+    def already_loaded(self, connector: str, run_id: str) -> bool:
         row = self.connection.execute(
             "SELECT state FROM ingest.bundle WHERE connector = %s AND run_id = %s", (connector, run_id)
         ).fetchone()
-        return row is not None and row[0] != "failed"
+        return row is not None and row[0] == "loaded"
 
     def quarantine(self, bundle_id: int, line: int, raw: str, problems: list[str], source_id: str | None) -> None:
         self.connection.execute(

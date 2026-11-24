@@ -26,6 +26,7 @@ from metamorph_platform.config import ConfigurationError, Settings
 from metamorph_platform.domain.health import Severity
 
 EXIT_OK, EXIT_REFUSED, EXIT_MISCONFIGURED, EXIT_NOT_SIGNED_IN = 0, 1, 2, 3
+EXIT_NOTHING_LOADED = 4  # load-pending: a pass that loaded no bundle and held none (the Airflow task is skipped)
 MIN_PASSWORD_LENGTH = 12
 REFUSALS = (migrations.MigrationError, BundleAlreadyLoaded, UnloadableBundle, metamorph_market.UnloadableBundle)
 
@@ -203,7 +204,9 @@ def _market_load_pending(settings: Settings, arguments: argparse.Namespace) -> i
 
 def _report_pending(report: PendingReport) -> int:
     print(json.dumps(asdict(report), indent=2))
-    return EXIT_REFUSED if report.held else EXIT_OK
+    if report.held:
+        return EXIT_REFUSED
+    return EXIT_OK if report.loaded else EXIT_NOTHING_LOADED
 
 
 def _upload_bundle(_: None, arguments: argparse.Namespace) -> int:

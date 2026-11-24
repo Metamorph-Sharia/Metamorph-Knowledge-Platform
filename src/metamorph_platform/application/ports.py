@@ -77,10 +77,11 @@ class BlobReader(Protocol):
 
 class IngestLedger(Protocol):
     def start_bundle(self, manifest: Manifest, uri: str) -> int:
-        """Record a bundle as received; raises BundleAlreadyLoaded for a connector run seen before."""
+        """Record a bundle as received, or restart a run that failed or was cut off part-way (state received or
+        failed); raises BundleAlreadyLoaded for a run already loaded."""
 
-    def already_received(self, connector: str, run_id: str) -> bool:
-        """Whether `start_bundle` would refuse this run: it was received or loaded, and did not fail."""
+    def already_loaded(self, connector: str, run_id: str) -> bool:
+        """Whether `start_bundle` would refuse this run: it was loaded."""
 
     def quarantine(self, bundle_id: int, line: int, raw: str, problems: list[str], source_id: str | None) -> None: ...
 

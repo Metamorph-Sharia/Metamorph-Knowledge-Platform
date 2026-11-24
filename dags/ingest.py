@@ -14,16 +14,18 @@ from airflow.utils.trigger_rule import TriggerRule
 from metamorph_pipeline.alerts import on_failure
 from metamorph_pipeline.containers import container, host_path, required_setting, upload_bundle
 from metamorph_pipeline.jobs import (
+    RUN_ID_TEMPLATE as RUN_ID,
+)
+from metamorph_pipeline.jobs import (
     collect_command,
     discard_command,
     ingest_jobs,
-    is_first_weekday,
+    monthly_pass_due,
     passed_on,
     upload_command,
 )
 from metamorph_pipeline.sides import Side, builds_here
 
-RUN_ID = "{{ ts_nodash }}"
 SINCE = "{{ prev_start_date_success.isoformat() if prev_start_date_success else '' }}"  # a failed run widens it
 DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_callback": on_failure}
 
@@ -31,10 +33,11 @@ DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_
 SIDE = Side.COLLECTION
 
 
-def _runs_today(data_interval_end, dag_run, **_) -> bool:
-    """A monthly job's schedule fires every weekday (`first_weekday_only`); it runs on the month's first one only.
-    A run triggered by hand always goes ahead."""
-    return dag_run.external_trigger or is_first_weekday(data_interval_end.date())
+def _runs_today(data_interval_end, dag_run, prev_start_date_success, **_) -> bool:
+    """A monthly job's schedule fires every weekday (`monthly`); it runs when none has succeeded this month. A run
+    that this check skipped counts as a success only after one that ran did, so it never hides a missed month. A run
+    triggered by hand always goes ahead."""
+    return dag_run.external_trigger or monthly_pass_due(data_interval_end.date(), prev_start_date_success)
 
 
 if builds_here(SIDE):
@@ -59,7 +62,7 @@ if builds_here(SIDE):
             )  # fmt: skip
             discard = container("discard", job.image, discard_command(job, RUN_ID), mounts=job.mounts, retries=0)
             collect >> upload >> discard
-            if job.first_weekday_only:
-                today = ShortCircuitOperator(task_id="first_weekday", python_callable=_runs_today)
+            if job.monthly:
+                today = ShortCircuitOperator(task_id="monthly_pass_due", python_callable=_runs_today)
                 today >> collect
         globals()[job.dag_id] = dag

@@ -65,6 +65,42 @@ def test_a_bundle_without_its_completion_marker_is_ignored(world) -> None:
     assert world.ledger.bundles == {} and world.store.fetched == []
 
 
+def test_an_incomplete_bundle_stops_the_pass_so_nothing_lands_out_of_order(world) -> None:
+    world.bundle("20261124T020000")
+    world.bundle("20261125T020000", complete=False)  # an upload in progress
+    world.bundle("20261126T020000")
+
+    report = world.a_pass()
+
+    assert (report.loaded, report.incomplete, report.waiting, report.held) == (1, 1, 1, 0)
+    assert report.failed_run is None  # an upload in progress is not a failure
+    assert world.store.fetched == [f"{PREFIX}/20261124T020000"]
+
+
+def test_once_the_marker_is_there_the_waiting_bundles_load_in_order(world) -> None:
+    world.bundle("20261125T020000", complete=False)
+    world.bundle("20261126T020000")
+    world.a_pass()
+
+    world.store.add(PREFIX, "20261125T020000", world.directory / "20261125T020000")  # the upload finished
+
+    report = world.a_pass()
+
+    assert (report.loaded, report.incomplete, report.waiting) == (2, 0, 0)
+    assert [location.rsplit("/", 1)[1] for location in world.store.fetched] == ["20261125T020000", "20261126T020000"]
+
+
+def test_a_load_killed_part_way_is_retried_not_skipped(world) -> None:
+    world.bundle("20261124T020000")
+    killed = Bundle(world.directory / "20261124T020000")
+    world.ledger.start_bundle(killed.manifest, "uri")  # received, and then the process died
+
+    report = world.a_pass()
+
+    assert (report.loaded, report.skipped) == (1, 0)
+    assert world.ledger.bundles[1]["state"] == "loaded"
+
+
 def test_a_bundle_already_loaded_is_skipped_without_downloading_it_again(world) -> None:
     world.bundle("20261124T020000")
     world.a_pass()

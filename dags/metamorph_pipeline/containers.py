@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 
+from airflow.exceptions import AirflowSkipException
 from airflow.models import BaseOperator
 from airflow.providers.amazon.aws.operators.ecs import EcsRunTaskOperator
 from airflow.providers.docker.operators.docker import DockerOperator
@@ -62,10 +63,12 @@ def container(
     mounts: Sequence[Mount] = (),
     secrets: Sequence[str] = (),
     environment: Mapping[str, str] | None = None,
+    skip_on_exit_code: int | None = None,
     **task_arguments,
 ) -> BaseOperator:
+    """`skip_on_exit_code`: a container that exits with it is skipped, not failed (and updates no Dataset)."""
     if LAUNCHER == "ecs":
-        return _ecs_task(task_id, image, command, **task_arguments)
+        return _ecs_task(task_id, image, command, skip_on_exit_code=skip_on_exit_code, **task_arguments)
     return DockerOperator(
         task_id=task_id,
         image=image,
@@ -77,6 +80,7 @@ def container(
         environment=dict(environment or {}),
         private_environment={name: os.environ[name] for name in secrets if name in os.environ},
         auto_remove="success",
+        skip_on_exit_code=skip_on_exit_code,
         **task_arguments,
     )
 
@@ -103,9 +107,24 @@ def upload_bundle(task_id: str, command: Sequence[str], **task_arguments) -> Bas
     )
 
 
-def _ecs_task(task_id: str, image: str, command: Sequence[str], **task_arguments) -> EcsRunTaskOperator:
+class SkippableEcsRunTask(EcsRunTaskOperator):
+    """An ECS task whose container may exit with `skip_on_exit_code` to be skipped, as DockerOperator offers."""
+
+    def __init__(self, *, skip_on_exit_code: int | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.skip_on_exit_code = skip_on_exit_code
+
+    def _check_success_task(self) -> None:
+        if self.skip_on_exit_code is not None and self.client and self.arn:
+            for task in self.client.describe_tasks(cluster=self.cluster, tasks=[self.arn])["tasks"]:
+                if any(c.get("exitCode") == self.skip_on_exit_code for c in task["containers"]):
+                    raise AirflowSkipException(f"The task exited with {self.skip_on_exit_code}: skipped")
+        super()._check_success_task()
+
+
+def _ecs_task(task_id: str, image: str, command: Sequence[str], **task_arguments) -> SkippableEcsRunTask:
     family = task_family(image)
-    return EcsRunTaskOperator(
+    return SkippableEcsRunTask(
         task_id=task_id,
         task_definition=family,
         cluster=required_setting("METAMORPH_ECS_CLUSTER"),

@@ -72,7 +72,7 @@ uv run --env-file .env metamorph build        # parse → resolve → settle rev
 
 Each step only does what is new, so a second `build` changes nothing.
 
-`load` refuses a connector run it has loaded before (a failed one may be retried). Lines that break the contract are quarantined in `ingest.quarantine`, and the rest still loads. Quarantined lines and conflicts are queued in `curation.review_item`; a document the connector couldn't identify is held by the publish gate until a curator assigns its ID.
+`load` refuses a connector run it has loaded before (a failed one, or one cut off part-way, is retried). Lines that break the contract are quarantined in `ingest.quarantine`, and the rest still loads. Quarantined lines and conflicts are queued in `curation.review_item`; a document the connector couldn't identify is held by the publish gate until a curator assigns its ID.
 
 ## Run on a schedule (Airflow)
 
@@ -86,7 +86,7 @@ On the collection host (times UTC; WIB is 7 hours ahead):
 | `ingest_bpk` | weekdays 02:20 | `bpk-connector run`, then `export --format v2` |
 | `ingest_bi` | weekdays 02:40 | `src.cli sync` into BI's own database, then `src.pipeline.exporter_v2` |
 | `ingest_dsn_fatwa` | Mondays 03:00 | `dsn sync`, Arabic OCR, `dsn export` |
-| `ingest_dsn_fatwa_full` | the month's first weekday, 03:30 | the same, re-downloading every file |
+| `ingest_dsn_fatwa_full` | a weekday, 03:30, once a month (the first weekday with no successful pass this month) | the same, re-downloading every file |
 | `ingest_reports`, `ingest_bi_seki`, `ingest_ojk_stats`, `ingest_bps_stats`, `ingest_ojk_register` | Mondays, 03:15 to 04:30 | The market data layer: each connector's collect and export |
 | `backup_connector_data` | Fridays 07:00 | Each connector's `data/` as a tarball in `s3://<ops bucket>/backups/<date>/` |
 
@@ -94,7 +94,7 @@ Every ingest DAG ends with `metamorph upload-bundle` (the bundle to `s3://<blobs
 
 | DAG | When | What |
 |---|---|---|
-| `load_bundles` | every 30 minutes | One task per connector: `metamorph load-pending` (or `market load-pending`) loads its complete bundles, oldest first, and stops at one that fails |
+| `load_bundles` | every 30 minutes | One task per connector: `metamorph load-pending` (or `market load-pending`) loads its complete bundles, oldest first, and stops at one that fails or is still uploading; a pass that loaded nothing is skipped, so no build runs for it |
 | `registry_build` | after any regulation load | `metamorph build`, then `metamorph health --fail-on critical` |
 | `market_publish` | after any market load | `metamorph market publish`: `published_market` rebuilt from the market registry |
 | `health` | daily 06:00 | `metamorph health --fail-on critical`: a connector that stopped loading never triggers a build |

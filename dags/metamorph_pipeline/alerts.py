@@ -25,6 +25,15 @@ def failure_message(context: Mapping[str, Any]) -> str:
     )
 
 
+def on_first_failure(context: Mapping[str, Any]) -> None:
+    """Alert when a task starts failing, not on each run it goes on failing: a held bundle fails its task every 30
+    minutes until someone looks at it, and one alert says so."""
+    previous = context["task_instance"].get_previous_ti()
+    if previous is not None and previous.state == "failed":
+        return
+    on_failure(context)
+
+
 def on_failure(context: Mapping[str, Any]) -> None:
     message = failure_message(context)
     log.error(message)

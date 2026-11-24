@@ -50,7 +50,7 @@ Parameters:
   WindowEnd:
     Type: String
     Default: cron(45 5 4-31 * ? *)
-    Description: UTC; 12:45 WIB. An hour after the last ingest that reads PDFs starts (ingest_ojk_register, Mondays 03:45), so its run is not cut. Not on the 1st to 3rd, which have their own end (a weekend's days stop it anyway)
+    Description: UTC; 12:45 WIB. At least an hour after the last ingest that reads PDFs starts (ingest_ojk_register, Mondays 04:30, 75 minutes before), so its run is not cut. Not on the 1st to 3rd, which have their own end (a weekend's days stop it anyway)
   MonthlyWindowEnd:
     Type: String
     Default: cron(15 6 1-3 * ? *)
@@ -66,7 +66,7 @@ Parameters:
   CloudFrontPrefixList:
     Type: String
     Default: pl-bca247d5
-    Description: CloudFront's origin-facing addresses in this region, the only source besides the jobs the load balancer accepts
+    Description: CloudFront's origin-facing addresses in this region, the only source the load balancer accepts
 
 Conditions:
   HasWebAcl: !Not [!Equals [!Ref WebAclArn, ""]]
@@ -135,10 +135,10 @@ Resources:
     Properties:
       LoadBalancerArn: !Ref LoadBalancer
       Protocol: HTTP
-      Port: 8010   # the port the load balancer's group admits from the jobs
+      Port: 8010   # the port the load balancer's group admits from CloudFront
       DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
 
-  LoadBalancerFromCloudFront:   # the jobs' own rule, on the same group, is in shared.yaml
+  LoadBalancerFromCloudFront:   # the load balancer's only ingress rule
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
       GroupId: !ImportValue metamorph-sg-mineru-lb

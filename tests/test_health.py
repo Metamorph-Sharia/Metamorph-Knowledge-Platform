@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from fakes import MemoryHealth
 
 from metamorph_platform.application.check_health import CheckHealth
-from metamorph_platform.domain.health import ConnectorActivity, HealthFacts, Severity, assess
+from metamorph_platform.domain.health import ConnectorActivity, HealthFacts, Severity, Weekdays, assess
 
 NOW = datetime(2026, 10, 20, 6, 0, tzinfo=UTC)
 CADENCE = {"ojk": timedelta(days=1), "dsn-fatwa": timedelta(days=7)}
@@ -117,3 +117,40 @@ def test_the_statistics_connectors_load_weekly() -> None:
 
     assert CADENCE["ojk-stats"] == timedelta(days=7)
     assert CADENCE["bi-stats"] == CADENCE["bps-stats"] == CADENCE["reports"] == timedelta(days=7)
+
+
+FRIDAY_MORNING = datetime(2026, 10, 16, 2, 0, tzinfo=UTC)
+
+
+def weekday_connector_at(now: datetime) -> Severity:
+    """A weekday connector (one load a weekday) whose last load was on Friday morning, seen at `now`."""
+    activity = ConnectorActivity("ojk", FRIDAY_MORNING)
+    health = assess(HealthFacts(now=now, connectors=(activity,), open_reviews={}), {"ojk": Weekdays(days=1)})
+    return severities(health)["ojk"]
+
+
+def test_a_weekday_connector_is_not_late_over_a_weekend() -> None:
+    assert weekday_connector_at(datetime(2026, 10, 19, 2, 0, tzinfo=UTC)) == Severity.OK  # Monday: a day of weekdays
+    assert weekday_connector_at(datetime(2026, 10, 19, 12, 0, tzinfo=UTC)) == Severity.OK  # 34 h of weekdays
+
+
+def test_a_weekday_connector_warns_after_one_and_a_half_weekdays_and_is_critical_after_three() -> None:
+    assert weekday_connector_at(datetime(2026, 10, 19, 17, 0, tzinfo=UTC)) == Severity.WARNING  # 39 h of weekdays
+    assert weekday_connector_at(datetime(2026, 10, 20, 2, 0, tzinfo=UTC)) == Severity.WARNING  # Tuesday
+    assert weekday_connector_at(datetime(2026, 10, 21, 2, 0, tzinfo=UTC)) == Severity.WARNING  # 3 days of weekdays
+    assert weekday_connector_at(datetime(2026, 10, 21, 3, 0, tzinfo=UTC)) == Severity.CRITICAL
+
+
+def test_a_weekly_connector_is_counted_in_calendar_days() -> None:
+    activity = ConnectorActivity("dsn-fatwa", FRIDAY_MORNING)
+    now = datetime(2026, 10, 27, 2, 0, tzinfo=UTC)  # 11 days: past 1.5 weeks, though only 9 days without weekends
+
+    health = assess(HealthFacts(now=now, connectors=(activity,), open_reviews={}), {"dsn-fatwa": timedelta(days=7)})
+
+    assert severities(health)["dsn-fatwa"] == Severity.WARNING
+
+
+def test_the_connectors_that_load_every_weekday_are_counted_in_weekdays() -> None:
+    from metamorph_platform.domain.health import CADENCE
+
+    assert {name for name, every in CADENCE.items() if isinstance(every, Weekdays)} == {"ojk", "bpk", "bi-website"}

@@ -160,27 +160,29 @@ def test_a_document_gone_from_the_snapshot_is_marked_but_still_published(db, tmp
     assert one(db, "SELECT count(*) FROM published.document") == (2,)
 
 
-def test_a_run_loads_once_but_a_failed_run_may_retry(db, tmp_path) -> None:
+def test_a_run_loads_once_but_a_failed_or_cut_off_run_may_retry(db, tmp_path) -> None:
     directory = write_bundle(tmp_path / "b1", [document()])
     load(db, directory)
     with pytest.raises(BundleAlreadyLoaded):
         load(db, directory)
 
-    db.execute("UPDATE ingest.bundle SET state = 'failed'")
-    assert load(db, directory).unchanged == 1
+    for state in ("failed", "received"):  # received: the process died after start_bundle
+        db.execute("UPDATE ingest.bundle SET state = %s", (state,))
+        assert load(db, directory).unchanged == 1
 
 
 def test_the_ledger_knows_which_runs_it_would_refuse(db, tmp_path) -> None:
     ledger = PostgresIngestLedger(db)
-    assert ledger.already_received("ojk", "run-1") is False
+    assert ledger.already_loaded("ojk", "run-1") is False
 
     load(db, write_bundle(tmp_path / "b1", [document()], run_id="run-1"))
-    assert ledger.already_received("ojk", "run-1") is True
-    assert ledger.already_received("ojk", "run-2") is False
-    assert ledger.already_received("other", "run-1") is False
+    assert ledger.already_loaded("ojk", "run-1") is True
+    assert ledger.already_loaded("ojk", "run-2") is False
+    assert ledger.already_loaded("other", "run-1") is False
 
-    db.execute("UPDATE ingest.bundle SET state = 'failed'")
-    assert ledger.already_received("ojk", "run-1") is False
+    for state in ("failed", "received"):
+        db.execute("UPDATE ingest.bundle SET state = %s", (state,))
+        assert ledger.already_loaded("ojk", "run-1") is False
 
 
 def test_health_is_assessed_from_loads_and_recorded(db, tmp_path) -> None:

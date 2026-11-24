@@ -68,16 +68,16 @@ class MemoryLedger:
         for bundle_id, bundle in self.bundles.items():
             if bundle["run"] != run:
                 continue
-            if bundle["state"] != "failed":
+            if bundle["state"] == "loaded":
                 raise BundleAlreadyLoaded(f"{manifest.connector} run {manifest.run_id}")
-            bundle.update(state="received", uri=uri)  # a failed run may be retried
+            bundle.update(state="received", uri=uri)  # a failed or cut-off run may be retried
             return bundle_id
         bundle_id = len(self.bundles) + 1
         self.bundles[bundle_id] = {"run": (manifest.connector, manifest.run_id), "state": "received", "uri": uri}
         return bundle_id
 
-    def already_received(self, connector: str, run_id: str) -> bool:
-        return any(b["run"] == (connector, run_id) and b["state"] != "failed" for b in self.bundles.values())
+    def already_loaded(self, connector: str, run_id: str) -> bool:
+        return any(b["run"] == (connector, run_id) and b["state"] == "loaded" for b in self.bundles.values())
 
     def quarantine(self, bundle_id: int, line: int, raw: str, problems: list[str], source_id: str | None) -> None:
         self.quarantined.append({"bundle_id": bundle_id, "line": line, "problems": problems, "source_id": source_id})
