@@ -17,23 +17,27 @@ from airflow.operators.python import ShortCircuitOperator
 from metamorph_pipeline.alerts import on_failure
 from metamorph_pipeline.containers import LAUNCHER, container, host_path
 from metamorph_pipeline.jobs import backup_command, backup_job, ingest_jobs
+from metamorph_pipeline.sides import Side, builds_here
 
 DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_callback": on_failure}
 DATE = "{{ data_interval_end | ds }}"  # the day it runs; `ds` would be the Sunday a week before
 
-job = backup_job()
-with DAG(
-    dag_id=job.dag_id,
-    description=job.description,
-    schedule=job.schedule,
-    start_date=datetime(2026, 10, 1),
-    catchup=False,
-    max_active_runs=1,
-    default_args=DEFAULT_ARGS,
-    tags=["ops", "backup"],
-) as backup:
-    if LAUNCHER == "ecs":
-        jobs = ingest_jobs(host_path("METAMORPH_WORKSPACE"), ojk_credentials=host_path("METAMORPH_OJK_CREDENTIALS"))
-        container("backup", job.image, backup_command(jobs, DATE), execution_timeout=timedelta(hours=2))
-    else:
-        ShortCircuitOperator(task_id="backup", python_callable=lambda: False)  # nothing on EFS: skipped, not failed
+SIDE = Side.COLLECTION
+
+if builds_here(SIDE):
+    job = backup_job()
+    with DAG(
+        dag_id=job.dag_id,
+        description=job.description,
+        schedule=job.schedule,
+        start_date=datetime(2026, 10, 1),
+        catchup=False,
+        max_active_runs=1,
+        default_args=DEFAULT_ARGS,
+        tags=["ops", "backup"],
+    ) as backup:
+        if LAUNCHER == "ecs":
+            jobs = ingest_jobs(host_path("METAMORPH_WORKSPACE"), ojk_credentials=host_path("METAMORPH_OJK_CREDENTIALS"))
+            container("backup", job.image, backup_command(jobs, DATE), execution_timeout=timedelta(hours=2))
+        else:
+            ShortCircuitOperator(task_id="backup", python_callable=lambda: False)  # nothing on EFS: skipped, not failed

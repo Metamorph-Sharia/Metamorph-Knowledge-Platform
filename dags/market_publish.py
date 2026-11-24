@@ -16,18 +16,22 @@ from airflow.datasets import Dataset
 from metamorph_pipeline.alerts import on_failure
 from metamorph_pipeline.containers import platform
 from metamorph_pipeline.jobs import MARKET_REGISTRY, PUBLISHED_MARKET
+from metamorph_pipeline.sides import Side, builds_here
 
 DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=10), "on_failure_callback": on_failure}
 
-with DAG(
-    dag_id="market_publish",
-    description="rebuild published_market from the market registry",
-    schedule=[Dataset(MARKET_REGISTRY)],
-    start_date=datetime(2026, 10, 1),
-    catchup=False,
-    max_active_runs=1,
-    default_args=DEFAULT_ARGS,
-    tags=["market", "registry"],
-) as market_publish:
-    platform("publish", ["market", "publish"], execution_timeout=timedelta(hours=1),
-             outlets=[Dataset(PUBLISHED_MARKET)])
+SIDE = Side.PROCESSING
+
+if builds_here(SIDE):
+    with DAG(
+        dag_id="market_publish",
+        description="rebuild published_market from the market registry",
+        schedule=[Dataset(MARKET_REGISTRY)],
+        start_date=datetime(2026, 10, 1),
+        catchup=False,
+        max_active_runs=1,
+        default_args=DEFAULT_ARGS,
+        tags=["market", "registry"],
+    ) as market_publish:
+        platform("publish", ["market", "publish"], execution_timeout=timedelta(hours=1),
+                 outlets=[Dataset(PUBLISHED_MARKET)])

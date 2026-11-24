@@ -31,25 +31,29 @@ from metamorph_pipeline.jobs import (
     RETRIEVAL_IMAGE,
     Mount,
 )
+from metamorph_pipeline.sides import Side, builds_here
 
 DEFAULT_ARGS = {"retries": 0, "on_failure_callback": on_failure}  # a worse snapshots stays worse on a retry
 
-with DAG(
-    dag_id="regulation_index",
-    description="index published for retrieval; activate the new snapshot only if no worse",
-    schedule=[Dataset(PUBLISHED)],
-    start_date=datetime(2026, 10, 1),
-    catchup=False,
-    max_active_runs=1,
-    default_args=DEFAULT_ARGS,
-    tags=["regulation", "retrieval"],
-) as regulation_index:
-    container(
-        "refresh",
-        RETRIEVAL_IMAGE,
-        ["scripts/refresh-regulation-index.sh"],
-        mounts=[Mount(MODELS_VOLUME, MODELS, kind="volume")],
-        secrets=["METAMORPH_DATABASE_URL"],
-        execution_timeout=timedelta(hours=24),  # a guard: a refresh embeds only what a publish changed
-        outlets=[Dataset(REGULATION_INDEX)],
-    )
+SIDE = Side.PROCESSING
+
+if builds_here(SIDE):
+    with DAG(
+        dag_id="regulation_index",
+        description="index published for retrieval; activate the new snapshot only if no worse",
+        schedule=[Dataset(PUBLISHED)],
+        start_date=datetime(2026, 10, 1),
+        catchup=False,
+        max_active_runs=1,
+        default_args=DEFAULT_ARGS,
+        tags=["regulation", "retrieval"],
+    ) as regulation_index:
+        container(
+            "refresh",
+            RETRIEVAL_IMAGE,
+            ["scripts/refresh-regulation-index.sh"],
+            mounts=[Mount(MODELS_VOLUME, MODELS, kind="volume")],
+            secrets=["METAMORPH_DATABASE_URL"],
+            execution_timeout=timedelta(hours=24),  # a guard: a refresh embeds only what a publish changed
+            outlets=[Dataset(REGULATION_INDEX)],
+        )

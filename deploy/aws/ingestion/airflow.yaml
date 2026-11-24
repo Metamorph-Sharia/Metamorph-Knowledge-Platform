@@ -86,6 +86,7 @@ Resources:
             - {Name: _AIRFLOW_WWW_USER_CREATE, Value: "true"}
             - {Name: _AIRFLOW_WWW_USER_USERNAME, Value: admin}
             - {Name: METAMORPH_TASK_LAUNCHER, Value: ecs}
+            - {Name: METAMORPH_SIDE, Value: processing}   # this Airflow builds only the processing DAGs (ADR 0001)
             - {Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}
           Secrets:
             - {Name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN, ValueFrom: /metamorph/airflow/database-url}
