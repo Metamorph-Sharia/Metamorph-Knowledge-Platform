@@ -3,8 +3,10 @@ Description: >-
   MinerU on one ECS GPU instance (docs/aws-deployment-guide.md), for the connectors only. Fargate has no GPU, and the
   account allows no Auto Scaling and no Cloud Map, so the stack is one g5.xlarge EC2 instance in the cluster, started
   and stopped by EventBridge Scheduler around the ingest window, with the MinerU service on it behind an internal
-  load balancer. The 20 GB image stays on the instance's disk while it is stopped. Creates no IAM: the instance's
-  profile and the scheduler's role come from parameters. Every create carries Owner=project3.
+  load balancer. The 20 GB image stays on the instance's disk while it is stopped. The collection host, off AWS, reaches
+  that balancer through a CloudFront front door (a VPC origin, no caching); MinerU checks its own API key and
+  ingestion/waf.sh mineru rate-limits the address. Creates no IAM: the instance's profile and the scheduler's role
+  come from parameters. Every create carries Owner=project3.
 
 Parameters:
   MinerUTag:
@@ -53,6 +55,17 @@ Parameters:
     Type: String
     Default: cron(30 4 1 * ? *)
     Description: UTC. On the 1st, two hours after DSN-MUI's full pass starts (02:30)
+  WebAclArn:
+    Type: String
+    Default: ""
+    Description: The rate-limiting web ACL that `ingestion/waf.sh create mineru` makes in us-east-1 (CloudFront's region), or empty
+  CloudFrontPrefixList:
+    Type: String
+    Default: pl-bca247d5
+    Description: CloudFront's origin-facing addresses in this region, the only source besides the jobs the load balancer accepts
+
+Conditions:
+  HasWebAcl: !Not [!Equals [!Ref WebAclArn, ""]]
 
 Resources:
   Instance:
@@ -93,7 +106,9 @@ Resources:
       Name: metamorph-mineru
       Type: application
       Scheme: internal
-      Subnets: !Split [",", !ImportValue metamorph-subnets]
+      # The private subnets, where a CloudFront VPC origin reaches a balancer (as for Airflow's). They share the zones of
+      # the first two of metamorph-subnets (3b, 3c), so the instance must be in one of them: InstanceSubnetIndex 1 (3c).
+      Subnets: !Split [",", !ImportValue metamorph-private-subnets]
       SecurityGroups: [!ImportValue metamorph-sg-mineru-lb]
       # MinerU's server (uvicorn) closes an idle connection after 5 s. The balancer must drop it first, or it now and then
       # sends a poll down a closed connection and answers 502 (seen 2026-11-23: two fatwas lost their OCR).
@@ -118,6 +133,52 @@ Resources:
       Protocol: HTTP
       Port: 8010   # the port the load balancer's group admits from the jobs
       DefaultActions: [{Type: forward, TargetGroupArn: !Ref Target}]
+
+  LoadBalancerFromCloudFront:   # the jobs' own rule, on the same group, is in shared.yaml
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue metamorph-sg-mineru-lb
+      IpProtocol: tcp
+      FromPort: 8010
+      ToPort: 8010
+      SourcePrefixListId: !Ref CloudFrontPrefixList
+
+  # The front door, for the collection host's connectors: CloudFront (HTTPS, its own *.cloudfront.net name) -> VPC
+  # origin -> the internal load balancer above. No password at the edge: MinerU checks the API key in the
+  # Authorization header itself, and ingestion/waf.sh mineru limits what one address can try.
+  Origin:
+    Type: AWS::CloudFront::VpcOrigin
+    Properties:
+      VpcOriginEndpointConfig:
+        Name: metamorph-mineru
+        Arn: !Ref LoadBalancer
+        HTTPPort: 8010
+        HTTPSPort: 443
+        OriginProtocolPolicy: http-only
+      Tags: [{Key: Owner, Value: project3}]
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: metamorph MinerU front door
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200          # includes Asia
+        WebACLId: !If [HasWebAcl, !Ref WebAclArn, !Ref AWS::NoValue]
+        Origins:
+          - Id: mineru
+            DomainName: !GetAtt LoadBalancer.DNSName
+            # Work is async (submit, then poll), so each request is short. The chain hangs up from the front: CloudFront
+            # after 2 s idle, the load balancer after 4, MinerU's server after 5; otherwise a poll can get a 502.
+            VpcOriginConfig: {VpcOriginId: !GetAtt Origin.Id, OriginReadTimeout: 60, OriginKeepaliveTimeout: 2}
+        DefaultCacheBehavior:
+          TargetOriginId: mineru
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # Managed-CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader: Authorization reaches MinerU
+      Tags: [{Key: Owner, Value: project3}]
 
   Address:   # what the connectors' tasks read as METAMORPH_MINERU_URL (jobs.yaml)
     Type: AWS::SSM::Parameter
@@ -216,3 +277,6 @@ Resources:
 Outputs:
   InstanceId: {Value: !Ref Instance}
   MinerUUrl: {Value: !Sub "http://${LoadBalancer.DNSName}:8010"}
+  FrontDoorUrl:
+    Description: MinerU's address off AWS (the collection host's METAMORPH_MINERU_URL); its API key is METAMORPH_MINERU_API_KEY
+    Value: !Sub "https://${Distribution.DomainName}"

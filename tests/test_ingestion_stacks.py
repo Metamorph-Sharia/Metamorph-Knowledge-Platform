@@ -580,6 +580,18 @@ def test_airflow_starts_its_tasks_on_ecs() -> None:
     assert {"METAMORPH_ECS_CLUSTER", "METAMORPH_ECS_SUBNETS", "METAMORPH_ECS_SECURITY_GROUP"} <= secrets
 
 
+def test_the_airflow_on_aws_is_the_processing_side() -> None:
+    (task,) = resources("airflow.yaml", "AWS::ECS::TaskDefinition")
+    (container,) = task["Properties"]["ContainerDefinitions"]
+    environment = {e["Name"]: e["Value"] for e in container["Environment"]}
+    assert environment["METAMORPH_SIDE"] == "processing"
+
+
+def test_the_compose_airflow_is_the_collection_side() -> None:
+    compose = yaml.safe_load((INGESTION.parents[2] / "compose.yaml").read_text())
+    assert compose["services"]["airflow"]["environment"]["METAMORPH_SIDE"] == "collection"
+
+
 def test_the_airflow_stack_imports_only_what_exists() -> None:
     ingestion_exports = {name for path in TEMPLATES for name in exported(template(path.name))}
     assert imported(INGESTION / "airflow.yaml") <= LIVE_CORE_EXPORTS | ingestion_exports
@@ -742,12 +754,50 @@ def test_nothing_in_the_airflow_template_embeds_a_plain_password() -> None:
     assert re.search(r"_AIRFLOW_WWW_USER_PASSWORD.*ValueFrom.*/metamorph/airflow/admin-password", environment_values)
 
 
-def test_the_airflow_waf_script_is_beside_the_templates_and_valid_shell() -> None:
-    script = INGESTION / "waf.sh"
-    text = script.read_text()
+WAF_SCRIPT = INGESTION / "waf.sh"
+
+
+def waf_calls(tmp_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run waf.sh with an `aws` that only records its arguments, one call per line."""
+    fake = tmp_path / "aws"
+    fake.write_text(f'#!/bin/bash\necho "$@" >> {tmp_path}/calls\necho id-1 token-1\n')
+    fake.chmod(0o755)
+    environment = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
+    return subprocess.run(  # noqa: S603
+        ["/bin/bash", str(WAF_SCRIPT), *arguments], env=environment, capture_output=True, text=True, check=False
+    )
+
+
+def test_the_waf_script_is_beside_the_templates_and_valid_shell() -> None:
+    text = WAF_SCRIPT.read_text()
     assert "--scope CLOUDFRONT" in text and "us-east-1" in text and "Key=Owner,Value=project3" in text
-    assert "metamorph-airflow" in text
-    subprocess.run(["bash", "-n", str(script)], check=True)  # noqa: S603, S607
+    subprocess.run(["bash", "-n", str(WAF_SCRIPT)], check=True)  # noqa: S603, S607
+
+
+def test_the_waf_script_makes_airflows_rate_limit_when_no_target_is_named(tmp_path) -> None:
+    assert waf_calls(tmp_path, "create").returncode == 0
+    (call,) = (tmp_path / "calls").read_text().splitlines()
+    assert "--name metamorph-airflow" in call and '"Limit":300' in call
+
+
+def test_the_waf_script_makes_minerus_rate_limit_under_its_own_name_and_a_limit_for_polling(tmp_path) -> None:
+    assert waf_calls(tmp_path, "create", "mineru").returncode == 0
+    (call,) = (tmp_path / "calls").read_text().splitlines()
+    assert "--name metamorph-mineru" in call and "--scope CLOUDFRONT" in call
+    assert int(re.search(r'"Limit":(\d+)', call).group(1)) > 300  # a job polls every 5 s, and several run at once
+
+
+def test_the_waf_script_deletes_only_the_named_targets_web_acl(tmp_path) -> None:
+    assert waf_calls(tmp_path, "delete", "mineru").returncode == 0
+    lookup, deletion = (tmp_path / "calls").read_text().splitlines()
+    assert "metamorph-mineru" in lookup
+    assert "--name metamorph-mineru" in deletion and "--id id-1" in deletion and "--lock-token token-1" in deletion
+
+
+def test_the_waf_script_refuses_a_target_it_does_not_know(tmp_path) -> None:
+    result = waf_calls(tmp_path, "create", "elsewhere")
+    assert result.returncode != 0 and "usage" in result.stderr
+    assert not (tmp_path / "calls").exists()
 
 
 def test_the_tunnel_is_gone() -> None:
@@ -893,6 +943,83 @@ def test_the_load_balancer_drops_idle_connections_before_mineru_s_server_does() 
     (balancer,) = minerus("AWS::ElasticLoadBalancingV2::LoadBalancer").values()
     attributes = {a["Key"]: a["Value"] for a in balancer["Properties"]["LoadBalancerAttributes"]}
     assert int(attributes["idle_timeout.timeout_seconds"]) < 5  # uvicorn's keep-alive; otherwise a poll can get a 502
+
+
+# The front door: CloudFront -> VPC origin -> the internal load balancer, for the collection host's connectors.
+
+
+def front_door() -> dict[str, Any]:
+    (distribution,) = minerus("AWS::CloudFront::Distribution").values()
+    return distribution["Properties"]["DistributionConfig"]
+
+
+def test_the_front_door_reaches_the_internal_load_balancer_through_a_vpc_origin() -> None:
+    ((_, balancer),) = minerus("AWS::ElasticLoadBalancingV2::LoadBalancer").items()
+    (origin,) = minerus("AWS::CloudFront::VpcOrigin").values()
+    config = origin["Properties"]["VpcOriginEndpointConfig"]
+    (listener,) = minerus("AWS::ElasticLoadBalancingV2::Listener").values()
+    (served,) = front_door()["Origins"]
+
+    assert balancer["Properties"]["Scheme"] == "internal"
+    assert config["Arn"] == {"Ref": "LoadBalancer"}
+    assert (config["OriginProtocolPolicy"], config["HTTPPort"]) == ("http-only", listener["Properties"]["Port"])
+    assert served["DomainName"] == {"Fn::GetAtt": "LoadBalancer.DNSName"}
+    assert served["VpcOriginConfig"]["VpcOriginId"] == {"Fn::GetAtt": "Origin.Id"}
+
+
+def test_the_load_balancer_sits_where_a_vpc_origin_reaches_it_and_cloudfront_is_admitted_by_prefix_list() -> None:
+    ((_, balancer),) = minerus("AWS::ElasticLoadBalancingV2::LoadBalancer").items()
+    (rule,) = [body["Properties"] for body in minerus("AWS::EC2::SecurityGroupIngress").values()]
+
+    assert balancer["Properties"]["Subnets"] == {"Fn::Split": [",", {"Fn::ImportValue": "metamorph-private-subnets"}]}
+    assert rule["GroupId"] == {"Fn::ImportValue": "metamorph-sg-mineru-lb"}  # the group the jobs' own rule is on
+    assert rule["SourcePrefixListId"] == {"Ref": "CloudFrontPrefixList"}
+    assert (rule["FromPort"], rule["ToPort"]) == (8010, 8010)
+    assert "SourceSecurityGroupId" not in rule and "CidrIp" not in rule
+
+
+def test_viewers_use_https_and_every_method_but_nothing_is_cached() -> None:
+    behavior = front_door()["DefaultCacheBehavior"]
+
+    assert behavior["ViewerProtocolPolicy"] == "redirect-to-https"
+    assert set(behavior["AllowedMethods"]) == {"GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"}
+    assert behavior["CachePolicyId"] == "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"  # Managed-CachingDisabled
+
+
+def test_the_api_keys_header_reaches_the_origin_and_no_password_is_asked_at_the_edge() -> None:
+    behavior = front_door()["DefaultCacheBehavior"]
+
+    # Managed-AllViewerExceptHostHeader: every viewer header, Authorization included, which MinerU checks itself
+    assert behavior["OriginRequestPolicyId"] == "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+    assert "FunctionAssociations" not in behavior and "LambdaFunctionAssociations" not in behavior
+    assert not minerus("AWS::CloudFront::Function")
+
+
+def test_cloudfront_drops_an_idle_connection_before_the_load_balancer_does() -> None:
+    (balancer,) = minerus("AWS::ElasticLoadBalancingV2::LoadBalancer").values()
+    attributes = {a["Key"]: a["Value"] for a in balancer["Properties"]["LoadBalancerAttributes"]}
+    (served,) = front_door()["Origins"]
+
+    # CloudFront -> balancer -> MinerU, each hanging up before the one behind it, or a poll can get a 502
+    assert 0 < served["VpcOriginConfig"]["OriginKeepaliveTimeout"] < int(attributes["idle_timeout.timeout_seconds"])
+
+
+def test_the_front_door_takes_an_optional_web_acl_from_waf_sh() -> None:
+    assert MINERU["Parameters"]["WebAclArn"]["Default"] == ""
+    assert "HasWebAcl" in MINERU["Conditions"]
+    assert front_door()["WebACLId"] == {"Fn::If": ["HasWebAcl", {"Ref": "WebAclArn"}, {"Ref": "AWS::NoValue"}]}
+    prefix_list = "CloudFrontPrefixList"
+    assert MINERU["Parameters"][prefix_list]["Default"] == AIRFLOW["Parameters"][prefix_list]["Default"]
+
+
+def test_the_front_door_s_address_is_an_output() -> None:
+    assert MINERU["Outputs"]["FrontDoorUrl"]["Value"] == {"Fn::Sub": "https://${Distribution.DomainName}"}
+
+
+def test_every_front_door_resource_carries_owner() -> None:
+    for kind in ("AWS::CloudFront::Distribution", "AWS::CloudFront::VpcOrigin"):
+        ((_, resource),) = minerus(kind).items()
+        assert {"Key": "Owner", "Value": "project3"} in resource["Properties"]["Tags"], kind
 
 
 def test_the_connectors_mineru_url_is_written_from_the_load_balancer_s_address() -> None:
