@@ -220,11 +220,15 @@ def test_a_job_still_running_at_the_deadline_is_unavailable() -> None:
         reader(service, clock=lambda: next(times)).read(PDF, REQUEST)
 
 
-def test_an_upload_url_on_another_origin_is_refused() -> None:
+def test_an_upload_url_on_another_origin_is_put_to_this_service_s_own_address() -> None:
+    # Behind a proxy (CloudFront, then the load balancer) MinerU names its upload URL after the address it was reached
+    # at, not the one the client knows. The path is the service's own: it goes to the configured address, so the API
+    # key is never sent elsewhere.
     service = FakeMinerU()
-    pending = service._upload("pending") | {"upload_url": "http://elsewhere.test/upload"}
+    pending = service._upload("pending") | {"upload_url": "http://internal-balancer.test:8010/v1/uploads/upload_1/content"}
     service.answers[("POST", "/v1/uploads")] = httpx.Response(200, json=pending)
 
-    with pytest.raises(ExtractionFailed, match="another origin"):
-        reader(service, api_key="secret").read(PDF, REQUEST)
+    reader(service, api_key="secret").read(PDF, REQUEST)
+
+    assert "PUT /v1/uploads/upload_1/content" in service.paths()
     assert all(request.url.host == "mineru.test" for request in service.sent)

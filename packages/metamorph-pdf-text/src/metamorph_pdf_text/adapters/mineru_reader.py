@@ -103,11 +103,10 @@ class MinerUReader:
         return job
 
     def _same_origin(self, url: str) -> str:
-        """An upload URL on this service: the API key is never sent elsewhere."""
-        absolute = urljoin(self._base, url)
-        if urlsplit(absolute)[:2] != urlsplit(self._base)[:2]:
-            raise ExtractionFailed(f"MinerU asked for the upload at another origin: {absolute}")
-        return absolute
+        """The upload URL's path on this service's configured address, so the API key is never sent elsewhere. Behind a
+        proxy MinerU names the URL after the address it was reached at (the load balancer's), not the client's."""
+        path = urlsplit(urljoin(self._base, url))
+        return urljoin(self._base, path.path + (f"?{path.query}" if path.query else ""))
 
     def _json(self, method: str, path: str, **kwargs: Any) -> Any:
         return self._call(method, path, **kwargs).json()
