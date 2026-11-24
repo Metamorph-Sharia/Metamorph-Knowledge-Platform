@@ -828,7 +828,7 @@ def test_the_gpu_instance_is_one_g5_xlarge_with_a_small_public_tagged_root_disk(
     assert MINERU["Parameters"]["VolumeGiB"]["MaxValue"] <= 100  # the account's limit
     assert disk["Ebs"]["VolumeSize"] == {"Ref": "VolumeGiB"}
     assert nic["AssociatePublicIpAddress"] is True  # ECR without a NAT gateway
-    assert nic["GroupSet"] == [{"Fn::ImportValue": "metamorph-sg-gpu-host"}]
+    assert {"Fn::ImportValue": "metamorph-sg-gpu-host"} in nic["GroupSet"]
 
 
 def test_the_instance_profile_is_a_parameter_defaulting_to_the_one_devops_made() -> None:
@@ -856,14 +856,31 @@ def test_the_service_runs_one_mineru_task_on_ec2_behind_the_load_balancer() -> N
     props = service["Properties"]
     (task,) = minerus("AWS::ECS::TaskDefinition").values()
     (balanced,) = props["LoadBalancers"]
-    network = props["NetworkConfiguration"]["AwsvpcConfiguration"]
+    (container,) = task["Properties"]["ContainerDefinitions"]
 
     assert props["LaunchType"] == "EC2"
     assert props["DesiredCount"] == 1  # it places itself whenever the instance runs
     assert task["Properties"]["RequiresCompatibilities"] == ["EC2"]
     assert (balanced["ContainerName"], balanced["ContainerPort"]) == ("main", 8010)
-    assert network["SecurityGroups"] == [{"Fn::ImportValue": "metamorph-sg-mineru"}]
     assert "ServiceRegistries" not in props
+
+
+def test_the_mineru_task_shares_the_instance_s_interface_so_a_stop_leaves_it_one() -> None:
+    # awsvpc gave the task its own interface, which a stop leaves attached; EC2 gives no automatic public address at
+    # start to an instance with two, so the ECS agent never connected again (2026-11-24). Bridge mode adds none.
+    (service,) = minerus("AWS::ECS::Service").values()
+    (task,) = minerus("AWS::ECS::TaskDefinition").values()
+    (target,) = minerus("AWS::ElasticLoadBalancingV2::TargetGroup").values()
+    ((_, instance),) = minerus("AWS::EC2::Instance").items()
+    (container,) = task["Properties"]["ContainerDefinitions"]
+    (nic,) = instance["Properties"]["NetworkInterfaces"]
+
+    assert task["Properties"]["NetworkMode"] == "bridge"
+    assert container["PortMappings"] == [{"ContainerPort": 8010, "HostPort": 8010}]
+    assert "NetworkConfiguration" not in service["Properties"]
+    assert target["Properties"]["TargetType"] == "instance"
+    assert {"Fn::ImportValue": "metamorph-sg-mineru"} in nic["GroupSet"]  # what the load balancer may reach on 8010
+    assert nic["DeleteOnTermination"] is True
 
 
 def test_the_load_balancer_is_internal_and_checks_mineru_s_health_endpoint() -> None:
@@ -875,7 +892,6 @@ def test_the_load_balancer_is_internal_and_checks_mineru_s_health_endpoint() -> 
 
     assert balancer["Properties"]["Scheme"] == "internal"
     assert balancer["Properties"]["SecurityGroups"] == [{"Fn::ImportValue": "metamorph-sg-mineru-lb"}]
-    assert target["Properties"]["TargetType"] == "ip"  # the task has its own interface (awsvpc)
     assert target["Properties"]["HealthCheckPath"] == "/v1/health"
     assert "/v1/health" in container["HealthCheck"]["Command"][-1]
     assert listener["Properties"]["Port"] == 8010  # the port the load balancer group admits from the jobs

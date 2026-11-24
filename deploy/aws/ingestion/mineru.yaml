@@ -81,8 +81,10 @@ Resources:
       NetworkInterfaces:   # a public address reaches ECS, ECR and CloudWatch without a NAT gateway
         - DeviceIndex: "0"
           AssociatePublicIpAddress: true
+          DeleteOnTermination: true
           SubnetId: !Select [!Ref InstanceSubnetIndex, !Split [",", !ImportValue metamorph-subnets]]
-          GroupSet: [!ImportValue metamorph-sg-gpu-host]
+          # The task shares this interface (bridge mode), so the load balancer reaches it here, through the task's group
+          GroupSet: [!ImportValue metamorph-sg-gpu-host, !ImportValue metamorph-sg-mineru]
       BlockDeviceMappings:
         - {DeviceName: /dev/xvda, Ebs: {VolumeSize: !Ref VolumeGiB, VolumeType: gp3, Encrypted: true}}
       MetadataOptions: {HttpTokens: required, HttpPutResponseHopLimit: 2}
@@ -121,7 +123,7 @@ Resources:
   Target:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      TargetType: ip   # the task has its own interface (awsvpc)
+      TargetType: instance   # the task listens on the instance's port 8010 (bridge mode)
       Protocol: HTTP
       Port: 8010
       VpcId: !ImportValue metamorph-vpc
@@ -189,7 +191,9 @@ Resources:
     Properties:
       Family: metamorph-mineru
       RequiresCompatibilities: [EC2]
-      NetworkMode: awsvpc
+      # Bridge, not awsvpc: an awsvpc task's interface stays attached through a stop, and EC2 gives no automatic public
+      # address at start to an instance with two interfaces, so the ECS agent could not reach ECS again (2026-11-24)
+      NetworkMode: bridge
       ExecutionRoleArn: !ImportValue metamorph-execution-role
       Volumes: [{Name: uploads}]       # the files MinerU was sent, on the instance; nothing worth keeping
       ContainerDefinitions:
@@ -201,7 +205,7 @@ Resources:
           MemoryReservation: 12288
           ResourceRequirements: [{Type: GPU, Value: "1"}]
           LinuxParameters: {SharedMemorySize: 2048}   # vLLM's workers share tensors through /dev/shm
-          PortMappings: [{ContainerPort: 8010}]
+          PortMappings: [{ContainerPort: 8010, HostPort: 8010}]
           MountPoints: [{SourceVolume: uploads, ContainerPath: /uploads}]
           # The models are in the image: never ask the Hugging Face Hub.
           Environment: [{Name: HF_HUB_OFFLINE, Value: "1"}]
@@ -229,11 +233,6 @@ Resources:
       HealthCheckGracePeriodSeconds: 900   # a start loads the models; the first one also pulls the image
       DeploymentConfiguration: {MinimumHealthyPercent: 0, MaximumPercent: 100}   # one GPU: replace, don't overlap
       LoadBalancers: [{ContainerName: main, ContainerPort: 8010, TargetGroupArn: !Ref Target}]
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          Subnets: !Split [",", !ImportValue metamorph-subnets]
-          SecurityGroups: [!ImportValue metamorph-sg-mineru]
-          AssignPublicIp: DISABLED     # an EC2 task's interface takes no public address
       Tags: [{Key: Owner, Value: project3}]
 
   Open:
