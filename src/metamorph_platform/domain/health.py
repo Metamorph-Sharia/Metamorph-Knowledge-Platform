@@ -21,11 +21,13 @@ from enum import StrEnum
 LATE = 1.5  # × the cadence: one run missed
 SILENT = 3.0  # × the cadence: something is broken
 
-# How often each connector is scheduled to load (dags/metamorph_pipeline/jobs.py).
+# How often each connector is scheduled to load (dags/metamorph_pipeline/jobs.py). The daily jobs run on weekdays, on
+# the collection host (docs/adr/0001-collection-on-a-residential-host.md), so the longest gap is the weekend.
+WEEKDAYS = timedelta(days=3)
 CADENCE = {
-    "ojk": timedelta(days=1),
-    "bpk": timedelta(days=1),
-    "bi-website": timedelta(days=1),
+    "ojk": WEEKDAYS,
+    "bpk": WEEKDAYS,
+    "bi-website": WEEKDAYS,
     "dsn-fatwa": timedelta(days=7),
     "ojk-register": timedelta(days=7),
     "ojk-stats": timedelta(days=7),

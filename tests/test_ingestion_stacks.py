@@ -813,11 +813,12 @@ def minerus(of_type: str) -> dict[str, dict]:
     return shared_resources(of_type, MINERU)
 
 
-def window(name: str) -> tuple[int, str]:
-    """A window parameter's default, cron(minute hour day-of-month * ? *): minutes after midnight UTC, and its day-of-month."""
+def window(name: str) -> tuple[int, str, str]:
+    """A window parameter's default, cron(minute hour day-of-month month day-of-week year): minutes after midnight UTC,
+    its day-of-month and its day-of-week."""
     expression = re.fullmatch(r"cron\((.*)\)", MINERU["Parameters"][name]["Default"])
-    minute, hour, day_of_month, *_ = expression.group(1).split()
-    return int(hour) * 60 + int(minute), day_of_month
+    minute, hour, day_of_month, _, day_of_week, _ = expression.group(1).split()
+    return int(hour) * 60 + int(minute), day_of_month, day_of_week
 
 
 def job_start(job: ConnectorJob) -> int:
@@ -825,38 +826,51 @@ def job_start(job: ConnectorJob) -> int:
     return int(hour) * 60 + int(minute)
 
 
-def test_the_window_is_a_start_a_daily_end_and_a_later_end_on_the_first() -> None:
-    start, start_days = window("WindowStart")
-    end, end_days = window("WindowEnd")
-    monthly_end, monthly_days = window("MonthlyWindowEnd")
+def test_the_window_is_weekdays_08_45_to_12_45_wib_and_to_13_15_on_the_first_days_of_the_month() -> None:
+    start, _, start_days = window("WindowStart")
+    end, end_dates, _ = window("WindowEnd")
+    monthly_end, monthly_dates, _ = window("MonthlyWindowEnd")
 
-    assert start_days == "*"  # the instance starts every day
-    assert (end_days, monthly_days) == ("2-31", "1")  # the two stops share the days of the month between them
-    assert (start, end, monthly_end) == (20, 4 * 60, 4 * 60 + 30)
+    assert start_days == "MON-FRI"  # the instance starts on weekdays only
+    # The month's first weekday is always among the 1st to 3rd: those days end later, the rest at the usual hour
+    assert (end_dates, monthly_dates) == ("4-31", "1-3")
+    assert (start, end, monthly_end) == (1 * 60 + 45, 5 * 60 + 45, 6 * 60 + 15)  # UTC; WIB is 7 hours ahead
+
+
+def test_a_stop_repeats_every_hour_outside_the_window_so_a_hand_start_ends_within_an_hour() -> None:
+    start, _, _ = window("WindowStart")
+    monthly_end, _, _ = window("MonthlyWindowEnd")
+    minute, hours, *_ = re.fullmatch(r"cron\((.*)\)", MINERU["Parameters"]["HourlyStop"]["Default"]).group(1).split()
+    stops = sorted(int(hour) * 60 + int(minute) for part in hours.split(",") for hour in range(
+        int(part.split("-")[0]), int(part.split("-")[-1]) + 1))
+    gaps = [(later - earlier) % (24 * 60) for earlier, later in zip(stops, stops[1:] + stops[:1], strict=True)]
+
+    assert not [stop for stop in stops if start <= stop <= monthly_end]  # none inside the window
+    assert min(stop for stop in stops if stop > monthly_end) - monthly_end <= HOUR  # the first after the longest day
+    assert sorted(gaps)[:-1] == [HOUR] * (len(gaps) - 1)  # an hour apart; the one longer gap holds the window
 
 
 HOUR = 60  # a PDF job needs time to run before the instance stops under it: it must start this long before the end
 
 
 def test_every_job_that_reads_pdfs_starts_inside_the_window_with_an_hour_to_run(jobs) -> None:
-    start, _ = window("WindowStart")
-    end, _ = window("WindowEnd")
-    monthly_end, _ = window("MonthlyWindowEnd")
+    start, _, _ = window("WindowStart")
+    end, _, _ = window("WindowEnd")
+    monthly_end, _, _ = window("MonthlyWindowEnd")
     readers = [job for job in jobs if job.reads_pdfs]
 
     assert readers
     for job in readers:
-        day_of_month = job.schedule.split()[2]
-        # a job that runs only on the 1st has until the monthly end; any other job runs by the daily end (on a 1st
-        # that is also a Monday it has the longer monthly one)
-        job_end = monthly_end if day_of_month == "1" else end
+        # the monthly full pass runs only on the first weekday, when the window is longer; any other job must fit the
+        # usual end, which a first weekday that is also its day only lengthens
+        job_end = monthly_end if job.first_weekday_only else end
         assert start <= job_start(job) <= job_end - HOUR, job.dag_id
 
 
 def test_the_weekly_backup_starts_after_the_last_stop() -> None:
     from metamorph_pipeline.jobs import backup_job
 
-    assert job_start(backup_job()) > window("MonthlyWindowEnd")[0]  # the Sunday it runs may be the 1st
+    assert job_start(backup_job()) > window("MonthlyWindowEnd")[0]  # the Friday it runs may be the 1st to 3rd
 
 
 def test_the_mineru_stack_has_no_auto_scaling_iam_cloud_map_or_launch_template() -> None:
@@ -1031,14 +1045,14 @@ def test_the_connectors_mineru_url_is_written_from_the_load_balancer_s_address()
     assert props["Tags"] == {"Owner": "project3"}
 
 
-def test_three_schedules_start_and_stop_the_instance_with_the_scheduler_role() -> None:
+def test_four_schedules_start_and_stop_the_instance_with_the_scheduler_role() -> None:
     bodies = minerus("AWS::Scheduler::Schedule").values()
     schedules = {body["Properties"]["ScheduleExpression"]["Ref"]: body["Properties"] for body in bodies}
 
     assert MINERU["Parameters"]["SchedulerRole"]["Default"] == "metamorph-scheduler"
-    assert set(schedules) == {"WindowStart", "WindowEnd", "MonthlyWindowEnd"}
+    assert set(schedules) == {"WindowStart", "WindowEnd", "MonthlyWindowEnd", "HourlyStop"}
     assert schedules["WindowStart"]["Target"]["Arn"] == "arn:aws:scheduler:::aws-sdk:ec2:startInstances"
-    for stop in ("WindowEnd", "MonthlyWindowEnd"):
+    for stop in ("WindowEnd", "MonthlyWindowEnd", "HourlyStop"):
         assert schedules[stop]["Target"]["Arn"] == "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
     for props in schedules.values():
         assert props["ScheduleExpressionTimezone"] == "UTC"
@@ -1103,3 +1117,15 @@ def test_the_readme_describes_nothing_that_is_gone() -> None:
     rows = [line for line in text.splitlines() if line.startswith("| `metamorph-ingestion-")]
     assert len(rows) == 5
     assert not [row for row in rows if "Cloud Map" in row]  # the shared stack no longer makes the namespace
+
+
+def test_the_compose_airflow_is_given_the_aws_session_the_buckets_and_minerus_address_from_the_env_file() -> None:
+    compose = yaml.safe_load((INGESTION.parents[2] / "compose.yaml").read_text())
+    environment = compose["services"]["airflow"]["environment"]
+    documented = (INGESTION.parents[2] / ".env.example").read_text()
+
+    for key in ("METAMORPH_AWS_CONFIG", "METAMORPH_AWS_PROFILE", "METAMORPH_BUNDLES_BUCKET", "METAMORPH_OPS_BUCKET",
+                "METAMORPH_MINERU_URL", "METAMORPH_MINERU_API_KEY"):
+        assert key in environment and key in documented, key
+    assert environment["METAMORPH_BUNDLES_BUCKET"].startswith("${METAMORPH_BUNDLES_BUCKET")  # from .env, no value
+    assert "metamorph-blobs" not in environment["METAMORPH_BUNDLES_BUCKET"]

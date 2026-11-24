@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   MinerU on one ECS GPU instance (docs/aws-deployment-guide.md), for the connectors only. Fargate has no GPU, and the
   account allows no Auto Scaling and no Cloud Map, so the stack is one g5.xlarge EC2 instance in the cluster, started
-  and stopped by EventBridge Scheduler around the ingest window, with the MinerU service on it behind an internal
+  and stopped by EventBridge Scheduler around the collection host's weekday window, with the MinerU service on it behind an internal
   load balancer. The 20 GB image stays on the instance's disk while it is stopped. The collection host, off AWS, reaches
   that balancer through a CloudFront front door (a VPC origin, no caching); MinerU checks its own API key and
   ingestion/waf.sh mineru rate-limits the address. Creates no IAM: the instance's profile and the scheduler's role
@@ -45,16 +45,20 @@ Parameters:
     Description: The role DevOps made for EventBridge Scheduler; it may start and stop only an instance named metamorph-mineru
   WindowStart:
     Type: String
-    Default: cron(20 0 * * ? *)
-    Description: UTC. Ten minutes for boot and placement, then the models load before the first ingest at 01:00 (jobs.py)
+    Default: cron(45 1 ? * MON-FRI *)
+    Description: UTC, weekdays; 08:45 WIB. A quarter of an hour for boot and placement, then the models load before the first ingest at 02:00 (jobs.py)
   WindowEnd:
     Type: String
-    Default: cron(0 4 2-31 * ? *)
-    Description: UTC. An hour after the last daily ingest that reads PDFs starts (ingest_ojk_register, Mondays 02:45), so its run is not cut. Not on the 1st, which has its own end
+    Default: cron(45 5 4-31 * ? *)
+    Description: UTC; 12:45 WIB. An hour after the last ingest that reads PDFs starts (ingest_ojk_register, Mondays 03:45), so its run is not cut. Not on the 1st to 3rd, which have their own end (a weekend's days stop it anyway)
   MonthlyWindowEnd:
     Type: String
-    Default: cron(30 4 1 * ? *)
-    Description: UTC. On the 1st, two hours after DSN-MUI's full pass starts (02:30)
+    Default: cron(15 6 1-3 * ? *)
+    Description: UTC; 13:15 WIB. The month's first weekday is always the 1st, 2nd or 3rd, and DSN-MUI's full pass runs then (03:30). A second weekday among them runs half an hour longer than it needs
+  HourlyStop:
+    Type: String
+    Default: cron(0 0,1,7-23 * * ? *)
+    Description: UTC. Stops the instance every hour on the hour outside the window, so one started by hand (README, The window) ends within the hour
   WebAclArn:
     Type: String
     Default: ""
@@ -256,6 +260,17 @@ Resources:
     Properties:
       Name: metamorph-mineru-close
       ScheduleExpression: !Ref WindowEnd
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow: {Mode: "OFF"}
+      Target:
+        Arn: arn:aws:scheduler:::aws-sdk:ec2:stopInstances
+        RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${SchedulerRole}"
+        Input: !Sub '{"InstanceIds": ["${Instance}"]}'
+  CloseHourly:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: metamorph-mineru-close-hourly
+      ScheduleExpression: !Ref HourlyStop
       ScheduleExpressionTimezone: UTC
       FlexibleTimeWindow: {Mode: "OFF"}
       Target:

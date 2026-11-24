@@ -2,8 +2,8 @@ Airflow DAGs (Phase 6), mounted into the `airflow` service at /opt/airflow/dags.
 
 | File | DAGs |
 |---|---|
-| `ingest.py` | The regulation layer: `ingest_ojk`, `ingest_bpk`, `ingest_bi`, `ingest_dsn_fatwa`, `ingest_dsn_fatwa_full`: collect and export → `metamorph load` → discard. The market data layer, weekly on Mondays: `ingest_ojk_register`, `ingest_ojk_stats`, `ingest_bi_seki`, `ingest_bps_stats`, `ingest_reports`: collect and export → `metamorph market load` → discard. The market DAGs run on the local stack only until the market layer joins AWS (their ECS task definitions are deferred) |
-| `backup.py` | `backup_connector_data` (Sundays): the ops task copies every connector's `data/` to the ops bucket's `backups/<date>/`. Skipped under the Docker launcher |
+| `ingest.py` | The collection host's DAGs, on weekdays in working hours WIB. The regulation layer: `ingest_ojk`, `ingest_bpk`, `ingest_bi` (every weekday), `ingest_dsn_fatwa` (Mondays), `ingest_dsn_fatwa_full` (the month's first weekday: its schedule fires every weekday and the DAG skips the others): collect and export → `metamorph upload-bundle` → discard. The market data layer, weekly on Mondays: `ingest_ojk_register`, `ingest_ojk_stats`, `ingest_bi_seki`, `ingest_bps_stats`, `ingest_reports`: the same three steps. The upload runs as the owner's SSO session; a failed one (expired session) is retried alone by clearing its task. AWS loads the bundles |
+| `backup.py` | `backup_connector_data` (Fridays 14:00 WIB): a platform-image task on the collection host packs every connector's `data/` and uploads it to the ops bucket's `backups/<date>/`, as the same SSO session |
 | `registry_build.py` | `registry_build` (after every regulation load) and `health` (daily, both layers) |
 | `market_publish.py` | `market_publish` (after every market load): `metamorph market publish` |
 

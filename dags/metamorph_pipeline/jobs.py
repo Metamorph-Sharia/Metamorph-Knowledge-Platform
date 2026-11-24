@@ -1,12 +1,16 @@
 """What Airflow runs for each connector, as plain data. No Airflow import, so it is tested on its own.
 
-Each job runs in its connector's own image (built from the connector's repository):
+On the collection host (docs/adr/0001-collection-on-a-residential-host.md) each job runs in its connector's own image
+(built from the connector's repository), on weekdays in working hours WIB, while the laptop is awake:
   1. collect   the connector's scheduled run, then `export` of its bundle into /bundles, even when the run
                raised alerts, so the platform always gets the latest full snapshot
-  2. load      in the platform image, into the connector's layer: `metamorph load` (regulations, contract v2) or
-               `metamorph market load` (market data, market contract). Its success updates the layer's registry,
-               an Airflow Dataset, which triggers the DAG that publishes it
-  3. discard   the bundle, once it is loaded (a failed load keeps it for inspection)
+  2. upload    `metamorph upload-bundle`, in the platform image, as the owner's SSO session: the bundle goes to the
+               blobs bucket under bundles/<connector>/<run>/, with its completion marker last. A failed upload (the
+               session expired) is retried alone: the bundle stays on the disk
+  3. discard   the bundle, once it is uploaded
+Processing on AWS loads the uploaded bundles into the connector's layer: `metamorph load` (regulations, contract v2)
+or `metamorph market load` (market data, market contract). A load's success updates the layer's registry, an Airflow
+Dataset, which triggers the DAG that publishes it.
 
 The layers, as Airflow Datasets, so the UI draws each from its connectors to what is published:
   regulation connectors → REGISTRY        → registry_build → PUBLISHED         (`published`)
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 
 PLATFORM_IMAGE = "metamorph-platform:dev"  # the platform's tasks: load, build, publish, health
@@ -30,7 +35,7 @@ PUBLISHED = "metamorph://published"  # its read contract
 MARKET_REGISTRY = "metamorph://market-registry"  # the market layer's system of record (`market`)
 PUBLISHED_MARKET = "metamorph://published-market"  # its read contract
 MARKET_INDEX = "metamorph://market-index"  # the retrieval layer's index of it (`retrieval_market`)
-OPS_IMAGE = "metamorph/ops:dev"  # an operator's shell with every connector's data/ mounted: the weekly backup's task
+OPS_IMAGE = "metamorph/ops:dev"  # the ECS task definition that still runs the backup on AWS (ingestion/jobs.yaml)
 RETRIEVAL_IMAGE = "metamorph/retrieval:dev"  # Metamorph-Retrieval: the gateway and the market index's refresh
 REGULATION_INDEX = "metamorph://regulation-index"  # the regulation index, judged before it is activated
 MODELS = "/models"  # where the retrieval image keeps its embedding models
@@ -83,6 +88,9 @@ class ConnectorJob:
     # The connector calls metamorph_pdf_text, so it needs MinerU: its schedule must start inside MinerU's window
     # (deploy/aws/ingestion/mineru.yaml), which runs only then on AWS.
     reads_pdfs: bool = False
+    # A monthly job: its schedule fires every weekday, and the DAG skips every day but the month's first weekday
+    # (cron cannot say "the first weekday"). MinerU's window runs longer on that day.
+    first_weekday_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,18 +140,30 @@ def registry_of(job: ConnectorJob) -> str:
     return MARKET_REGISTRY if job.layer is Layer.MARKET else REGISTRY
 
 
+def upload_command(job: ConnectorJob, run_id: str, bundles_bucket: str) -> list[str]:
+    """The platform's command for the run's bundle: bundles/<connector>/<run>/ in the blobs bucket, marker last."""
+    return ["upload-bundle", bundle_path(job.connector, run_id), f"s3://{bundles_bucket}/bundles"]
+
+
+def is_first_weekday(day: date) -> bool:
+    """Whether `day` is its month's first Monday-to-Friday: the 1st, or the Monday after a weekend 1st."""
+    earlier = (day.replace(day=d) for d in range(1, day.day))
+    return day.weekday() < 5 and all(d.weekday() >= 5 for d in earlier)
+
+
 def discard_command(job: ConnectorJob, run_id: str) -> list[str]:
     return ["rm", "-rf", bundle_path(job.connector, run_id)]
 
 
 def backup_job() -> BackupJob:
-    """The weekly copy of the connectors' data to the ops bucket. On Sundays, after the last ingest of the week."""
+    """The weekly copy of the connectors' data to the ops bucket, from the collection host, after the week's ingests."""
     return BackupJob(
         dag_id="backup_connector_data",
-        image=OPS_IMAGE,
-        # Sundays 05:00 UTC, after MinerU's window closes. The daily ingests run on Sundays too, and a store can be
-        # mid-write, so the backup snapshots each SQLite file (PACK_DATA) instead of copying it as it is
-        schedule="0 5 * * 0",
+        image=PLATFORM_IMAGE,  # it has boto3 and a shell
+        # Fridays 07:00 UTC (14:00 WIB), after MinerU's window closes (06:15 UTC on the first weekday). A run that
+        # started late in the window can still be writing a store, so the backup snapshots each SQLite file (PACK_DATA)
+        # instead of copying it as it is
+        schedule="0 7 * * 5",
         description="Weekly: each connector's data/ as a tarball in the ops bucket, backups/<date>/<connector>.tgz",
     )
 
@@ -195,24 +215,36 @@ with tempfile.TemporaryDirectory() as scratch, tarfile.open(out, "w:gz") as arch
 """
 
 
-def backup_command(jobs: Sequence[ConnectorJob], date: str) -> list[str]:
-    """The ops task's command: one tarball per connector, uploaded to `backups/<date>/<connector>.tgz`.
-
-    The ops task definition's entry point is `sh -c`, so the command is the script alone. Every tarball is tried;
-    the task fails if any was not uploaded.
-    """
-    data: dict[str, str] = {}  # connector → its data directory (the DSN-MUI jobs share one)
+def _data_directories(jobs: Sequence[ConnectorJob]) -> dict[str, str]:
+    """Connector → its data directory in the container (the DSN-MUI jobs share one)."""
+    data: dict[str, str] = {}
     for job in jobs:
         for mount in job.mounts:
             if mount.kind == "bind" and mount.target.startswith("/workspace/") and mount.target.endswith("/data"):
                 data.setdefault(job.connector, mount.target)
+    return data
+
+
+def backup_mounts(jobs: Sequence[ConnectorJob]) -> list[Mount]:
+    """The data directories the backup packs, each once, as the jobs mount them."""
+    directories = set(_data_directories(jobs).values())
+    mounts = {m.target: m for job in jobs for m in job.mounts if m.target in directories}
+    return list(mounts.values())
+
+
+def backup_command(jobs: Sequence[ConnectorJob], date: str) -> list[str]:
+    """The backup task's command: one tarball per connector, uploaded to `backups/<date>/<connector>.tgz`.
+
+    The task's entry point is `sh -c`, so the command is the script alone. Every tarball is tried; the task fails if
+    any was not uploaded.
+    """
     lines = [
         "rc=0",
-        # boto3 is in the image (the platform's); the ops task's role may write backups/* in $OPS_BUCKET
+        # boto3 is in the image (the platform's); the SSO session may write backups/* in $OPS_BUCKET
         """upload() { python -c 'import boto3, sys; boto3.client("s3").upload_file(*sys.argv[1:])' "$1" "$OPS_BUCKET" "$2"; }""",
         f"pack() {{ python - \"$1\" \"$2\" <<'PYTHON'\n{PACK_DATA}PYTHON\n}}",
     ]
-    for connector, directory in data.items():
+    for connector, directory in _data_directories(jobs).items():
         tarball = f"/tmp/{connector}.tgz"
         lines.append(
             f'( pack "{directory}" {tarball} && upload {tarball} backups/{date}/{connector}.tgz && rm {tarball} ) || rc=1'
@@ -242,7 +274,9 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             connector="ojk",
             image="metamorph/ojk-connector:dev",
             reads_pdfs=True,
-            schedule="0 1 * * *",  # 08:00 WIB; every ingest that reads PDFs (reads_pdfs) runs in MinerU's window, 00:30–04:00 UTC
+            # 09:00 WIB. Every schedule is on weekdays in working hours; a job that reads PDFs (reads_pdfs) starts in
+            # MinerU's window, at least an hour before it ends
+            schedule="0 2 * * 1-5",
             collect="ojk-connector run",
             export="ojk-connector export --format v2 --out {out} --run-id {run_id}",
             mounts=(data("OJK-Source-Connector"), Mount(ojk_credentials, OJK_CREDENTIALS), bundles),
@@ -254,7 +288,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             connector="bpk",
             image="metamorph/bpk-connector:dev",
             reads_pdfs=True,
-            schedule="20 1 * * *",
+            schedule="20 2 * * 1-5",
             collect="bpk-connector run",
             export="bpk-connector export --format v2 --out {out} --run-id {run_id}",
             mounts=(data("BPK-Source-Connector"), bundles),
@@ -266,7 +300,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             connector="bi-website",
             image="metamorph/bi-connector:dev",
             reads_pdfs=True,
-            schedule="40 1 * * *",
+            schedule="40 2 * * 1-5",
             collect="python -m src.init_db && python -m src.cli sync",
             export="python -m src.pipeline.exporter_v2 --out {out} --run-id {run_id}",
             fails_from=1,  # BI's CLI exits 1 only on an unhandled error
@@ -277,14 +311,15 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
         ),
         ConnectorJob(
             dag_id="ingest_dsn_fatwa",
-            schedule="0 2 * * 1",  # weekly: DSN-MUI publishes a few fatwas a year
+            schedule="0 3 * * 1",  # weekly: DSN-MUI publishes a few fatwas a year
             collect="dsn sync --quiet",
             description="DSN-MUI fatwas: new or moved files (MinerU reads their Arabic too), export",
             **dsn,
         ),
         ConnectorJob(
             dag_id="ingest_dsn_fatwa_full",
-            schedule="30 2 1 * *",  # monthly, after the weekly run; the window runs to 04:30 on the 1st
+            schedule="30 3 * * 1-5",  # monthly, on the first weekday (first_weekday_only), after the weekly run
+            first_weekday_only=True,
             collect="dsn sync --all --refresh-index --quiet",
             description="DSN-MUI fatwas, full pass: re-download everything to catch silent re-uploads",
             **dsn,
@@ -294,7 +329,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             connector="ojk-register",
             image="metamorph/ojk-register:dev",
             reads_pdfs=True,
-            schedule="45 2 * * 1",  # weekly, Mondays: OJK publishes each list on no fixed day
+            schedule="30 4 * * 1",  # weekly, Mondays: OJK publishes each list on no fixed day
             collect="ojk-register sync",  # exits 2 on a refusal or an edition it can't read: the task fails
             export="ojk-register export --out {out} --run-id {run_id}",
             mounts=(data("OJK-Register-Connector"), bundles),
@@ -307,7 +342,7 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             dag_id="ingest_ojk_stats",
             connector="ojk-stats",
             image="metamorph/ojk-stats:dev",
-            schedule="15 3 * * 1",  # weekly, Mondays, after the register: the portal updates its months on no fixed day
+            schedule="0 4 * * 1",  # weekly, Mondays, after the register: the portal updates its months on no fixed day
             collect="ojk-stats collect",  # exits 2 on a refusal: the task fails, and nothing is worked around
             export="ojk-stats export --out {out} --run-id {run_id}",
             mounts=(data("OJK-Stats-Connector"), bundles),
@@ -335,9 +370,8 @@ def ingest_jobs(workspace: str, *, ojk_credentials: str) -> list[ConnectorJob]:
             connector="reports",
             image="metamorph/reports:dev",
             reads_pdfs=True,
-            # weekly, Mondays, in MinerU's window just after DSN-MUI's 02:00: LPKSI comes yearly, OJK's press releases
-            # a few a week
-            schedule="15 2 * * 1",
+            # weekly, Mondays, just after DSN-MUI's weekly run: LPKSI comes yearly, OJK's press releases a few a week
+            schedule="15 3 * * 1",
             # exits 2 on a refusal; a report MinerU can't read now is kept unread and read on a later run.
             # KEKSI and the roadmaps are imported by hand (`reports import`), into the same data/
             collect="reports sync",

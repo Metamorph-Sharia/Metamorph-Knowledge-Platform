@@ -1,7 +1,7 @@
-"""One DAG per connector job (metamorph_pipeline/jobs.py): collect and export → load → discard the bundle.
+"""One DAG per connector job (metamorph_pipeline/jobs.py), on the collection host: collect and export, upload, discard.
 
-A successful load updates its layer's registry, a Dataset: `registry`, which triggers registry_build, or
-`market-registry`, which triggers market_publish.
+The upload sends the bundle to the blobs bucket, marked complete; AWS loads it from there (docs/adr/0001). A failed
+upload (the SSO session expired) keeps the bundle: sign in again and clear the upload task.
 """
 
 from __future__ import annotations
@@ -9,20 +9,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from airflow import DAG
-from airflow.datasets import Dataset
+from airflow.operators.python import ShortCircuitOperator
 from airflow.utils.trigger_rule import TriggerRule
 from metamorph_pipeline.alerts import on_failure
-from metamorph_pipeline.containers import container, host_path, platform
+from metamorph_pipeline.containers import container, host_path, required_setting, upload_bundle
 from metamorph_pipeline.jobs import (
-    BUNDLES,
-    BUNDLES_VOLUME,
-    Mount,
     collect_command,
     discard_command,
     ingest_jobs,
-    load_command,
+    is_first_weekday,
     passed_on,
-    registry_of,
+    upload_command,
 )
 from metamorph_pipeline.sides import Side, builds_here
 
@@ -32,6 +29,13 @@ DEFAULT_ARGS = {"retries": 1, "retry_delay": timedelta(minutes=15), "on_failure_
 
 
 SIDE = Side.COLLECTION
+
+
+def _runs_today(data_interval_end, dag_run, **_) -> bool:
+    """A monthly job's schedule fires every weekday (`first_weekday_only`); it runs on the month's first one only.
+    A run triggered by hand always goes ahead."""
+    return dag_run.external_trigger or is_first_weekday(data_interval_end.date())
+
 
 if builds_here(SIDE):
     for job in ingest_jobs(host_path("METAMORPH_WORKSPACE"), ojk_credentials=host_path("METAMORPH_OJK_CREDENTIALS")):
@@ -49,12 +53,13 @@ if builds_here(SIDE):
                 "collect", job.image, collect_command(job, RUN_ID, SINCE), mounts=job.mounts, secrets=passed_on(job),
                 execution_timeout=timedelta(hours=6),
             )  # fmt: skip
-            load = platform(
-                "load", load_command(job, RUN_ID),
-                mounts=[Mount(BUNDLES_VOLUME, BUNDLES, kind="volume")],
+            upload = upload_bundle(
+                "upload", upload_command(job, RUN_ID, required_setting("METAMORPH_BUNDLES_BUCKET")),
                 trigger_rule=TriggerRule.ALL_DONE,  # a run that raised alerts still exported its bundle
-                outlets=[Dataset(registry_of(job))],
             )  # fmt: skip
             discard = container("discard", job.image, discard_command(job, RUN_ID), mounts=job.mounts, retries=0)
-            collect >> load >> discard
+            collect >> upload >> discard
+            if job.first_weekday_only:
+                today = ShortCircuitOperator(task_id="first_weekday", python_callable=_runs_today)
+                today >> collect
         globals()[job.dag_id] = dag

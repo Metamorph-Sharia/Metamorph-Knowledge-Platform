@@ -6,20 +6,21 @@ depends on what is installed in Airflow, and each can be run by hand the same wa
 METAMORPH_TASK_LAUNCHER chooses where the container runs:
   docker  (the default) on the stack's network, through the host's Docker: the local Compose stack;
   ecs     as an ECS task on Fargate (deploy/aws/ingestion). The image's task definition holds its volumes (EFS) and its
-          settings (Parameter Store), so a DAG passes only the command; `mounts` and `secrets` are Docker's.
+          settings (Parameter Store), so a DAG passes only the command; `mounts`, `secrets` and `environment` are
+          Docker's.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from airflow.models import BaseOperator
 from airflow.providers.amazon.aws.operators.ecs import EcsRunTaskOperator
 from airflow.providers.docker.operators.docker import DockerOperator
 from docker.types import Mount as DockerMount
 
-from metamorph_pipeline.jobs import PLATFORM_IMAGE, TASK_CONTAINER, Mount, task_family
+from metamorph_pipeline.jobs import BUNDLES, BUNDLES_VOLUME, PLATFORM_IMAGE, TASK_CONTAINER, Mount, task_family
 
 NETWORK = "metamorph"
 DOCKER_URL = "unix://var/run/docker.sock"
@@ -32,6 +33,10 @@ PLATFORM_SECRETS = (
     "AWS_SECRET_ACCESS_KEY",
     "AWS_DEFAULT_REGION",
 )
+# The collection host's AWS access is the owner's SSO session: the Mac's ~/.aws is mounted read-write (the SSO token
+# cache is refreshed in it) at the home of the task's user. Those tasks get no access key: PLATFORM_SECRETS holds the
+# local stack's own object-store keys, which would take the session's place.
+AWS_HOME = "/home/aws"
 LAUNCHER = os.environ.get("METAMORPH_TASK_LAUNCHER", "docker")
 if LAUNCHER not in ("docker", "ecs"):
     raise RuntimeError(f"METAMORPH_TASK_LAUNCHER is {LAUNCHER!r}: docker or ecs")
@@ -56,6 +61,7 @@ def container(
     *,
     mounts: Sequence[Mount] = (),
     secrets: Sequence[str] = (),
+    environment: Mapping[str, str] | None = None,
     **task_arguments,
 ) -> BaseOperator:
     if LAUNCHER == "ecs":
@@ -68,6 +74,7 @@ def container(
         network_mode=NETWORK,
         mounts=[DockerMount(target=m.target, source=m.source, type=m.kind) for m in mounts],
         mount_tmp_dir=False,  # Airflow runs in a container: its temp dir isn't a path the Docker host knows
+        environment=dict(environment or {}),
         private_environment={name: os.environ[name] for name in secrets if name in os.environ},
         auto_remove="success",
         **task_arguments,
@@ -77,6 +84,23 @@ def container(
 def platform(task_id: str, command: Sequence[str], *, mounts: Sequence[Mount] = (), **task_arguments) -> BaseOperator:
     """`metamorph …` in the platform image."""
     return container(task_id, PLATFORM_IMAGE, command, mounts=mounts, secrets=PLATFORM_SECRETS, **task_arguments)
+
+
+def sso_session() -> tuple[list[Mount], dict[str, str]]:
+    """The mount and environment that give a Docker task the owner's SSO session (profile: METAMORPH_AWS_PROFILE)."""
+    environment = {"HOME": AWS_HOME}
+    if profile := os.environ.get("METAMORPH_AWS_PROFILE"):
+        environment["AWS_PROFILE"] = profile
+    return [Mount(required_setting("METAMORPH_AWS_CONFIG"), f"{AWS_HOME}/.aws")], environment
+
+
+def upload_bundle(task_id: str, command: Sequence[str], **task_arguments) -> BaseOperator:
+    """`metamorph upload-bundle …` in the platform image, with the run's bundles and the owner's SSO session."""
+    mounts, environment = sso_session()
+    bundles = Mount(BUNDLES_VOLUME, BUNDLES, kind="volume")
+    return container(
+        task_id, PLATFORM_IMAGE, command, mounts=[bundles, *mounts], environment=environment, **task_arguments
+    )
 
 
 def _ecs_task(task_id: str, image: str, command: Sequence[str], **task_arguments) -> EcsRunTaskOperator:

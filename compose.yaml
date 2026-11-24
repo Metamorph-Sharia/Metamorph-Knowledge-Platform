@@ -67,6 +67,11 @@ services:
       # What the DAGs hand to their containers (dags/metamorph_pipeline/jobs.py, containers.py).
       METAMORPH_WORKSPACE: ${METAMORPH_WORKSPACE:-}     # host path of the directory holding the connector repositories
       METAMORPH_OJK_CREDENTIALS: ${METAMORPH_OJK_CREDENTIALS:-${HOME}/.config/ojk-connector/credentials}
+      # What the upload and the weekly backup need to reach AWS as the owner's SSO session (dags/metamorph_pipeline/containers.py):
+      METAMORPH_AWS_CONFIG: ${METAMORPH_AWS_CONFIG:-${HOME}/.aws}   # host path; mounted read-write, SSO refreshes its token cache there
+      METAMORPH_AWS_PROFILE: ${METAMORPH_AWS_PROFILE:-}             # the SSO profile in it, if it is not the default
+      METAMORPH_BUNDLES_BUCKET: ${METAMORPH_BUNDLES_BUCKET:-}       # metamorph-blobs-<account>: where bundles are uploaded
+      METAMORPH_OPS_BUCKET: ${METAMORPH_OPS_BUCKET:-}               # metamorph-ops-<account>: where the weekly backup goes
       METAMORPH_DATABASE_URL: *database-url
       METAMORPH_S3_ENDPOINT_URL: http://objectstore:8333
       METAMORPH_S3_BUCKET: ${METAMORPH_S3_BUCKET:-metamorph-blobs}
@@ -77,7 +82,7 @@ services:
       METAMORPH_ALERT_WEBHOOK_URL: ${METAMORPH_ALERT_WEBHOOK_URL:-}
       METAMORPH_PDF_LINES: ${METAMORPH_PDF_LINES:-printed}   # connectors' PDF text: printed lines; "extracted" rolls back
       METAMORPH_PDF_ENGINE: ${METAMORPH_PDF_ENGINE:-pymupdf}   # "mineru": MinerU reads connectors' PDFs; "pymupdf" rolls back
-      METAMORPH_MINERU_URL: ${METAMORPH_MINERU_URL:-http://host.docker.internal:8010}   # the MinerU service
+      METAMORPH_MINERU_URL: ${METAMORPH_MINERU_URL:-http://host.docker.internal:8010}   # the MinerU service; on the collection host, its CloudFront address
       METAMORPH_MINERU_API_KEY: ${METAMORPH_MINERU_API_KEY:-}
       METAMORPH_MINERU_CACHE: ${METAMORPH_MINERU_CACHE:-data/mineru-cache}   # in each connector's mounted data/
       OJK_REGISTER_CONTACT: ${OJK_REGISTER_CONTACT:-}   # optional: OJK-Register-Connector's User-Agent contact

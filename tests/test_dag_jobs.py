@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,24 +16,27 @@ from metamorph_pipeline.alerts import failure_message
 from metamorph_pipeline.jobs import (
     BUNDLES,
     MARKET_REGISTRY,
+    OPS_IMAGE,
+    PACK_DATA,
     PLATFORM_IMAGE,
     PUBLISHED,
     PUBLISHED_MARKET,
     REGISTRY,
     TASK_CONTAINER,
-    OPS_IMAGE,
-    PACK_DATA,
     ConnectorJob,
     Layer,
     backup_command,
     backup_job,
+    backup_mounts,
     bundle_path,
     collect_command,
     ingest_jobs,
+    is_first_weekday,
     load_command,
     passed_on,
     registry_of,
     task_family,
+    upload_command,
 )
 
 WORKSPACE = "/Users/someone/Metamorph-Sharia"
@@ -78,7 +82,7 @@ def test_the_statistics_job_collects_from_the_portal_and_loads_into_the_market_l
     stats = jobs["ingest_ojk_stats"]
 
     assert (stats.image, stats.layer, stats.collect, stats.schedule) == (
-        "metamorph/ojk-stats:dev", Layer.MARKET, "ojk-stats collect", "15 3 * * 1",
+        "metamorph/ojk-stats:dev", Layer.MARKET, "ojk-stats collect", "0 4 * * 1",
     )
     assert stats.export == "ojk-stats export --out {out} --run-id {run_id}"
     assert [(m.source, m.target) for m in stats.mounts] == [
@@ -248,8 +252,6 @@ def test_a_weekly_job_copies_every_connector_s_data_to_the_ops_bucket() -> None:
     backup = backup_job()
 
     assert backup.dag_id == "backup_connector_data"
-    assert backup.image == OPS_IMAGE
-    assert task_family(backup.image) == "metamorph-ops"
     day_of_month, month, day_of_week = backup.schedule.split()[2:]
     assert (day_of_month, month) == ("*", "*") and day_of_week != "*"  # once a week, on one weekday
 
@@ -345,3 +347,112 @@ def test_the_backup_script_runs_under_sh_and_uploads_a_readable_tarball_per_conn
     with tarfile.open(tmp_path / "s3" / "ops" / "backups" / "2026-11-22" / "ojk.tgz") as archive:
         archive.extractall(tmp_path / "restored", filter="data")
     assert sqlite3.connect(tmp_path / "restored" / "ojk.sqlite").execute("SELECT a FROM t").fetchall() == [(1,)]
+
+
+# --- The collection side: a run ends by uploading its bundle (ADR 0001) -------------------------------------------
+
+
+def test_every_job_uploads_its_run_s_bundle_to_the_blobs_bucket(jobs) -> None:
+    for job in jobs.values():
+        assert upload_command(job, "r1", "blobs-bucket") == [
+            "upload-bundle", f"/bundles/{job.connector}/r1", "s3://blobs-bucket/bundles",
+        ]  # the command derives the key, bundles/<connector>/<run>/, and writes the marker last
+
+
+def test_the_ingest_dag_collects_uploads_and_discards_and_no_longer_loads_or_emits_a_registry() -> None:
+    source = (Path(__file__).parents[1] / "dags" / "ingest.py").read_text()
+
+    assert "collect >> upload >> discard" in source
+    assert not re.search(r"\bload_command", source)  # loading is processing's (ticket 05)
+    assert "Dataset" not in source and "outlets" not in source
+
+
+# --- Weekday working hours (WIB) ------------------------------------------------------------------------------------
+
+WIB = 7  # hours ahead of UTC
+WORKING_HOURS = (9 * 60, 17 * 60)  # WIB, in minutes after midnight
+MONDAY_TO_FRIDAY = {"1-5", "1,2,3,4,5"}
+
+
+def weekdays(cron: str) -> list[int]:
+    """The days of the week (cron: 1 = Monday) a schedule's day-of-week field names."""
+    names = []
+    for part in cron.split()[4].split(","):
+        low, _, high = part.partition("-")
+        names += range(int(low), int(high or low) + 1)
+    return names
+
+
+def test_every_schedule_is_on_weekdays_in_working_hours_wib(jobs) -> None:
+    schedules = {job.dag_id: job.schedule for job in jobs.values()} | {"backup": backup_job().schedule}
+
+    for name, cron in schedules.items():
+        assert set(weekdays(cron)) <= {1, 2, 3, 4, 5}, name
+        start = (minutes_after_midnight(cron) + WIB * 60) % (24 * 60)
+        assert WORKING_HOURS[0] <= start < WORKING_HOURS[1], name
+
+
+def test_a_job_that_reads_pdfs_starts_between_09_00_and_11_30_wib(jobs) -> None:
+    for job in (job for job in jobs.values() if job.reads_pdfs):
+        start = minutes_after_midnight(job.schedule) + WIB * 60
+        assert 9 * 60 <= start <= 11 * 60 + 30, job.dag_id
+
+
+def test_the_monthly_full_pass_runs_on_the_first_weekday_of_the_month(jobs) -> None:
+    assert [job.dag_id for job in jobs.values() if job.first_weekday_only] == ["ingest_dsn_fatwa_full"]
+    assert jobs["ingest_dsn_fatwa_full"].schedule.split()[2:] == ["*", "*", "1-5"]  # every weekday; others skipped
+
+
+@pytest.mark.parametrize(
+    ("day", "expected"),
+    [
+        (date(2026, 11, 2), True),  # the 1st is a Sunday: Monday the 2nd is the first weekday
+        (date(2026, 11, 3), False),
+        (date(2026, 8, 3), True),  # the 1st is a Saturday
+        (date(2026, 8, 1), False),  # a Saturday is never one
+        (date(2026, 7, 1), True),  # the 1st is a Wednesday
+        (date(2026, 7, 2), False),
+        (date(2026, 12, 15), False),
+    ],
+)
+def test_the_first_weekday_of_a_month(day, expected) -> None:
+    assert is_first_weekday(day) is expected
+
+
+def test_health_expects_a_weekday_connector_every_three_days_and_a_weekly_one_every_seven(jobs) -> None:
+    from metamorph_platform.domain.health import CADENCE
+
+    def longest_gap(job: ConnectorJob) -> timedelta:
+        days = sorted(set(weekdays(job.schedule)))
+        pairs = zip(days, days[1:] + days[:1], strict=True)
+        return timedelta(days=max((later - earlier) % 7 or 7 for earlier, later in pairs))
+
+    for connector in CADENCE:
+        schedule_of = [job for job in jobs.values() if job.connector == connector and not job.first_weekday_only]
+        assert CADENCE[connector] == min(longest_gap(job) for job in schedule_of), connector
+
+
+# --- The weekly backup runs on the collection host, under the Docker launcher ---------------------------------------
+
+
+def test_the_backup_is_weekly_after_mineru_s_window_and_runs_in_the_platform_image() -> None:
+    backup = backup_job()
+
+    assert backup.image == PLATFORM_IMAGE  # the platform image has boto3 and a shell; there is no ops image locally
+    assert backup.schedule == "0 7 * * 5"  # Fridays 14:00 WIB, after the window's last stop (06:15 UTC)
+
+
+def test_the_backup_dag_runs_under_the_docker_launcher_as_the_sso_session_and_is_not_skipped() -> None:
+    source = (Path(__file__).parents[1] / "dags" / "backup.py").read_text()
+
+    assert "sso_session()" in source and "OPS_BUCKET" in source
+    assert "ShortCircuit" not in source  # it was skipped on the local stack, which had no EFS to copy
+
+
+def test_the_backup_mounts_each_connector_s_data_directory_once(jobs) -> None:
+    mounts = backup_mounts(list(jobs.values()))
+
+    assert len(mounts) == 9  # the two DSN-MUI jobs share one
+    assert all(m.kind == "bind" and m.target.endswith("/data") for m in mounts)
+    assert (f"{WORKSPACE}/OJK-Source-Connector/data", "/workspace/OJK-Source-Connector/data") in [
+        (m.source, m.target) for m in mounts]

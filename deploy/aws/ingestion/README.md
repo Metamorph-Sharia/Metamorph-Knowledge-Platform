@@ -60,7 +60,7 @@ Two scripts sit beside the templates:
    - `deploy ingestion/mineru`. It writes `/metamorph/connectors/mineru-url` itself (the internal load balancer's address, port 8010).
    - **The front door** (for the collection host): the stack's `FrontDoorUrl` output is MinerU's address off AWS, checked by MinerU's own API key (no edge password). Make its rate limit first, as for Airflow's: `deploy/aws/ingestion/waf.sh create mineru` prints the web ACL's ARN, and `deploy ingestion/mineru --parameter-overrides WebAclArn=<that ARN>` attaches it. Its load balancer is in the private subnets, which cover zones 3b and 3c only, so keep `InstanceSubnetIndex` at 1.
    - **`InstanceSubnetIndex` defaults to 1, not 0.** `g5.xlarge` is offered only in ap-southeast-3a and 3c, and the core's `metamorph-subnets` lists its subnets in the order 3b, 3c, 3a: index 1 is 3c and index 2 is 3a. Redeploy with `InstanceSubnetIndex=2` if 3c has no G5 capacity.
-   - The instance starts at 00:20 UTC and stops at 04:00 (04:30 on the 1st), by schedule (`WindowStart`, `WindowEnd`, `MonthlyWindowEnd`). To test outside the window, start it by hand with `aws ec2 start-instances` (its Name tag is `metamorph-mineru`), and stop it after.
+   - The instance starts at 01:45 UTC (08:45 WIB) on weekdays and stops at 05:45 (12:45 WIB), or 06:15 on the 1st to 3rd of the month, by schedule (`WindowStart`, `WindowEnd`, `MonthlyWindowEnd`); `HourlyStop` stops it every hour outside the window. To test outside the window, start it by hand ([The window](#the-window)); it stops itself within the hour.
    - The first start pulls the 20 GB image, and the service's 15 minute grace period covers that and the model load. Later starts reuse the image on the root disk.
    - Check `nvidia-smi` shows a driver of 580 or newer (a task can start only if it does).
    - Read the two step 9 PDFs with `packages/metamorph-pdf-text/scripts/mineru_check.py` from a BPK task. If MinerU can't be reached, the jobs and Airflow stacks still work alone with `/metamorph/connectors/pdf-engine` set to `pymupdf`: the connectors then read PDFs as they did before MinerU, and the readings already in the caches are kept for later.
@@ -80,7 +80,16 @@ After that the alerts and the daily `health` DAG monitor without blocking: a tas
 
 ## The window
 
-MinerU's window starts at 00:20 UTC (ten minutes to boot and place the service, then the models load before `ingest_ojk` at 01:00) and ends at 04:00, or at 04:30 on the 1st for DSN-MUI's monthly full pass. Every job with `reads_pdfs` in `dags/metamorph_pipeline/jobs.py` must start inside it and at least an hour before its end (the Monday jobs run from 02:00 to 02:45), and `tests/test_ingestion_stacks.py` checks that: change the DAG schedules and the stack's window parameters together. The weekly backup (`backup_connector_data`, Sundays 05:00 UTC) starts after the last stop.
+The collection host runs on weekdays in working hours, so MinerU's window does too. It starts at 01:45 UTC, 08:45 WIB on Monday to Friday (a quarter of an hour to boot and place the service, then the models load before `ingest_ojk` at 02:00), and ends at 05:45 UTC (12:45 WIB). On the month's first weekday, when DSN-MUI's full pass runs, it ends at 06:15 UTC (13:15 WIB). That weekday is always the 1st, 2nd or 3rd, so `MonthlyWindowEnd` covers those three days, and a second weekday among them runs half an hour longer than it needs. Every job with `reads_pdfs` in `dags/metamorph_pipeline/jobs.py` must start inside the window and at least an hour before its end (the jobs run from 02:00 to 03:45 UTC, 09:00 to 10:45 WIB), and `tests/test_ingestion_stacks.py` checks that: change the DAG schedules and the stack's window parameters together. The weekly backup (`backup_connector_data`, Fridays 07:00 UTC) starts after the last stop.
+
+A stop repeats every hour on the hour outside the window (`HourlyStop`), so a hand start costs at most an hour of GPU. **To run a PDF job in the afternoon, start MinerU by hand** with your SSO session (the Name tag is `metamorph-mineru`), and wait about 10 minutes for the models to load:
+
+```bash
+aws ec2 start-instances --instance-ids "$(aws ec2 describe-instances --filters Name=tag:Name,Values=metamorph-mineru \
+  --query 'Reservations[].Instances[].InstanceId' --output text)"
+```
+
+Run it again each hour to keep it up, or stop it sooner with `aws ec2 stop-instances` and the same instance id.
 
 ## Rollback
 
