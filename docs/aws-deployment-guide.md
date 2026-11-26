@@ -1,5 +1,7 @@
 # Deploying Metamorph on AWS (Jakarta): the core first
 
+> **History of the reference deployment.** This guide records how the Metamorph-Sharia team deployed its own core in October 2026, including moving its data off a Mac. To deploy in your own account, follow [deploy-from-scratch.md](deploy-from-scratch.md); the shell helpers below are now in `deploy/aws/lib.sh`.
+
 > **Superseded, 2026-10-30:** [aws-deployment-plan.md](aws-deployment-plan.md) revises this architecture (RDS instead of Aurora, a private VPC, ingestion and retrieval). This guide stays the record of the stack deployed on 2026-10-23 until that plan's Phase 4 replaces it.
 
 **Date:** 2026-10-23 · **Region:** Asia Pacific (Jakarta), `ap-southeast-3` · **Account access:** the `Project3Learner` role, as it is today · **Status:** designed and written; nothing created on AWS yet. Checks so far:

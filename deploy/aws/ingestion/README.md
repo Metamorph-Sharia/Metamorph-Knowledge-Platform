@@ -2,7 +2,7 @@
 
 Most sources refuse AWS addresses (OJK drops the connection, BPK answers 403, BI closes it), so the connectors cannot collect from AWS. They run on a **collection host** on a residential line, at first the owner's Mac. Everything after a bundle exists (load, registry build, indexing, health) runs on AWS, next to the database. The two sides each have their own Airflow, and bundles in S3 are all that joins them. The reason is recorded in [ADR 0001](../../../docs/adr/0001-collection-on-a-residential-host.md); do not move collection back to AWS without reading it.
 
-This layer plugs into the core: it imports only what the live core exports, and no core stack is redeployed for it (one exception, in step 1). **Deploy the core first:** [docs/aws-deployment-guide.md](../../../docs/aws-deployment-guide.md).
+This layer plugs into the core: it imports only what the live core exports, and no core stack is redeployed for it (one exception, in step 1). **Deploy the core first:** [docs/deploy-from-scratch.md](../../../docs/deploy-from-scratch.md), steps 1 to 8.
 
 **No stack here creates an IAM resource or a Cloud Map namespace; the account allows neither.** Every role comes from DevOps, by name, as a stack parameter. The roles, the instance profile and the permissions they carry are in [docs/aws-ingestion-permissions.md](../../../docs/aws-ingestion-permissions.md), and their policies are in [`deploy/aws/iam/`](../iam/). The organization also denies any create without the tag `Owner=project3`: the templates carry it, and the `deploy` helper below passes it as a stack tag. An untagged create fails as "explicit deny in a service control policy", which looks like a missing permission and is not one.
 
@@ -44,7 +44,7 @@ Two scripts sit beside the templates:
 
 ## Before you start
 
-- The core is deployed, and the shell lines of the core guide's [Phase 0](../../../docs/aws-deployment-guide.md#phase-0-before-you-start) are set (`deploy`, `setting`, `secret`, `exported`). `deploy ingestion/shared` names its stack `metamorph-ingestion-shared`. None of these stacks needs `--capabilities`, because none creates IAM.
+- The core is deployed, and the shell helpers are loaded: `source deploy/aws/lib.sh` (`deploy`, `setting`, `secret`, `exported`, `run_task`; its header says which variables to set first). `deploy ingestion/shared` names its stack `metamorph-ingestion-shared`. None of these stacks needs `--capabilities`, because none creates IAM.
 - DevOps has made the roles and the instance profile and raised the GPU quota. `deploy/aws/ingestion/check.sh` shows the roles first, so run it now: its first five lines must pass.
 - The quota **Running On-Demand G and VT instances** (`L-DB2E81BA`) is at least 8 vCPUs. One `g5.xlarge` needs 4.
 
@@ -53,7 +53,7 @@ Two scripts sit beside the templates:
 1. **The shared stack.** `deploy ingestion/shared`. The core's foundation also needs one redeploy, once, for the lifecycle rules that expire the ops bucket's `backups/` and the blobs bucket's `bundles/` after 35 days: `deploy foundation` with the parameters it was first deployed with (the guide's Phase 1). Until then, backups and bundles pile up. The alerts stack (`deploy ingestion/alerts --parameter-overrides AlertEmail=…`, then confirm the subscription from the email SNS sends) needs only the core, so it can go now or at any time later.
 2. **The settings and Airflow's database.**
    - SecureString (`secret NAME VALUE`): `/metamorph/mineru/api-key`, `/metamorph/airflow/admin-password`, `/metamorph/airflow/webserver-secret`, `/metamorph/airflow/database-url` (`postgresql+psycopg2://metamorph:…@<database host>:5432/airflow`). Optional: `/metamorph/airflow/alert-webhook-url`, Slack's webhook, with `AlertWebhook=yes` on the Airflow stack.
-   - The database: `run_task dbops metamorph-sg-database-ops psql -c 'CREATE DATABASE airflow'`, run in the way the guide runs its other `metamorph-dbops` commands.
+   - The database: `run_task dbops metamorph-sg-database-ops psql -c 'CREATE DATABASE airflow'`, with `run_task` from `deploy/aws/lib.sh`.
 3. **The images.** From the platform's directory, with the tag on its own line:
    ```bash
    TAG=$(date -u +%Y%m%d-%H%M)
@@ -79,9 +79,10 @@ Set up once, on the Mac, from the platform's directory:
 ```bash
 cp .env.example .env     # METAMORPH_WORKSPACE, and the five settings listed under "The two sides"
 aws sso login --profile <the profile>
-docker compose --profile connectors build      # the platform image and the connector images
-docker compose up -d                           # Airflow at :8080, collection side
+deploy/collection-host/setup.sh                # checks .env and the sign-in, builds the images, starts Airflow at :8080
 ```
+
+`setup.sh` runs `docker compose --profile connectors build` and `docker compose up -d` after its checks; `setup.sh --check` runs only the checks.
 
 The DAGs ship paused. Unpause an `ingest_*` DAG to enable its source, pause it to disable it; trigger one by hand to rerun or debug a single source. Each job's schedule is one line in the job registry ([`dags/metamorph_pipeline/jobs.py`](../../../dags/metamorph_pipeline/jobs.py)), and adding a source is one more job there. `ingest_bps_stats` stays paused for its known issue. Keep the Mac plugged in and awake while a run is going: a run cut off by sleep is simply retried.
 
